@@ -13,6 +13,8 @@ recognizer's gesture name, pinch ratio and the Prepare state machine.
 from __future__ import annotations
 
 import math
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +22,7 @@ import cv2
 import numpy as np
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+BUSY_TIMEOUT_S = 0.5
 
 # MediaPipe hand landmark indices.
 WRIST = 0
@@ -87,7 +90,12 @@ class Hand:
 
 
 class HandTracker:
-    """MediaPipe Gesture Recognizer in VIDEO mode: landmarks plus gesture class."""
+    """MediaPipe Gesture Recognizer in LIVE_STREAM mode: landmarks plus gesture class.
+
+    submit() never blocks the display loop: if the recognizer is still busy
+    with the previous frame, the new frame is skipped. Results arrive on a
+    MediaPipe thread; poll() hands the newest one to the caller once.
+    """
 
     def __init__(self, num_hands: int = 1, max_side: int = 640):
         from mediapipe.tasks.python import BaseOptions, vision
@@ -96,11 +104,19 @@ class HandTracker:
         if not model.exists():
             raise FileNotFoundError(f"{model} missing: run python scripts/download_models.py")
         self.max_side = max_side
+        self.latency_ms = 0.0  # submit -> result, smoothed
         self._last_ms = -1
+        self._lock = threading.Lock()
+        self._busy = False
+        self._busy_since = 0.0
+        self._size = (1, 1)
+        self._submitted: dict[int, float] = {}
+        self._result: tuple[list[Hand], float] | None = None
         self._recognizer = vision.GestureRecognizer.create_from_options(
             vision.GestureRecognizerOptions(
                 base_options=BaseOptions(model_asset_path=str(model)),
-                running_mode=vision.RunningMode.VIDEO,
+                running_mode=vision.RunningMode.LIVE_STREAM,
+                result_callback=self._on_result,
                 num_hands=num_hands,
                 min_hand_detection_confidence=0.5,
                 min_hand_presence_confidence=0.5,
@@ -108,18 +124,31 @@ class HandTracker:
             )
         )
 
-    def detect(self, frame_bgr: np.ndarray, t: float) -> list[Hand]:
+    def submit(self, frame_bgr: np.ndarray, t: float) -> bool:
+        """Queue a frame for recognition; False if skipped because busy."""
         import mediapipe as mp
 
+        now = time.perf_counter()
+        with self._lock:
+            # A result normally clears _busy; the timeout guards against a
+            # dropped callback freezing tracking for good.
+            if self._busy and now - self._busy_since < BUSY_TIMEOUT_S:
+                return False
+            self._busy, self._busy_since = True, now
         h, w = frame_bgr.shape[:2]
+        self._size = (w, h)
         scale = min(1.0, self.max_side / max(h, w))
         small = cv2.resize(frame_bgr, None, fx=scale, fy=scale) if scale < 1 else frame_bgr
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-        # VIDEO mode needs strictly increasing integer timestamps.
+        # Timestamps must strictly increase.
         ms = max(int(t * 1000), self._last_ms + 1)
         self._last_ms = ms
-        result = self._recognizer.recognize_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ms)
+        self._submitted[ms] = time.perf_counter()
+        self._recognizer.recognize_async(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ms)
+        return True
 
+    def _on_result(self, result, _image, ms: int) -> None:
+        w, h = self._size
         hands = []
         for i, lms in enumerate(result.hand_landmarks):
             pts = np.array([(lm.x * w, lm.y * h) for lm in lms], dtype=np.float32)
@@ -128,7 +157,18 @@ class HandTracker:
                 gesture, score = result.gestures[i][0].category_name, result.gestures[i][0].score
             side = result.handedness[i][0].category_name if i < len(result.handedness) else ""
             hands.append(Hand(pts, gesture, score, side))
-        return hands
+        sent = self._submitted.pop(ms, None)
+        with self._lock:
+            if sent is not None:
+                self.latency_ms = 0.9 * self.latency_ms + 0.1 * (time.perf_counter() - sent) * 1000
+            self._result = (hands, ms / 1000)
+            self._busy = False
+
+    def poll(self) -> tuple[list[Hand], float] | None:
+        """Newest (hands, capture time in s) since the last poll, else None."""
+        with self._lock:
+            result, self._result = self._result, None
+        return result
 
     def close(self) -> None:
         self._recognizer.close()
@@ -314,28 +354,28 @@ def draw_cursor(frame: np.ndarray, g: PrepareGestures, hand: Hand | None) -> Non
 
 
 def _debug_view() -> None:
-    import time
-
     from palmcards.capture import Camera
 
     tracker = HandTracker()
     prepare = PrepareGestures()
     log: list[str] = []
+    hand = None
     with Camera() as cam:
         t0 = time.perf_counter()
         while True:
             frame = cam.read()
-            t = time.perf_counter() - t0
-            hands = tracker.detect(frame, t)
-            hand = hands[0] if hands else None
-            for ev in prepare.update(hand, t):
-                if ev.kind != "hover":
-                    log = (log + [f"{t:6.2f}s {ev.kind}" + (f" dy={ev.dy:+.0f}" if ev.kind == "scroll" else "")])[-6:]
+            tracker.submit(frame, time.perf_counter() - t0)
+            if (result := tracker.poll()) is not None:
+                hands, t = result
+                hand = hands[0] if hands else None
+                for ev in prepare.update(hand, t):
+                    if ev.kind != "hover":
+                        log = (log + [f"{t:6.2f}s {ev.kind}" + (f" dy={ev.dy:+.0f}" if ev.kind == "scroll" else "")])[-6:]
             if hand:
                 draw_landmarks(frame, hand)
             draw_cursor(frame, prepare, hand)
 
-            lines = [f"state: {prepare.state}"]
+            lines = [f"state: {prepare.state}", f"camera {cam.fps:4.1f} fps  hands {tracker.latency_ms:4.1f} ms"]
             if hand:
                 lines += [
                     f"gesture: {hand.gesture} ({hand.score:.2f})  {hand.handedness}",

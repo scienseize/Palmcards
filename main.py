@@ -70,7 +70,8 @@ def main() -> int:
         overlay = TextOverlay(sentences, (w, h))
         view = ViewState()
         show_landmarks = False
-        fps, detect_ms, last = 0.0, 0.0, time.perf_counter()
+        hand = None
+        fps, work_ms, last = 0.0, 0.0, time.perf_counter()
         t0 = last
 
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
@@ -78,13 +79,15 @@ def main() -> int:
 
         while True:
             frame = camera.read()
-            t = time.perf_counter() - t0
-            hands = tracker.detect(frame, t)
-            detect_ms = 0.9 * detect_ms + 0.1 * (time.perf_counter() - t0 - t) * 1000
-            hand = hands[0] if hands else None
-            view.hover = None  # only shown while actively pointing at a word
-            for ev in gestures.update(hand, t):
-                apply_prepare_event(ev, view, overlay)
+            start = time.perf_counter()
+            tracker.submit(frame, start - t0)
+            # Hand results arrive asynchronously, usually one frame behind.
+            if (result := tracker.poll()) is not None:
+                hands, t_hand = result
+                hand = hands[0] if hands else None
+                view.hover = None  # only shown while actively pointing at a word
+                for ev in gestures.update(hand, t_hand):
+                    apply_prepare_event(ev, view, overlay)
 
             overlay.draw(frame, view)
             if show_landmarks and hand:
@@ -97,8 +100,13 @@ def main() -> int:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 140, 255), 2, cv2.LINE_AA)
             now = time.perf_counter()
             fps = 0.9 * fps + 0.1 / max(now - last, 1e-6)
+            work_ms = 0.9 * work_ms + 0.1 * (now - start) * 1000
             last = now
-            cv2.putText(frame, f"{fps:4.1f} fps  hands {detect_ms:4.1f} ms", (w - 290, h - 20),
+            # cam: rate the camera delivers; shown: rate we display;
+            # hands: tracker latency; work: our per-frame processing.
+            stats = (f"cam {camera.fps:4.1f}  shown {fps:4.1f} fps  "
+                     f"hands {tracker.latency_ms:4.1f} ms  work {work_ms:4.1f} ms")
+            cv2.putText(frame, stats, (w - 560, h - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
 
             cv2.imshow(WINDOW, frame)
