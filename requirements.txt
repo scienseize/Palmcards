@@ -1,0 +1,10 @@
+# Milestone 1: camera, compositing, text rendering
+opencv-python
+numpy
+Pillow
+
+# Milestone 3+: hands, face, pose (models downloaded by scripts/download_models.py)
+mediapipe
+
+# Tests
+pytest
