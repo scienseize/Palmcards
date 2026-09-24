@@ -94,7 +94,7 @@ Pose classes:
 | `FLAT` | all four extended, `spread` < 0.30 |
 | `OPEN` | all four extended + `thumb_out`, `spread` > 0.45 |
 | `L` | index extended + `thumb_out`; middle, ring, pinky curled; thumb/index angle 50 to 130 degrees |
-| `PINCH` | `pinch` true |
+| `PINCH` | `pinch` true, and index tip > 1.1 palms from the wrist (so a fist isn't a pinch) |
 | `FIST` | nothing extended, not `pinch` |
 | `NONE` | anything else (including a spread V sign), ignored |
 
@@ -136,6 +136,7 @@ palmcards/
 │   ├── capture.py       # camera + audio capture
 │   ├── notes.py         # file loading, sections/sentences/words, cue parsing
 │   ├── gestures.py      # landmarks -> gesture events, mode-aware state machine, command zone
+│   ├── config.py        # every gesture threshold in one place
 │   ├── render.py        # Pillow text overlay onto mirrored frame
 │   ├── speech.py        # whisper transcription, prosody features
 │   ├── align.py         # transcript <-> notes alignment

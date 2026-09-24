@@ -151,6 +151,12 @@ def test_txt_sections_from_headings_and_double_blank_lines():
     assert [s.section for s in notes.sentences] == [0, 0, 1, 2]
 
 
+def test_paragraph_index_counts_source_paragraphs():
+    text = "One. Two.\n\nThree.\n# Head\nFour. Five."
+    notes = parse_text(text, "txt")
+    assert [s.paragraph for s in notes.sentences] == [0, 0, 1, 2, 2]
+
+
 def test_md_keeps_marks_that_markdown_would_eat():
     notes = parse_text("# Opening\n\nThank you for *being* here. [rise]\n\n- A *list* item.\n", "md")
     assert notes.sections[0].title == "Opening"

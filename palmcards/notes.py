@@ -65,6 +65,7 @@ class Sentence:
     words: list[Word]
     marks: list[Mark]
     section: int = 0
+    paragraph: int = 0  # source paragraph, counted across the whole file
     index: int = 0  # position in Notes.sentences
 
     @property
@@ -277,6 +278,7 @@ def _docx_blocks(path: Path) -> list[Block]:
 
 def build_notes(blocks: list[Block], source: Path | None = None) -> Notes:
     notes = Notes(sections=[Section("")], source=source)
+    paragraph = -1
     for kind, text in blocks:
         current = notes.sections[-1]
         if kind in ("heading", "break"):
@@ -285,11 +287,13 @@ def build_notes(blocks: list[Block], source: Path | None = None) -> Notes:
             else:
                 current.title = text
             continue
+        paragraph += 1
         for raw in split_sentences(text):
             sentence = parse_sentence(raw, notes.warnings)
             if not sentence.words:
                 notes.warnings.append(f"Ignored {raw!r}: no words, only marks.")
                 continue
+            sentence.paragraph = paragraph
             current.sentences.append(sentence)
 
     for sec in notes.sections:

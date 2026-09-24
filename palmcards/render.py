@@ -1,18 +1,23 @@
 """Pillow text overlay composited onto the mirrored frame.
 
-Demo style: monospace block floating beside the user, current sentence in
-orange, the rest dimmed, a few lines visible, soft dark backing behind it.
-Delivery marks are drawn as written, a shade dimmer than the words.
+Demo style: monospace block floating beside the user, the unit under the
+cursor in orange, the rest dimmed, a few lines visible, soft dark backing
+behind it. Delivery marks are drawn as written, a shade dimmer than the words.
 
 The layout is a grid of monospace cells, so every word has a known row and
-column range; hit_test() maps a fingertip position back to (sentence, word).
+column range; hit_test() maps a point back to (sentence, word), and
+cursor_to_text() maps the relative hand-box cursor to such a point.
+
+On top of the text: the two-line state label (Kat's `BROWSE BY WORD`), and
+the operation stubs for milestone 3b (options ring, tone gauge, stretch line),
+which move but never rewrite the text.
 """
 
 from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -31,13 +36,25 @@ ORANGE = (255, 140, 0, 255)
 ORANGE_MARK = (255, 140, 0, 150)
 DIM = (220, 220, 220, 110)
 DIM_MARK = (220, 220, 220, 60)
-HOVER_LINE_BGR = (240, 240, 240)
-SELECT_FILL = (255, 140, 0, 235)
-SELECT_TEXT = (20, 20, 20, 255)
+FAINT = (220, 220, 220, 45)
+FAINT_MARK = (220, 220, 220, 25)
+FOCUS_TEXT = (245, 245, 245, 255)
+FOCUS_MARK = (245, 245, 245, 140)
+CHIP_FILL = (255, 140, 0, 235)
+CHIP_TEXT = (20, 20, 20, 255)
+DARK_FILL = (15, 15, 18, 215)
+NODE_TEXT = (240, 240, 240, 255)
+NODE_OUTLINE = (240, 240, 240, 200)
 BACKING = (10, 10, 12, 150)
+YELLOW_BGR = (0, 215, 255)
+COLD_BGR = (255, 150, 60)
+WARM_BGR = (0, 140, 255)
 
 PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
+FOCUS_SCALES = (1.3, 1.15, 1.0)  # largest that fits the text box wins
+RING_PLACEHOLDERS = ("alt 1", "alt 2", "alt 3", "stress", "hear it")  # node 0 is the original word
+RING_DEAD_ZONE = 0.12  # cursor this close to the hand-box centre keeps the pick
 
 
 def load_font(size: int) -> ImageFont.ImageFont:
@@ -50,15 +67,32 @@ def load_font(size: int) -> ImageFont.ImageFont:
 @dataclass(frozen=True)
 class Hit:
     sentence: int
-    word: int | None  # None: on the sentence's row but between words
+    word: int | None  # None: sentence/paragraph level, or between words
+
+
+@dataclass
+class OpsView:
+    """What the operation stubs show; filled from the gesture state."""
+
+    kind: str | None = None  # ring | tone | stretch
+    picked: int = 0  # ring node, 0 = original word
+    pointing: bool = False
+    tone: float = 0.0  # -1 cold .. 1 warm
+    stretch: float = 1.0
+    stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
 
 
 @dataclass
 class ViewState:
-    current: int = 0  # sentence drawn in orange
+    current: int = 0  # sentence drawn in orange when no hand is up
+    mode: str = "idle"  # idle | browse | focus
+    level: str | None = None  # word | sentence | paragraph
     hover: Hit | None = None
-    selected: Hit | None = None  # always has a word
+    focus: Hit | None = None
     scroll: float = 0.0  # in rows
+    ops: OpsView = field(default_factory=OpsView)
+    drop_progress: float = 0.0
+    note: str = ""  # transient second label line, e.g. after a commit
 
 
 @dataclass(frozen=True)
@@ -120,6 +154,19 @@ def layout(sentences: list[Sentence], columns: int) -> list[Row]:
     return rows
 
 
+def ring_pick(u: float, v: float, n: int, previous: int) -> int:
+    """Ring node the hand points at: direction from the hand-box centre.
+
+    Node i sits at -90 + i * 360/n degrees (0 at the top, clockwise), the
+    same angles the ring is drawn at.
+    """
+    dx, dy = u - 0.5, v - 0.5
+    if math.hypot(dx, dy) < RING_DEAD_ZONE:
+        return previous
+    angle = (math.degrees(math.atan2(dy, dx)) + 90) % 360
+    return round(angle / (360 / n)) % n
+
+
 class TextOverlay:
     """Renders a scrollable window of sentences onto a BGR frame."""
 
@@ -132,13 +179,17 @@ class TextOverlay:
     ):
         self.sentences = sentences
         self.visible_rows = visible_rows
-        w, h = frame_size
-        self.font = load_font(max(18, h // 26))
+        self.frame_w, self.frame_h = w, h = frame_size
+        self.font_size = max(18, h // 26)
+        self.font = load_font(self.font_size)
+        self._fonts = {self.font_size: self.font}
         self.rows = layout(sentences, columns)
-        self._first_row = {}
+        self._first_row: dict[int, int] = {}
+        self._last_row: dict[int, int] = {}
         self._word_pos: dict[Hit, tuple[int, int, int]] = {}  # -> (row, column, length)
         for i, r in enumerate(self.rows):
             self._first_row.setdefault(r.sentence, i)
+            self._last_row[r.sentence] = i
             for col, sp in r.spans:
                 if sp.role == "word":
                     self._word_pos[Hit(r.sentence, sp.word)] = (i, col, len(sp.text))
@@ -160,13 +211,28 @@ class TextOverlay:
         self.x = max(0, int(w * 0.05) - self.margin)
         self.y = max(0, (h - self.patch_h) // 2)
 
-        self._backing = _premultiply(self._render_backing())
+        self._backings: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         # Text is rendered into a band of rows taller than the window, so
         # scrolling only moves a crop through it (see _band_crop).
         self.band_rows = visible_rows + 2 * BAND_SLACK_ROWS
         self._band_key = None
         self._band = None
         self._band_start = 0
+        self._panel_key = None
+        self._panel = None
+        self._chips: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+
+    # --- units -------------------------------------------------------------
+
+    def unit(self, level: str | None, sentence: int) -> list[int]:
+        """Sentence indices of the unit containing `sentence` at this level."""
+        if level == "paragraph":
+            p = self.sentences[sentence].paragraph
+            return [i for i, s in enumerate(self.sentences) if s.paragraph == p]
+        return [sentence]
+
+    def word_text(self, hit: Hit) -> str:
+        return self.sentences[hit.sentence].words[hit.word].text
 
     # --- scrolling ---------------------------------------------------------
 
@@ -191,7 +257,14 @@ class TextOverlay:
         bx, by = self.x + self.margin, self.y + self.margin
         return bx <= x <= bx + self.box_w and by <= y <= by + self.box_h
 
-    def hit_test(self, x: float, y: float, scroll: float) -> Hit | None:
+    def cursor_to_text(self, u: float, v: float) -> tuple[float, float]:
+        """Hand-box cursor (0..1, 0..1) -> a point on the rows of the text box."""
+        x0 = self.x + self.margin + self.pad
+        y0 = self.y + self.margin + self.pad
+        return x0 + u * (self.box_w - 2 * self.pad), y0 + v * (self.box_h - 2 * self.pad - 1)
+
+    def hit_test(self, x: float, y: float, scroll: float, snap: bool = False) -> Hit | None:
+        """Word under (x, y). With snap, the nearest word on the row, however far."""
         if not self.contains(x, y):
             return None
         lx = x - (self.x + self.margin + self.pad)
@@ -201,7 +274,7 @@ class TextOverlay:
             return None
         row = self.rows[ri]
         col = lx / self.char_w
-        best, best_d = None, 1.0  # allow up to one cell outside the word
+        best, best_d = None, math.inf if snap else 1.0  # else up to one cell outside the word
         for c, sp in row.spans:
             if sp.role != "word":
                 continue
@@ -210,34 +283,96 @@ class TextOverlay:
                 best, best_d = sp.word, d
         return Hit(row.sentence, best)
 
-    # --- drawing -----------------------------------------------------------
+    def word_box(self, hit: Hit, scroll: float) -> tuple[float, float, float, float] | None:
+        """Screen rectangle of a word, or None if it is scrolled out of view."""
+        pos = self._word_pos.get(hit)
+        if pos is None:
+            return None
+        ri, col, length = pos
+        y = self.pad + (ri - scroll) * self.line_h
+        if not 0 <= y + self.line_h * 0.5 < self.box_h:
+            return None
+        x0 = self.x + self.margin + self.pad + col * self.char_w
+        y0 = self.y + self.margin + y
+        return x0, y0, x0 + length * self.char_w, y0 + self.line_h * 0.8
 
-    def _render_backing(self) -> Image.Image:
-        backing = Image.new("RGBA", (self.patch_w, self.patch_h), (0, 0, 0, 0))
-        m = self.margin
-        ImageDraw.Draw(backing).rounded_rectangle(
-            (m, m, m + self.box_w, m + self.box_h), radius=self.pad, fill=BACKING
-        )
-        return backing.filter(ImageFilter.GaussianBlur(self.blur))
+    # --- labels ------------------------------------------------------------
 
-    def _render_band(self, state: ViewState, start: int) -> tuple[np.ndarray, np.ndarray]:
+    def label_lines(self, state: ViewState) -> tuple[str, str]:
+        """Kat's two-line state label: mode and level, then the operation."""
+        level = (state.level or "").upper()
+        if state.mode == "focus":
+            first = f"FOCUS BY {level}"
+            if state.level == "word" and state.focus is not None and state.focus.word is not None:
+                first += f'  "{self.word_text(state.focus)}"'
+        elif state.mode == "browse":
+            first = f"BROWSE BY {level}"
+        else:
+            first = "PREPARE"
+        ops = state.ops
+        if state.note:
+            second = state.note
+        elif state.drop_progress > 0:
+            second = "DROP HAND TO BACK OUT"
+        elif ops.kind == "ring":
+            second = "EXPLORE WORD ALTERNATIVES: PLACEHOLDER"
+            if ops.pointing:
+                second = f"PREVIEW: {self.ring_labels(state)[ops.picked].upper()}"
+        elif ops.kind == "tone":
+            tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
+            second = f"CHANGE SENTENCE TONE: {tone}"
+        elif ops.kind == "stretch":
+            change = "INCREASE" if ops.stretch > 1.05 else "DECREASE" if ops.stretch < 0.95 else "SAME"
+            second = f"ADJUST PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}"
+        else:
+            second = ""
+        return first, second
+
+    def ring_labels(self, state: ViewState) -> tuple[str, ...]:
+        original = self.word_text(state.focus) if state.focus and state.focus.word is not None else "original"
+        return (original, *RING_PLACEHOLDERS)
+
+    # --- drawing: text -----------------------------------------------------
+
+    def _get_font(self, size: int) -> ImageFont.ImageFont:
+        if size not in self._fonts:
+            self._fonts[size] = load_font(size)
+        return self._fonts[size]
+
+    def _backing(self, box_h: int) -> tuple[np.ndarray, np.ndarray]:
+        if box_h not in self._backings:
+            img = Image.new("RGBA", (self.patch_w, box_h + 2 * self.margin), (0, 0, 0, 0))
+            m = self.margin
+            ImageDraw.Draw(img).rounded_rectangle(
+                (m, m, m + self.box_w, m + box_h), radius=self.pad, fill=BACKING
+            )
+            self._backings[box_h] = _premultiply(img.filter(ImageFilter.GaussianBlur(self.blur)))
+        return self._backings[box_h]
+
+    def _band_style(self, state: ViewState) -> tuple:
+        """What the band's colours depend on (also its cache key)."""
+        if state.mode == "focus" and state.focus is not None:
+            return ("focus", state.focus.sentence)
+        if state.mode == "browse" and state.hover is not None:
+            return ("browse", tuple(self.unit(state.level, state.hover.sentence)))
+        return ("browse", (state.current,))
+
+    def _render_band(self, style: tuple, start: int) -> tuple[np.ndarray, np.ndarray]:
         """Rows start..start+band_rows, with row `start` at y = pad."""
         band_h = self.band_rows * self.line_h + 2 * self.pad
         text = Image.new("RGBA", (self.box_w, band_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(text)
+        kind, which = style
         for ri in range(start, min(len(self.rows), start + self.band_rows)):
             row = self.rows[ri]
             y = self.pad + (ri - start) * self.line_h
-            current = row.sentence == state.current
+            if kind == "focus":  # word focus: its sentence dim, the rest fainter
+                word_c, mark_c = (DIM, DIM_MARK) if row.sentence == which else (FAINT, FAINT_MARK)
+            else:
+                word_c, mark_c = (ORANGE, ORANGE_MARK) if row.sentence in which else (DIM, DIM_MARK)
             for col, sp in row.spans:
                 x = self.pad + col * self.char_w
-                color = (ORANGE_MARK if current else DIM_MARK) if sp.role == "mark" else (ORANGE if current else DIM)
-                if sp.role == "word" and state.selected == Hit(row.sentence, sp.word):
-                    x1 = x + len(sp.text) * self.char_w
-                    draw.rounded_rectangle((x - 1, y - 2, x1 + 1, y + self.line_h * 0.72),
-                                           radius=4, fill=SELECT_FILL)
-                    color = SELECT_TEXT
-                draw.text((x, y), sp.text, font=self.font, fill=color)
+                draw.text((x, y), sp.text, font=self.font, fill=mark_c if sp.role == "mark" else word_c)
         return _premultiply(text)
 
     def _band_valid(self, scroll: float) -> bool:
@@ -248,34 +383,163 @@ class TextOverlay:
         return top_ok and bottom_ok
 
     def _band_crop(self, state: ViewState) -> tuple[np.ndarray, np.ndarray]:
-        key = (state.current, state.selected)
+        key = self._band_style(state)
         if self._band_key != key or not self._band_valid(state.scroll):
             self._band_start = max(0, math.floor(state.scroll) - BAND_SLACK_ROWS)
-            self._band = self._render_band(state, self._band_start)
+            self._band = self._render_band(key, self._band_start)
             self._band_key = key
         off = round((state.scroll - self._band_start) * self.line_h)
         color, inv = self._band
         return color[off : off + self.box_h], inv[off : off + self.box_h]
 
-    def _draw_hover(self, frame: np.ndarray, state: ViewState) -> None:
-        # Drawn straight onto the frame so hovering never re-renders text.
-        pos = self._word_pos.get(state.hover) if state.hover else None
-        if pos is None:
-            return
-        ri, col, length = pos
-        y = self.pad + (ri - state.scroll) * self.line_h + self.line_h * 0.74
-        if not 0 <= y < self.box_h:
-            return
-        x0 = self.x + self.margin + self.pad + col * self.char_w
-        x1 = x0 + length * self.char_w
-        yy = int(self.y + self.margin + y)
-        cv2.line(frame, (int(x0), yy), (int(x1), yy), HOVER_LINE_BGR, 2, cv2.LINE_AA)
+    def _focus_panel(self, state: ViewState) -> tuple[int, tuple[np.ndarray, np.ndarray]]:
+        """Focused sentence or paragraph enlarged, faint context rows around it.
+
+        Returns (panel box height, premultiplied text). The panel grows past
+        the normal box only if the unit doesn't fit even at normal size.
+        """
+        unit = tuple(self.unit(state.level, state.focus.sentence))
+        if self._panel_key == unit:
+            return self._panel
+        sents = [self.sentences[i] for i in unit]
+        avail = self.box_h - 2 * self.pad
+        for scale in FOCUS_SCALES:
+            font = self._get_font(round(self.font_size * scale))
+            lh = round(self.line_h * scale)
+            cw = font.getlength("M")
+            rows = layout(sents, int((self.box_w - 2 * self.pad) / cw))
+            if len(rows) * lh <= avail:
+                break
+        big_h = len(rows) * lh
+        panel_h = max(self.box_h, min(big_h + 2 * self.pad, int(self.frame_h * 0.9)))
+        spare = panel_h - 2 * self.pad - big_h
+        first, last = self._first_row[unit[0]], self._last_row[unit[-1]]
+        above = self.rows[max(0, first - int(spare / 2 // self.line_h)) : first]
+        below = self.rows[last + 1 : last + 1 + int((spare - len(above) * self.line_h) // self.line_h)]
+        content = (len(above) + len(below)) * self.line_h + big_h
+        y = self.pad + max(0, (panel_h - 2 * self.pad - content) // 2)
+
+        img = Image.new("RGBA", (self.box_w, panel_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        def draw_rows(rows_, font_, lh_, cw_, word_c, mark_c, y_):
+            for row in rows_:
+                for col, sp in row.spans:
+                    draw.text((self.pad + col * cw_, y_), sp.text, font=font_,
+                              fill=mark_c if sp.role == "mark" else word_c)
+                y_ += lh_
+            return y_
+
+        y = draw_rows(above, self.font, self.line_h, self.char_w, FAINT, FAINT_MARK, y)
+        y = draw_rows(rows, font, lh, cw, FOCUS_TEXT, FOCUS_MARK, y)
+        draw_rows(below, self.font, self.line_h, self.char_w, FAINT, FAINT_MARK, y)
+        self._panel_key, self._panel = unit, (panel_h, _premultiply(img))
+        return self._panel
+
+    def _chip(self, text: str, size: int, fg, bg, outline=None) -> tuple[np.ndarray, np.ndarray]:
+        """A text label on a rounded rectangle, cached."""
+        key = (text, size, fg, bg, outline)
+        if key not in self._chips:
+            font = self._get_font(size)
+            ascent, descent = font.getmetrics()
+            px, py = max(4, size // 4), max(2, size // 8)
+            w, h = int(font.getlength(text)) + 2 * px, ascent + descent + 2 * py
+            img = Image.new("RGBA", (w + 2, h + 2), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            if bg is not None or outline is not None:
+                draw.rounded_rectangle((1, 1, w, h), radius=max(3, size // 5), fill=bg, outline=outline)
+            draw.text((1 + px, 1 + py), text, font=font, fill=fg)
+            self._chips[key] = _premultiply(img)
+        return self._chips[key]
+
+    def _blend_centered(self, frame: np.ndarray, chip, cx: float, cy: float) -> tuple[int, int, int, int]:
+        color, inv = chip
+        h, w = color.shape[:2]
+        x, y = int(cx - w / 2), int(cy - h / 2)
+        _blend(frame, x, y, color, inv)
+        return x, y, x + w, y + h
+
+    # --- drawing: HUD and operation stubs ----------------------------------
+
+    def _draw_label(self, frame: np.ndarray, state: ViewState, top: int) -> None:
+        first, second = self.label_lines(state)
+        big, small = round(self.font_size * 0.8), round(self.font_size * 0.6)
+        c1 = self._chip(first, big, ORANGE, None)
+        c2 = self._chip(second, small, ORANGE_MARK, None) if second else None
+        h = c1[0].shape[0] + (c2[0].shape[0] if c2 else 0)
+        x, y = self.x + self.margin + self.pad // 2, max(4, top - h - self.pad // 2)
+        _blend(frame, x, y, *c1)
+        if c2:
+            _blend(frame, x, y + c1[0].shape[0], *c2)
+
+    def _draw_ring(self, frame: np.ndarray, state: ViewState, center: tuple[float, float]) -> None:
+        labels = self.ring_labels(state)
+        n = len(labels)
+        cx, cy = center
+        rx, ry = 3.4 * self.line_h, 2.2 * self.line_h
+        size = round(self.font_size * 0.7)
+        for i, label in enumerate(labels):
+            a = math.radians(-90 + i * 360 / n)
+            nx, ny = cx + rx * math.cos(a), cy + ry * math.sin(a)
+            # Curved connector: quadratic Bezier bowed to one side.
+            mx, my = (cx + nx) / 2, (cy + ny) / 2
+            ctrl = (mx - (ny - cy) * 0.25, my + (nx - cx) * 0.25)
+            ts = np.linspace(0, 1, 16)[:, None]
+            curve = (1 - ts) ** 2 * np.array(center) + 2 * (1 - ts) * ts * np.array(ctrl) + ts ** 2 * np.array((nx, ny))
+            cv2.polylines(frame, [curve.astype(np.int32)], False, YELLOW_BGR, 1, cv2.LINE_AA)
+            if i == state.ops.picked:
+                chip = self._chip(label, size, CHIP_TEXT, CHIP_FILL)
+            else:
+                chip = self._chip(label, size, NODE_TEXT, DARK_FILL, NODE_OUTLINE)
+            self._blend_centered(frame, chip, nx, ny)
+
+    def _draw_gauge(self, frame: np.ndarray, tone: float, top: int, bottom: int) -> None:
+        """Vertical tone dial: cold (blue) at the top, warm (orange) at the bottom."""
+        x = int(self.x + self.margin + self.box_w + self.pad)
+        y0, y1 = top + self.pad, bottom - self.pad
+        for y in range(y0, y1, 2):
+            k = (y - y0) / max(1, y1 - y0)
+            color = tuple(int(c * (1 - k) + w * k) for c, w in zip(COLD_BGR, WARM_BGR))
+            cv2.line(frame, (x, y), (x, y + 1), color, 4)
+        ky = int(y0 + (tone + 1) / 2 * (y1 - y0))
+        cv2.circle(frame, (x, ky), 8, (20, 20, 20), -1, cv2.LINE_AA)
+        cv2.circle(frame, (x, ky), 8, (245, 245, 245), 2, cv2.LINE_AA)
 
     def draw(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
         """Composite the overlay onto `frame` in place and return it."""
-        _blend(frame, self.x, self.y, *self._backing)
-        _blend(frame, self.x + self.margin, self.y + self.margin, *self._band_crop(state))
-        self._draw_hover(frame, state)
+        box_top = self.y + self.margin
+        top, bottom = box_top, box_top + self.box_h
+        panel = state.mode == "focus" and state.focus is not None and state.level in ("sentence", "paragraph")
+        if panel:
+            panel_h, text = self._focus_panel(state)
+            top = max(0, box_top + (self.box_h - panel_h) // 2)
+            bottom = top + panel_h
+            _blend(frame, self.x, top - self.margin, *self._backing(panel_h))
+            _blend(frame, self.x + self.margin, top, *text)
+        else:
+            _blend(frame, self.x, self.y, *self._backing(self.box_h))
+            _blend(frame, self.x + self.margin, box_top, *self._band_crop(state))
+
+        # Word chips are drawn over the cached band, so hovering never re-renders text.
+        if state.mode == "browse" and state.level == "word" and state.hover and state.hover.word is not None:
+            if (box := self.word_box(state.hover, state.scroll)) is not None:
+                chip = self._chip(self.word_text(state.hover), self.font_size, CHIP_TEXT, CHIP_FILL)
+                self._blend_centered(frame, chip, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+        if state.mode == "focus" and state.level == "word" and state.focus and state.focus.word is not None:
+            if (box := self.word_box(state.focus, state.scroll)) is not None:
+                center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+                if state.ops.kind == "ring":
+                    self._draw_ring(frame, state, center)
+                text = self.ring_labels(state)[state.ops.picked] if state.ops.kind == "ring" else self.word_text(state.focus)
+                chip = self._chip(text, round(self.font_size * 1.3), ORANGE, DARK_FILL)
+                self._blend_centered(frame, chip, *center)
+
+        if state.mode == "focus" and state.ops.kind == "tone":
+            self._draw_gauge(frame, state.ops.tone, top, bottom)
+        if state.mode == "focus" and state.ops.stretch_ends is not None:
+            a, b = (tuple(int(v) for v in p) for p in state.ops.stretch_ends)
+            cv2.line(frame, a, b, (245, 245, 245), 2, cv2.LINE_AA)
+        self._draw_label(frame, state, top)
         return frame
 
 
@@ -287,10 +551,13 @@ def _premultiply(img: Image.Image) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _blend(frame: np.ndarray, x: int, y: int, color: np.ndarray, inv_alpha: np.ndarray) -> None:
+    """Alpha-composite a premultiplied patch at (x, y), clipped to the frame."""
     fh, fw = frame.shape[:2]
-    h = min(color.shape[0], fh - y)
-    w = min(color.shape[1], fw - x)
-    if h <= 0 or w <= 0:
+    x0, y0 = max(x, 0), max(y, 0)
+    x1, y1 = min(x + color.shape[1], fw), min(y + color.shape[0], fh)
+    if x1 <= x0 or y1 <= y0:
         return
-    region = frame[y : y + h, x : x + w]
-    region[:] = (region * inv_alpha[:h, :w] + color[:h, :w]).astype(np.uint8)
+    c = color[y0 - y : y1 - y, x0 - x : x1 - x]
+    a = inv_alpha[y0 - y : y1 - y, x0 - x : x1 - x]
+    region = frame[y0:y1, x0:x1]
+    region[:] = (region * a + c).astype(np.uint8)
