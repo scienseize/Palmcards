@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -30,12 +31,13 @@ ORANGE = (255, 140, 0, 255)
 ORANGE_MARK = (255, 140, 0, 150)
 DIM = (220, 220, 220, 110)
 DIM_MARK = (220, 220, 220, 60)
-HOVER_LINE = (255, 255, 255, 230)
+HOVER_LINE_BGR = (240, 240, 240)
 SELECT_FILL = (255, 140, 0, 235)
 SELECT_TEXT = (20, 20, 20, 255)
 BACKING = (10, 10, 12, 150)
 
 PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
+BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 
 
 def load_font(size: int) -> ImageFont.ImageFont:
@@ -134,8 +136,12 @@ class TextOverlay:
         self.font = load_font(max(18, h // 26))
         self.rows = layout(sentences, columns)
         self._first_row = {}
+        self._word_pos: dict[Hit, tuple[int, int, int]] = {}  # -> (row, column, length)
         for i, r in enumerate(self.rows):
             self._first_row.setdefault(r.sentence, i)
+            for col, sp in r.spans:
+                if sp.role == "word":
+                    self._word_pos[Hit(r.sentence, sp.word)] = (i, col, len(sp.text))
 
         ascent, descent = self.font.getmetrics()
         self.line_h = int((ascent + descent) * 1.45)
@@ -154,9 +160,13 @@ class TextOverlay:
         self.x = max(0, int(w * 0.05) - self.margin)
         self.y = max(0, (h - self.patch_h) // 2)
 
-        self._backing = self._render_backing()
-        self._cache_key = None
-        self._cache = None
+        self._backing = _premultiply(self._render_backing())
+        # Text is rendered into a band of rows taller than the window, so
+        # scrolling only moves a crop through it (see _band_crop).
+        self.band_rows = visible_rows + 2 * BAND_SLACK_ROWS
+        self._band_key = None
+        self._band = None
+        self._band_start = 0
 
     # --- scrolling ---------------------------------------------------------
 
@@ -210,14 +220,14 @@ class TextOverlay:
         )
         return backing.filter(ImageFilter.GaussianBlur(self.blur))
 
-    def _render_patch(self, state: ViewState) -> tuple[np.ndarray, np.ndarray]:
-        text = Image.new("RGBA", (self.box_w, self.box_h), (0, 0, 0, 0))
+    def _render_band(self, state: ViewState, start: int) -> tuple[np.ndarray, np.ndarray]:
+        """Rows start..start+band_rows, with row `start` at y = pad."""
+        band_h = self.band_rows * self.line_h + 2 * self.pad
+        text = Image.new("RGBA", (self.box_w, band_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(text)
-        first = max(0, math.floor(state.scroll) - 1)
-        last = min(len(self.rows), math.ceil(state.scroll) + self.visible_rows + 1)
-        for ri in range(first, last):
+        for ri in range(start, min(len(self.rows), start + self.band_rows)):
             row = self.rows[ri]
-            y = self.pad + (ri - state.scroll) * self.line_h
+            y = self.pad + (ri - start) * self.line_h
             current = row.sentence == state.current
             for col, sp in row.spans:
                 x = self.pad + col * self.char_w
@@ -228,29 +238,59 @@ class TextOverlay:
                                            radius=4, fill=SELECT_FILL)
                     color = SELECT_TEXT
                 draw.text((x, y), sp.text, font=self.font, fill=color)
-                if sp.role == "word" and state.hover == Hit(row.sentence, sp.word):
-                    uy = y + self.line_h * 0.74
-                    draw.line((x, uy, x + len(sp.text) * self.char_w, uy), fill=HOVER_LINE, width=2)
+        return _premultiply(text)
 
-        patch = self._backing.copy()
-        patch.alpha_composite(text, (self.margin, self.margin))
-        arr = np.asarray(patch, dtype=np.float32)
-        bgr = arr[..., 2::-1]  # RGBA -> BGR
-        alpha = arr[..., 3:4] / 255.0
-        return bgr * alpha, 1.0 - alpha  # premultiplied colour, inverse alpha
+    def _band_valid(self, scroll: float) -> bool:
+        start, end = self._band_start, self._band_start + self.band_rows
+        # One spare row each side so partly visible rows at the edges exist.
+        top_ok = start == 0 or start <= scroll - 1
+        bottom_ok = end >= len(self.rows) or scroll + self.visible_rows + 1 <= end
+        return top_ok and bottom_ok
+
+    def _band_crop(self, state: ViewState) -> tuple[np.ndarray, np.ndarray]:
+        key = (state.current, state.selected)
+        if self._band_key != key or not self._band_valid(state.scroll):
+            self._band_start = max(0, math.floor(state.scroll) - BAND_SLACK_ROWS)
+            self._band = self._render_band(state, self._band_start)
+            self._band_key = key
+        off = round((state.scroll - self._band_start) * self.line_h)
+        color, inv = self._band
+        return color[off : off + self.box_h], inv[off : off + self.box_h]
+
+    def _draw_hover(self, frame: np.ndarray, state: ViewState) -> None:
+        # Drawn straight onto the frame so hovering never re-renders text.
+        pos = self._word_pos.get(state.hover) if state.hover else None
+        if pos is None:
+            return
+        ri, col, length = pos
+        y = self.pad + (ri - state.scroll) * self.line_h + self.line_h * 0.74
+        if not 0 <= y < self.box_h:
+            return
+        x0 = self.x + self.margin + self.pad + col * self.char_w
+        x1 = x0 + length * self.char_w
+        yy = int(self.y + self.margin + y)
+        cv2.line(frame, (int(x0), yy), (int(x1), yy), HOVER_LINE_BGR, 2, cv2.LINE_AA)
 
     def draw(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
         """Composite the overlay onto `frame` in place and return it."""
-        key = (state.current, state.hover, state.selected, round(state.scroll, 2))
-        if self._cache_key != key:
-            self._cache = self._render_patch(state)
-            self._cache_key = key
-        color, inv_alpha = self._cache
-
-        fh, fw = frame.shape[:2]
-        h = min(self.patch_h, fh - self.y)
-        w = min(self.patch_w, fw - self.x)
-        region = frame[self.y : self.y + h, self.x : self.x + w]
-        blended = region * inv_alpha[:h, :w] + color[:h, :w]
-        region[:] = blended.astype(np.uint8)
+        _blend(frame, self.x, self.y, *self._backing)
+        _blend(frame, self.x + self.margin, self.y + self.margin, *self._band_crop(state))
+        self._draw_hover(frame, state)
         return frame
+
+
+def _premultiply(img: Image.Image) -> tuple[np.ndarray, np.ndarray]:
+    """RGBA image -> (premultiplied BGR float32, inverse alpha)."""
+    arr = np.asarray(img, dtype=np.float32)
+    alpha = arr[..., 3:4] / 255.0
+    return arr[..., 2::-1] * alpha, 1.0 - alpha
+
+
+def _blend(frame: np.ndarray, x: int, y: int, color: np.ndarray, inv_alpha: np.ndarray) -> None:
+    fh, fw = frame.shape[:2]
+    h = min(color.shape[0], fh - y)
+    w = min(color.shape[1], fw - x)
+    if h <= 0 or w <= 0:
+        return
+    region = frame[y : y + h, x : x + w]
+    region[:] = (region * inv_alpha[:h, :w] + color[:h, :w]).astype(np.uint8)
