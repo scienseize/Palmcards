@@ -1,11 +1,12 @@
 """PalmCards entry point.
 
-Milestone 1: mirrored webcam feed with the sample notes overlaid in the demo
-style. Keyboard is a dev-only stand-in until gestures land in milestone 3:
+  python main.py [NOTES_FILE]     (.txt, .md or .docx; defaults to the sample)
+
+Mirrored webcam feed with the notes overlaid in the demo style, marks shown
+as written. Keyboard is a dev-only stand-in until gestures land in milestone 3:
   space / j  next sentence     k  previous sentence     q / Esc  quit
 """
 
-import re
 import sys
 import time
 from pathlib import Path
@@ -13,21 +14,24 @@ from pathlib import Path
 import cv2
 
 from palmcards.capture import Camera, CameraError
+from palmcards.notes import load_notes
 from palmcards.render import TextOverlay
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 WINDOW = "PalmCards"
 
 
-def naive_sentences(text: str) -> list[str]:
-    """Placeholder split until notes.py (milestone 2). Marks are shown raw."""
-    lines = [line for line in text.splitlines() if line.strip() and not line.startswith("#")]
-    # Don't split before a trailing [mark] so it stays with its sentence.
-    return [s.strip() for line in lines for s in re.split(r"(?<=[.?!])\s+(?!\[)", line) if s.strip()]
-
-
 def main() -> int:
-    sentences = naive_sentences(SAMPLE.read_text())
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else SAMPLE
+    try:
+        notes = load_notes(path)
+    except (OSError, ValueError) as exc:
+        print(f"Could not open notes: {exc}", file=sys.stderr)
+        return 1
+    for warning in notes.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    sentences = [s.raw for s in notes.sentences]
+
     try:
         camera = Camera()
     except CameraError as exc:

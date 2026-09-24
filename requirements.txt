@@ -3,6 +3,10 @@ opencv-python
 numpy
 Pillow
 
+# Milestone 2: notes parsing
+python-docx
+markdown-it-py
+
 # Milestone 3+: hands, face, pose (models downloaded by scripts/download_models.py)
 mediapipe
 
