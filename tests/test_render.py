@@ -96,9 +96,11 @@ def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
-    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "EXPLORE WORD ALTERNATIVES: PLACEHOLDER")
+    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "EXPLORE WORD ALTERNATIVES: L-HAND TO POINT")
     focus.ops.pointing, focus.ops.picked = True, 4
-    assert ov.label_lines(focus)[1] == "PREVIEW: STRESS"
+    assert ov.label_lines(focus)[1].startswith("PREVIEW: STRESS")
+    focus.ops = OpsView()
+    assert ov.label_lines(focus)[1].startswith("OPEN PALM: ALTERNATIVES")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
     assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "CHANGE SENTENCE TONE: WARM")
     tone.drop_progress = 0.4

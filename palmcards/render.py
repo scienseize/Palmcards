@@ -54,7 +54,12 @@ PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 FOCUS_SCALES = (1.3, 1.15, 1.0)  # largest that fits the text box wins
 RING_PLACEHOLDERS = ("alt 1", "alt 2", "alt 3", "stress", "hear it")  # node 0 is the original word
-RING_DEAD_ZONE = 0.12  # cursor this close to the hand-box centre keeps the pick
+RING_DEAD_ZONE = 0.12
+FOCUS_HINTS = {
+    "word": "OPEN PALM: ALTERNATIVES  /  DROP HAND: BACK",
+    "sentence": "L-HAND, THEN TILT: TONE  /  DROP HAND: BACK",
+    "paragraph": "TWO L-HANDS: LENGTH  /  DROP HAND: BACK",
+}  # cursor this close to the hand-box centre keeps the pick
 
 
 def load_font(size: int) -> ImageFont.ImageFont:
@@ -315,15 +320,17 @@ class TextOverlay:
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
-            second = "EXPLORE WORD ALTERNATIVES: PLACEHOLDER"
+            second = "EXPLORE WORD ALTERNATIVES: L-HAND TO POINT"
             if ops.pointing:
-                second = f"PREVIEW: {self.ring_labels(state)[ops.picked].upper()}"
+                second = f"PREVIEW: {self.ring_labels(state)[ops.picked].upper()}  (PINCH + LIFT TO COMMIT)"
         elif ops.kind == "tone":
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
             second = f"CHANGE SENTENCE TONE: {tone}"
         elif ops.kind == "stretch":
             change = "INCREASE" if ops.stretch > 1.05 else "DECREASE" if ops.stretch < 0.95 else "SAME"
             second = f"ADJUST PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}"
+        elif state.mode == "focus":  # nothing started yet: say what the next shape does
+            second = FOCUS_HINTS.get(state.level, "")
         else:
             second = ""
         return first, second
@@ -463,7 +470,7 @@ class TextOverlay:
 
     def _draw_label(self, frame: np.ndarray, state: ViewState, top: int) -> None:
         first, second = self.label_lines(state)
-        big, small = round(self.font_size * 0.8), round(self.font_size * 0.6)
+        big, small = round(self.font_size * 0.9), round(self.font_size * 0.7)
         c1 = self._chip(first, big, ORANGE, None)
         c2 = self._chip(second, small, ORANGE_MARK, None) if second else None
         h = c1[0].shape[0] + (c2[0].shape[0] if c2 else 0)
@@ -475,18 +482,24 @@ class TextOverlay:
     def _draw_ring(self, frame: np.ndarray, state: ViewState, center: tuple[float, float]) -> None:
         labels = self.ring_labels(state)
         n = len(labels)
+        rx, ry = 4.4 * self.line_h, 2.6 * self.line_h
+        size = round(self.font_size * 0.85)
+        # Centre the ring on the word, shifted so every node stays on screen;
+        # the connectors still start at the word.
+        widest = max(self._chip(label, size, NODE_TEXT, DARK_FILL, NODE_OUTLINE)[0].shape[1] for label in labels)
+        edge = rx + widest / 2 + 8
+        rcx = min(max(center[0], edge), self.frame_w - edge)
+        rcy = min(max(center[1], ry + self.line_h), self.frame_h - ry - self.line_h)
         cx, cy = center
-        rx, ry = 3.4 * self.line_h, 2.2 * self.line_h
-        size = round(self.font_size * 0.7)
         for i, label in enumerate(labels):
             a = math.radians(-90 + i * 360 / n)
-            nx, ny = cx + rx * math.cos(a), cy + ry * math.sin(a)
+            nx, ny = rcx + rx * math.cos(a), rcy + ry * math.sin(a)
             # Curved connector: quadratic Bezier bowed to one side.
             mx, my = (cx + nx) / 2, (cy + ny) / 2
             ctrl = (mx - (ny - cy) * 0.25, my + (nx - cx) * 0.25)
             ts = np.linspace(0, 1, 16)[:, None]
             curve = (1 - ts) ** 2 * np.array(center) + 2 * (1 - ts) * ts * np.array(ctrl) + ts ** 2 * np.array((nx, ny))
-            cv2.polylines(frame, [curve.astype(np.int32)], False, YELLOW_BGR, 1, cv2.LINE_AA)
+            cv2.polylines(frame, [curve.astype(np.int32)], False, YELLOW_BGR, 2 if i == state.ops.picked else 1, cv2.LINE_AA)
             if i == state.ops.picked:
                 chip = self._chip(label, size, CHIP_TEXT, CHIP_FILL)
             else:
