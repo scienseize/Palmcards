@@ -41,7 +41,10 @@ class Timing:
     commit_window_s: float = 0.6
     commit_rise: float = 0.15  # wrist rise while pinched, fraction of frame height
     drop_s: float = 1.0  # hand gone this long while focused = back out
-    drop_band: float = 0.9  # wrist below this fraction of frame height counts as gone
+    # The whole hand (its highest landmark) below this fraction of frame
+    # height counts as gone. Not the wrist: at chest height the wrist is
+    # often at or below the bottom edge of a laptop camera's frame.
+    drop_band: float = 0.9
     browse_lost_s: float = 0.3  # hand gone this long while browsing = idle
 
 

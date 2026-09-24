@@ -580,9 +580,11 @@ class Grammar:
 
     def _update_focus(self, t: float, track_events: dict[str, list[str]], events: list[GestureEvent]) -> None:
         s, p = self.state, self.state.primary
-        gone = p is None or p.hand.points[WRIST][1] > TIMING.drop_band * self.h
+        gone = "no hand" if p is None else "low" if p.hand.points[:, 1].min() > TIMING.drop_band * self.h else None
         if gone:
-            self._gone_since = t if self._gone_since is None else self._gone_since
+            if self._gone_since is None:
+                self._gone_since = t
+                self.log(t, "drop_start", reason=gone)
             s.drop_progress = min(1.0, (t - self._gone_since) / TIMING.drop_s)
             if s.drop_progress >= 1.0:
                 self._leave_focus("back", t, events)

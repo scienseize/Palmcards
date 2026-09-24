@@ -286,11 +286,21 @@ def test_drop_hand_for_one_second_backs_out():
     assert [e.kind for e in events] == ["back"]
 
 
-def test_hand_below_bottom_band_counts_as_dropped():
+def test_whole_hand_below_bottom_band_counts_as_dropped():
     g = Grammar((W, H))
     _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3))
-    events, _ = run(g, hold(pinch, 1.1, origin=(960, H * 0.95)), t)
+    events, _ = run(g, hold(pinch, 1.1, origin=(960, H + 150)), t)  # fingertips in the band too
     assert [e.kind for e in events] == ["back"]
+
+
+def test_low_wrist_with_raised_fingers_stays_focused_and_operates():
+    # Chest height on a laptop camera: wrist at or below the bottom edge.
+    low = (960, H * 0.98)
+    g = Grammar((W, H))
+    _, t = run(g, hold(one, 0.3, origin=low) + hold(pinch, 0.3, origin=low))
+    events, t = run(g, hold(open_palm, 1.5, origin=low), t)
+    assert events == [] and g.state.mode == "focus" and g.state.op == "ring"
+    assert g.state.drop_progress == 0.0
 
 
 def test_browse_goes_idle_when_the_hand_leaves():
