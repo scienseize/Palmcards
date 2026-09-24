@@ -1,6 +1,8 @@
 # Milestone 1: camera, compositing, text rendering
-opencv-python
-numpy
+# opencv-contrib-python (not opencv-python): mediapipe depends on it, and
+# having both installed makes them fight over the cv2 module.
+opencv-contrib-python==4.11.0.86
+numpy<2
 Pillow
 
 # Milestone 2: notes parsing
@@ -8,7 +10,10 @@ python-docx
 markdown-it-py
 
 # Milestone 3+: hands, face, pose (models downloaded by scripts/download_models.py)
-mediapipe
+# Pinned: mediapipe 1.0.1 aborts on macOS when the hand graph starts
+# ("graph_service.h Check failed: service_ Service is unavailable" in
+# DrishtiMetalHelper), even with the CPU delegate.
+mediapipe==0.10.21
 
 # Tests
 pytest
