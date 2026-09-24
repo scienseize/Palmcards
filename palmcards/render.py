@@ -54,7 +54,6 @@ PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 FOCUS_SCALES = (1.3, 1.15, 1.0)  # largest that fits the text box wins
 RING_PLACEHOLDERS = ("alt 1", "alt 2", "alt 3", "stress", "hear it")  # node 0 is the original word
-RING_DEAD_ZONE = 0.12
 FOCUS_HINTS = {
     "word": "OPEN PALM: ALTERNATIVES  /  DROP HAND: BACK",
     "sentence": "L-HAND, THEN TILT: TONE  /  DROP HAND: BACK",
@@ -80,7 +79,7 @@ class OpsView:
     """What the operation stubs show; filled from the gesture state."""
 
     kind: str | None = None  # ring | tone | stretch
-    picked: int = 0  # ring node, 0 = original word
+    picked: int = 0  # ring node, 0 = original word, clockwise from the top
     pointing: bool = False
     tone: float = 0.0  # -1 cold .. 1 warm
     stretch: float = 1.0
@@ -157,19 +156,6 @@ def layout(sentences: list[Sentence], columns: int) -> list[Row]:
                 col += len(sp.text)
         rows.append(row)
     return rows
-
-
-def ring_pick(u: float, v: float, n: int, previous: int) -> int:
-    """Ring node the hand points at: direction from the hand-box centre.
-
-    Node i sits at -90 + i * 360/n degrees (0 at the top, clockwise), the
-    same angles the ring is drawn at.
-    """
-    dx, dy = u - 0.5, v - 0.5
-    if math.hypot(dx, dy) < RING_DEAD_ZONE:
-        return previous
-    angle = (math.degrees(math.atan2(dy, dx)) + 90) % 360
-    return round(angle / (360 / n)) % n
 
 
 class TextOverlay:
@@ -320,7 +306,7 @@ class TextOverlay:
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
-            second = "EXPLORE WORD ALTERNATIVES: L-HAND TO POINT"
+            second = "EXPLORE WORD ALTERNATIVES: TURN AN L-HAND"
             if ops.pointing:
                 second = f"PREVIEW: {self.ring_labels(state)[ops.picked].upper()}  (PINCH + LIFT TO COMMIT)"
         elif ops.kind == "tone":

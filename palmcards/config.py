@@ -64,6 +64,8 @@ class Cursor:
 @dataclass(frozen=True)
 class Ops:
     tone_range_deg: float = 45.0  # tilt from the start angle for full warm/cold
+    knob_step_deg: float = 15.0  # L-hand turn per options-ring node
+    knob_hysteresis: float = 0.2  # of a step, past the boundary before the node changes
     stretch_min: float = 0.5  # length ratio clamp
     stretch_max: float = 2.0
 

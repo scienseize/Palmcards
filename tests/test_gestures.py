@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from palmcards.config import CURSOR, TIMING
+from palmcards.config import CURSOR, OPS, TIMING
 from palmcards.gestures import (
     FIST, FLAT, L, NONE, ONE, OPEN, PINCH, TWO,
     Grammar, Hand, HandTrack, RelativeCursor, classify, features,
@@ -238,6 +238,46 @@ def test_pinch_right_after_commit_does_not_refocus():
     assert events == [] and g.state.mode == "browse"
     events, _ = run(g, hold(one, 0.3) + hold(pinch, 0.3), t)
     assert [e.kind for e in events] == ["focus"]
+
+
+def ring_focus():
+    g = Grammar((W, H))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.3))
+    assert g.state.op == "ring"
+    return g, t
+
+
+def test_ring_knob_steps_with_l_hand_turn():
+    g, t = ring_focus()
+    step = OPS.knob_step_deg
+    _, t = run(g, hold(l_hand, 0.3, rotate=-20), t)  # wherever the hand starts is zero
+    assert g.state.pointing and g.state.knob == 0
+    _, t = run(g, hold(l_hand, 0.1, rotate=-20 + 2 * step), t)
+    assert g.state.knob == 2  # clockwise
+    _, t = run(g, hold(l_hand, 0.1, rotate=-20 - step), t)
+    assert g.state.knob == -1  # anticlockwise; the node is knob mod the node count
+
+
+def test_ring_knob_hysteresis_and_continuity():
+    g, t = ring_focus()
+    step = OPS.knob_step_deg
+    _, t = run(g, hold(l_hand, 0.3), t)
+    _, t = run(g, hold(l_hand, 0.1, rotate=0.6 * step), t)  # just past the boundary
+    assert g.state.knob == 0
+    _, t = run(g, hold(l_hand, 0.1, rotate=0.8 * step), t)
+    assert g.state.knob == 1
+    _, t = run(g, hold(l_hand, 0.1, rotate=0.6 * step), t)  # back a little: stays
+    assert g.state.knob == 1
+    # Let go and pick the knob up again at a new angle: it continues from 1.
+    _, t = run(g, hold(open_palm, 0.3) + hold(l_hand, 0.3, rotate=40) + hold(l_hand, 0.1, rotate=40 + step), t)
+    assert g.state.knob == 2
+
+
+def test_thumb_drifting_in_does_not_freeze_a_started_control():
+    g, t = ring_focus()
+    _, t = run(g, hold(l_hand, 0.3), t)
+    _, t = run(g, hold(one, 0.3, rotate=2 * OPS.knob_step_deg), t)  # thumb in, still turning
+    assert g.state.pointing and g.state.knob == 2
 
 
 def test_sentence_fold_focus_and_tone_dial_is_relative():

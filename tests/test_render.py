@@ -1,7 +1,7 @@
 import numpy as np
 
 from palmcards.notes import parse_text
-from palmcards.render import Hit, OpsView, TextOverlay, ViewState, layout, ring_pick, sentence_units
+from palmcards.render import Hit, OpsView, TextOverlay, ViewState, layout, sentence_units
 
 TEXT = (
     "[slow] Thank you for *being* here. / Truly. [rise]\n\n"
@@ -96,7 +96,7 @@ def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
-    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "EXPLORE WORD ALTERNATIVES: L-HAND TO POINT")
+    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "EXPLORE WORD ALTERNATIVES: TURN AN L-HAND")
     focus.ops.pointing, focus.ops.picked = True, 4
     assert ov.label_lines(focus)[1].startswith("PREVIEW: STRESS")
     focus.ops = OpsView()
@@ -105,13 +105,6 @@ def test_label_lines_follow_mode_and_operation():
     assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "CHANGE SENTENCE TONE: WARM")
     tone.drop_progress = 0.4
     assert ov.label_lines(tone)[1] == "DROP HAND TO BACK OUT"
-
-
-def test_ring_pick_by_direction_with_dead_zone():
-    assert ring_pick(0.5, 0.0, 6, previous=3) == 0  # up
-    assert ring_pick(1.0, 0.25, 6, previous=3) == 1  # up and to the right
-    assert ring_pick(0.5, 1.0, 6, previous=0) == 3  # down
-    assert ring_pick(0.52, 0.5, 6, previous=4) == 4  # centre keeps the pick
 
 
 def test_draw_focus_states_and_stubs():

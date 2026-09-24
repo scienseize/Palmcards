@@ -13,7 +13,7 @@ the right of the frame; it steers the highlight in the text on the left.
   top or bottom of the box scroll
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
                            focus
-  open palm (word)         options ring (placeholders); L-hand points at a node
+  open palm (word)         options ring (placeholders); turn an L-hand like a knob to pick
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
   two L-hands (paragraph)  length stretch
   pinch + lift             commit (logged only, no text changes yet)
@@ -39,7 +39,7 @@ from palmcards.gestures import (
     GestureEvent, GestureLog, Grammar, HandTracker, draw_fingertips, draw_hand_box, draw_landmarks,
 )
 from palmcards.notes import load_notes
-from palmcards.render import Hit, OpsView, TextOverlay, ViewState, ring_pick
+from palmcards.render import Hit, OpsView, TextOverlay, ViewState
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = Path(__file__).parent / "sessions" / "screens"
@@ -62,8 +62,8 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     ops = view.ops
     ops.kind, ops.pointing, ops.tone, ops.stretch = gs.op, gs.pointing, gs.tone, gs.stretch
     ops.stretch_ends = gs.stretch_ends
-    if gs.op == "ring" and gs.pointing and gs.cursor is not None:
-        ops.picked = ring_pick(*gs.cursor, len(overlay.ring_labels(view)), ops.picked)
+    if gs.op == "ring":
+        ops.picked = gs.knob % len(overlay.ring_labels(view))
 
 
 def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog) -> float | None:

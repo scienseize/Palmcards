@@ -43,7 +43,7 @@ The gesture grammar is adapted from Kat's "Gestural editing/writing" demo. Frame
 
 1. **Hand shape picks the scope.** One finger = word, two fingers together = sentence, flat hand = paragraph/section. Holding the shape puts you in Browse at that level; the highlight follows your hand.
 2. **Closing the hand focuses.** Pinch (word) or fold the extended fingers down onto the thumb (sentence, paragraph). Everything else dims and the focused unit enlarges.
-3. **A second shape operates on the focus.** Open palm spreads options; an L-hand (thumb + index out) points at options or turns a dial; two L-hands stretch.
+3. **A second shape operates on the focus.** Open palm spreads options; an L-hand (thumb + index out) turns a knob through options or turns a dial; two L-hands stretch. An L starts a control; once started it keeps tracking while the index stays up, even if the thumb drifts in.
 4. **Pinch and lift commits.** Pinch, then raise the pinched hand ~15% of frame height within ~0.6 s. The change is applied and you zoom back out to Browse at the same level.
 5. **Drop the hand to back out.** Hand out of frame (or below the bottom band) for 1 s while focused = discard the preview, return to Browse. The original always stays in any options ring, so undo = focus again and pick the original.
 
@@ -53,7 +53,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 
 | Level | Browse | Focus | Operate | Commit |
 | --- | --- | --- | --- | --- |
-| Word | One finger up | Pinch | Open palm: ring of alternatives (LLM synonyms) plus a **stress** node and a **hear it** node (macOS `say`). L-hand points to preview a node live in the text | Pinch + lift |
+| Word | One finger up | Pinch | Open palm: ring of alternatives (LLM synonyms) plus a **stress** node and a **hear it** node (macOS `say`). turn the L-hand like a knob (~15° per node, relative to where it starts) to preview a node live in the text | Pinch + lift |
 | Sentence | Two fingers together | Fold fingers to thumb | L-hand tilt = **tone dial** (tilt toward screen right = conversational/warm, left = formal/cold), dial is relative to the angle when the dial appears. Open palm: spread LLM-suggested delivery marks for this sentence, faded; L-hand points to toggle each | Pinch + lift |
 | Paragraph / section | Flat hand, fingers together | Fold fingers to thumb | Two L-hands: distance between index tips = **length** (apart = fuller, together = shorter), relative to the distance when both hands appear | Pinch + lift (either hand) |
 

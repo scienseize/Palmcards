@@ -11,7 +11,7 @@ Pipeline per hand result:
 The grammar (Kat's "gestural editing/writing"):
   shape picks the scope     ONE = word, TWO = sentence, FLAT = paragraph
   close the hand to focus   PINCH (word) or FOLD fingers onto the thumb
-  second shape operates     OPEN = options ring (word), L tilt = tone dial
+  second shape operates     OPEN = options ring, L turn = ring knob (word), L tilt = tone dial
                             (sentence), two L hands = length stretch (paragraph)
   pinch + lift commits      back to Browse at the same level
   drop the hand backs out   out of frame or below the bottom band for 1 s
@@ -442,7 +442,8 @@ class GestureState:
     op: str | None = None  # ring | tone | stretch (stubs)
     cursor: tuple[float, float] | None = None  # (u, v) in the hand box
     scroll_rate: float = 0.0  # rows per second
-    pointing: bool = False  # L-hand pointing at ring nodes
+    pointing: bool = False  # L-hand turning the ring knob
+    knob: int = 0  # ring steps turned since the ring opened; node = knob mod nodes
     tone: float = 0.0  # -1 cold .. 1 warm
     stretch: float = 1.0  # length ratio
     stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
@@ -467,6 +468,7 @@ class Grammar:
         self._commit_armed_t: float | None = None  # focus: pinch released at this time
         self._tilt0: float | None = None
         self._d0: float | None = None
+        self._knob0: float | None = None
 
     # -- hands --
 
@@ -561,11 +563,11 @@ class Grammar:
     def _enter_focus(self, t: float, events: list[GestureEvent]) -> None:
         s = self.state
         s.mode, s.op, s.scroll_rate = "focus", None, 0.0
-        s.pointing, s.tone, s.stretch, s.stretch_ends, s.drop_progress = False, 0.0, 1.0, None, 0.0
+        s.pointing, s.knob, s.tone, s.stretch, s.stretch_ends, s.drop_progress = False, 0, 0.0, 1.0, None, 0.0
         self._focus_armed = False
         self._commit_armed_t = None
         self._gone_since = None
-        self._tilt0 = self._d0 = None
+        self._tilt0 = self._d0 = self._knob0 = None
         events.append(GestureEvent("focus", t, s.level))
         self.log(t, "focus", level=s.level)
 
@@ -605,6 +607,15 @@ class Grammar:
 
         self._operate(t, events)
 
+    def _holds_l(self, track: HandTrack | None, started: bool) -> bool:
+        """An L starts a control; once started, any shape with the index up
+        keeps it going, so a thumb drifting in mid-movement doesn't freeze it."""
+        if track is None:
+            return False
+        if not started:
+            return track.stable == L
+        return track.feat.extended[0] and not track.pinching and track.raw in (L, ONE, NONE)
+
     def _operate(self, t: float, events: list[GestureEvent]) -> None:
         s, p, q = self.state, self.state.primary, self.state.secondary
         if s.level == "word":
@@ -612,11 +623,21 @@ class Grammar:
                 s.op = "ring"
                 self.log(t, "op", op="ring")
             if s.op == "ring":
-                s.pointing = p.stable == L
-                if p.raw == L:
-                    s.cursor = self.cursor.update(p.hand.point(INDEX_TIP), t)
+                # A knob: turning the L-hand steps through the nodes, relative
+                # to the angle it had when it appeared, with a little
+                # hysteresis so a node doesn't flicker at a step boundary.
+                s.pointing = self._holds_l(p, self._knob0 is not None)
+                if s.pointing:
+                    tilt = p.feat.tilt
+                    if self._knob0 is None:
+                        self._knob0 = tilt - s.knob * OPS.knob_step_deg
+                    pos = (tilt - self._knob0) / OPS.knob_step_deg
+                    if abs(pos - s.knob) > 0.5 + OPS.knob_hysteresis:
+                        s.knob = round(pos)
+                else:
+                    self._knob0 = None
         elif s.level == "sentence":
-            if p.stable == L and p.raw == L:
+            if self._holds_l(p, self._tilt0 is not None):
                 tilt = p.feat.tilt
                 if s.op != "tone":
                     s.op, self._tilt0 = "tone", tilt
@@ -627,7 +648,8 @@ class Grammar:
             else:
                 self._tilt0 = None
         elif s.level == "paragraph":
-            if q is not None and p.stable == L and q.stable == L and p.raw == L and q.raw == L:
+            started = self._d0 is not None
+            if self._holds_l(p, started) and self._holds_l(q, started):
                 a, b = p.hand.point(INDEX_TIP), q.hand.point(INDEX_TIP)
                 d = math.dist(a, b) / ((p.hand.size + q.hand.size) / 2)
                 if s.op != "stretch":
