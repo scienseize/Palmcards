@@ -3,10 +3,10 @@ import math
 import numpy as np
 import pytest
 
-from palmcards.config import CURSOR, OPS, TIMING
+from palmcards.config import CURSOR, OPS, REHEARSE, TIMING
 from palmcards.gestures import (
     FIST, FLAT, L, NONE, ONE, OPEN, PINCH, TWO,
-    Grammar, Hand, HandTrack, RelativeCursor, classify, features,
+    Grammar, Hand, HandTrack, ModeMachine, RelativeCursor, classify, features,
 )
 
 W, H = 1280, 720
@@ -357,3 +357,95 @@ def test_level_follows_hand_shape():
     assert g.state.level == "paragraph"
     run(g, hold(two, 0.3), t)
     assert g.state.level == "sentence"
+
+
+# --- modes: fist to start, count-in, command zone ---------------------------------
+
+ZONE = (1100, 250)  # palm centre well inside the command zone (top right)
+
+
+def kinds(events):
+    return [e.kind for e in events]
+
+
+def test_fist_held_one_second_starts_the_count_in():
+    m = ModeMachine((W, H))
+    events, t = run(m, hold(fist, 0.9))
+    assert events == [] and 0.5 < m.start_progress < 1.0
+    events, t = run(m, hold(fist, 0.4), t)
+    assert kinds(events) == ["count_in"] and m.mode == "count_in"
+    assert m.tick(t) == []
+    assert kinds(m.tick(t + REHEARSE.count_in_s)) == ["take_start"] and m.mode == "rehearse"
+
+
+def test_fist_while_focused_does_not_start_a_take():
+    m = ModeMachine((W, H))
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3))
+    assert m.state.mode == "focus"
+    events, _ = run(m, hold(fist, 1.5), t)
+    assert "count_in" not in kinds(events) and m.mode == "prepare"
+
+
+def rehearsing(m=None, t=0.0):
+    m = m or ModeMachine((W, H))
+    events, t = run(m, hold(fist, 1.3), t)
+    assert kinds(events) == ["count_in"]
+    t += REHEARSE.count_in_s
+    assert kinds(m.tick(t)) == ["take_start"]
+    return m, t
+
+
+def test_rehearse_ignores_the_grammar_outside_the_zone():
+    m, t = rehearsing()
+    events, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(fist, 1.5) + hold(open_palm, 2.0), t)
+    assert events == [] and m.mode == "rehearse" and m.state.mode == "idle"
+
+
+def test_open_palm_held_in_zone_stops_the_take_into_review():
+    m, t = rehearsing()
+    events, t = run(m, hold(open_palm, 1.2, origin=ZONE), t)
+    assert events == [] and m.zone.active and 0.5 < m.zone.stop_progress < 1.0
+    events, t = run(m, hold(open_palm, 0.6, origin=ZONE), t)
+    assert kinds(events) == ["take_stop"] and m.mode == "review"
+    assert not m.grammar.operations
+
+    # Review browses and focuses like Prepare, without the operations.
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.5), t)
+    assert m.state.mode == "focus" and m.state.op is None
+
+
+def flick(dx, n=6, start=ZONE, make=one):
+    return [make(origin=(start[0] + dx * i / n, start[1])) for i in range(1, n + 1)]
+
+
+def test_flick_in_zone_is_next_section_once():
+    m, t = rehearsing()
+    events, t = run(m, hold(one, 0.4, origin=ZONE) + flick(-150) + hold(one, 0.3, origin=(ZONE[0] - 150, ZONE[1])), t)
+    assert kinds(events) == ["next_section"]
+    # Flicking straight back inside the cooldown does nothing.
+    events, t = run(m, flick(150, start=(ZONE[0] - 150, ZONE[1])), t)
+    assert events == []
+
+
+def test_slow_moves_and_hands_arriving_in_the_zone_are_not_flicks():
+    m, t = rehearsing()
+    events, t = run(m, hold(one, 0.4, origin=ZONE) + flick(-150, n=30), t)  # 1 s
+    assert events == []
+    # Swept in from outside the zone: never settled there before moving.
+    m, t = rehearsing()
+    events, _ = run(m, flick(300, start=(760, 250)) + hold(one, 0.3, origin=(1060, 250)), t)
+    assert events == []
+
+
+def test_open_palm_in_zone_during_count_in_cancels():
+    for back_to in ("prepare", "review"):
+        m, t = ModeMachine((W, H)), 0.0
+        if back_to == "review":
+            m, t = rehearsing(m)
+            _, t = run(m, hold(open_palm, 1.8, origin=ZONE), t)
+            assert m.mode == "review"
+        events, t = run(m, hold(fist, 1.3), t)
+        assert m.mode == "count_in"
+        events, t = run(m, hold(open_palm, 1.8, origin=ZONE), t)
+        assert kinds(events) == ["count_in_cancel"] and m.mode == back_to
+        assert m.tick(t + REHEARSE.count_in_s) == []

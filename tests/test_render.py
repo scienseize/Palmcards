@@ -124,6 +124,44 @@ def test_long_paragraph_focus_panel_grows_to_fit():
     long = " ".join(f"Sentence number {i} has a few more words in it." for i in range(8))
     ov = TextOverlay(parse_text(long).sentences, (1280, 720))
     view = ViewState(mode="focus", level="paragraph", focus=Hit(0, None))
-    panel_h, _ = ov._focus_panel(view)
+    panel_h, _ = ov._focus_panel(ov._panel_unit(view))
     assert panel_h > ov.box_h
     ov.draw(np.full((720, 1280, 3), 128, np.uint8), view)
+
+
+SECTIONS = "# One\n\nFirst here. Second here.\n\n# Two\n\nThird here."
+
+
+def test_section_unit_and_rehearse_panel_shows_the_section():
+    ov = TextOverlay(parse_text(SECTIONS, "md").sentences, (1280, 720))
+    assert ov.unit("section", 1) == [0, 1]
+    assert ov._panel_unit(ViewState(app="rehearse", section=1)) == (2,)
+    assert ov._panel_unit(ViewState(app="count_in", section=0)) == (0, 1)
+    assert ov._panel_unit(ViewState(app="review")) is None
+
+
+def test_label_lines_for_takes():
+    ov = overlay()
+    assert ov.label_lines(ViewState(status="HOLD FIST: START A TAKE")) == ("PREPARE", "HOLD FIST: START A TAKE")
+    assert ov.label_lines(ViewState(start_progress=0.5))[1] == "START A TAKE: HOLD FIST  [=====     ]"
+    assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2")
+    assert ov.label_lines(ViewState(app="count_in", stop_progress=0.3))[1].startswith("CANCEL: HOLD")
+    rehearse = ViewState(app="rehearse", status="SECTION 1/2: ONE")
+    assert ov.label_lines(rehearse) == ("REHEARSE", "SECTION 1/2: ONE")
+    rehearse.note = "LAST SECTION"
+    assert ov.label_lines(rehearse)[1] == "LAST SECTION"
+    review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None))
+    assert ov.label_lines(review)[1] == "DROP HAND: BACK"  # no Prepare operations in Review
+    assert ov.label_lines(ViewState(app="review"))[0] == "REVIEW"
+
+
+def test_draw_count_in_and_rehearse():
+    ov = TextOverlay(parse_text(SECTIONS, "md").sentences, (1280, 720))
+    for view in (
+        ViewState(app="count_in", count_in=3, zone_active=True, stop_progress=0.4),
+        ViewState(app="rehearse", section=1, rec_s=75.2, mic=0.7, stop_progress=0.5, status="SECTION 2/2: TWO"),
+    ):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, view)
+        zone = frame[:int(0.42 * 720), int(0.72 * 1280):]
+        assert (zone != 128).any()

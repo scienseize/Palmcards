@@ -11,6 +11,10 @@ cursor_to_text() maps the relative hand-box cursor to such a point.
 On top of the text: the two-line state label (Kat's `BROWSE BY WORD`), and
 the operation stubs for milestone 3b (options ring, tone gauge, stretch line),
 which move but never rewrite the text.
+
+In Rehearse the current section is shown whole in the focus panel, with the
+command zone (top right), a recording clock and microphone level, and a
+large 3-2-1 during the count-in.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from palmcards.config import REHEARSE
 from palmcards.notes import MarkKind, Sentence
 
 FONT_CANDIDATES = [
@@ -49,10 +54,13 @@ BACKING = (10, 10, 12, 150)
 YELLOW_BGR = (0, 215, 255)
 COLD_BGR = (255, 150, 60)
 WARM_BGR = (0, 140, 255)
+ZONE_BGR = (170, 170, 170)
+REC_BGR = (60, 60, 230)
 
 PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 FOCUS_SCALES = (1.3, 1.15, 1.0)  # largest that fits the text box wins
+CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
 RING_PLACEHOLDERS = ("alt 1", "alt 2", "alt 3", "stress", "hear it")  # node 0 is the original word
 FOCUS_HINTS = {
     "word": "OPEN PALM: ALTERNATIVES  /  DROP HAND: BACK",
@@ -97,6 +105,15 @@ class ViewState:
     ops: OpsView = field(default_factory=OpsView)
     drop_progress: float = 0.0
     note: str = ""  # transient second label line, e.g. after a commit
+    status: str = ""  # second label line when there is nothing more pressing
+    app: str = "prepare"  # prepare | count_in | rehearse | review
+    start_progress: float = 0.0  # fist held to start a take, 0..1
+    section: int = 0  # count_in, rehearse: the section on screen
+    count_in: int = 0  # 3, 2, 1
+    rec_s: float = 0.0  # length of the take so far
+    mic: float = 0.0  # microphone level, 0..1
+    zone_active: bool = False  # a hand is in the command zone
+    stop_progress: float = 0.0  # open palm held in the zone, 0..1
 
 
 @dataclass(frozen=True)
@@ -220,6 +237,9 @@ class TextOverlay:
         if level == "paragraph":
             p = self.sentences[sentence].paragraph
             return [i for i, s in enumerate(self.sentences) if s.paragraph == p]
+        if level == "section":
+            sec = self.sentences[sentence].section
+            return [i for i, s in enumerate(self.sentences) if s.section == sec]
         return [sentence]
 
     def word_text(self, hit: Hit) -> str:
@@ -291,6 +311,17 @@ class TextOverlay:
 
     def label_lines(self, state: ViewState) -> tuple[str, str]:
         """Kat's two-line state label: mode and level, then the operation."""
+        if state.app in ("count_in", "rehearse"):
+            if state.stop_progress > 0:
+                second = f"{'CANCEL' if state.app == 'count_in' else 'STOP'}: HOLD  {_bar(state.stop_progress)}"
+            elif state.note:
+                second = state.note
+            elif state.app == "count_in":
+                second = f"STARTING IN {state.count_in}"
+            else:
+                second = state.status
+            return "REHEARSE", second
+
         level = (state.level or "").upper()
         if state.mode == "focus":
             first = f"FOCUS BY {level}"
@@ -299,10 +330,12 @@ class TextOverlay:
         elif state.mode == "browse":
             first = f"BROWSE BY {level}"
         else:
-            first = "PREPARE"
+            first = state.app.upper()
         ops = state.ops
         if state.note:
             second = state.note
+        elif state.start_progress > 0:
+            second = f"START A TAKE: HOLD FIST  {_bar(state.start_progress)}"
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
@@ -316,9 +349,9 @@ class TextOverlay:
             change = "INCREASE" if ops.stretch > 1.05 else "DECREASE" if ops.stretch < 0.95 else "SAME"
             second = f"ADJUST PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}"
         elif state.mode == "focus":  # nothing started yet: say what the next shape does
-            second = FOCUS_HINTS.get(state.level, "")
+            second = FOCUS_HINTS.get(state.level, "") if state.app == "prepare" else "DROP HAND: BACK"
         else:
-            second = ""
+            second = state.status
         return first, second
 
     def ring_labels(self, state: ViewState) -> tuple[str, ...]:
@@ -385,13 +418,21 @@ class TextOverlay:
         color, inv = self._band
         return color[off : off + self.box_h], inv[off : off + self.box_h]
 
-    def _focus_panel(self, state: ViewState) -> tuple[int, tuple[np.ndarray, np.ndarray]]:
-        """Focused sentence or paragraph enlarged, faint context rows around it.
+    def _panel_unit(self, state: ViewState) -> tuple[int, ...] | None:
+        """Sentences shown enlarged in the panel instead of the scrolling text, if any."""
+        if state.app in ("count_in", "rehearse"):
+            first = next((i for i, s in enumerate(self.sentences) if s.section == state.section), 0)
+            return tuple(self.unit("section", first))
+        if state.mode == "focus" and state.focus is not None and state.level in ("sentence", "paragraph"):
+            return tuple(self.unit(state.level, state.focus.sentence))
+        return None
+
+    def _focus_panel(self, unit: tuple[int, ...]) -> tuple[int, tuple[np.ndarray, np.ndarray]]:
+        """The unit's sentences enlarged, faint context rows around them.
 
         Returns (panel box height, premultiplied text). The panel grows past
         the normal box only if the unit doesn't fit even at normal size.
         """
-        unit = tuple(self.unit(state.level, state.focus.sentence))
         if self._panel_key == unit:
             return self._panel
         sents = [self.sentences[i] for i in unit]
@@ -433,6 +474,8 @@ class TextOverlay:
         """A text label on a rounded rectangle, cached."""
         key = (text, size, fg, bg, outline)
         if key not in self._chips:
+            if len(self._chips) >= CHIP_CACHE_MAX:
+                self._chips.clear()
             font = self._get_font(size)
             ascent, descent = font.getmetrics()
             px, py = max(4, size // 4), max(2, size // 8)
@@ -504,13 +547,41 @@ class TextOverlay:
         cv2.circle(frame, (x, ky), 8, (20, 20, 20), -1, cv2.LINE_AA)
         cv2.circle(frame, (x, ky), 8, (245, 245, 245), 2, cv2.LINE_AA)
 
+    def _draw_zone(self, frame: np.ndarray, state: ViewState) -> None:
+        """Command zone: outline, recording clock and mic level, hints, stop progress."""
+        zx0, zy0, zx1, zy1 = REHEARSE.zone
+        x0, y0 = int(zx0 * self.frame_w), int(zy0 * self.frame_h)
+        x1, y1 = int(zx1 * self.frame_w) - 2, int(zy1 * self.frame_h)
+        active = state.zone_active
+        cv2.rectangle(frame, (x0, y0 + 1), (x1, y1), YELLOW_BGR if active else ZONE_BGR, 2 if active else 1, cv2.LINE_AA)
+
+        size = round(self.font_size * 0.6)
+        cx, y = (x0 + x1) / 2, y0 + self.pad
+        if state.app == "rehearse":
+            m, s = divmod(int(state.rec_s), 60)
+            chip = self._chip(f"REC {m}:{s:02d}", round(self.font_size * 0.75), NODE_TEXT, DARK_FILL)
+            bx0, by0, _, by1 = self._blend_centered(frame, chip, cx + 10, y + chip[0].shape[0] / 2)
+            # The dot swells with the microphone level: a flat dot means no sound is arriving.
+            cv2.circle(frame, (bx0 - 14, (by0 + by1) // 2), 4 + round(8 * state.mic), REC_BGR, -1, cv2.LINE_AA)
+            y = by1 + self.pad // 2
+            hints = ("FLICK: NEXT SECTION", "HOLD OPEN PALM: STOP")
+        else:
+            hints = ("HOLD OPEN PALM: CANCEL",)
+        for text in hints:
+            chip = self._chip(text, size, NODE_TEXT if active else DIM, DARK_FILL)
+            y = self._blend_centered(frame, chip, cx, y + chip[0].shape[0] / 2)[3] + 4
+
+        if state.stop_progress > 0:
+            cv2.rectangle(frame, (x0 + 6, y1 - 12), (x0 + 6 + int((x1 - x0 - 12) * state.stop_progress), y1 - 6),
+                          YELLOW_BGR, -1, cv2.LINE_AA)
+
     def draw(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
         """Composite the overlay onto `frame` in place and return it."""
         box_top = self.y + self.margin
         top, bottom = box_top, box_top + self.box_h
-        panel = state.mode == "focus" and state.focus is not None and state.level in ("sentence", "paragraph")
-        if panel:
-            panel_h, text = self._focus_panel(state)
+        unit = self._panel_unit(state)
+        if unit is not None:
+            panel_h, text = self._focus_panel(unit)
             top = max(0, box_top + (self.box_h - panel_h) // 2)
             bottom = top + panel_h
             _blend(frame, self.x, top - self.margin, *self._backing(panel_h))
@@ -538,8 +609,20 @@ class TextOverlay:
         if state.mode == "focus" and state.ops.stretch_ends is not None:
             a, b = (tuple(int(v) for v in p) for p in state.ops.stretch_ends)
             cv2.line(frame, a, b, (245, 245, 245), 2, cv2.LINE_AA)
+        if state.app in ("count_in", "rehearse"):
+            self._draw_zone(frame, state)
+        if state.app == "count_in" and state.count_in > 0:
+            # In the clear space between the notes and the right edge, below the zone.
+            chip = self._chip(str(state.count_in), self.font_size * 5, ORANGE, None)
+            right = self.x + self.margin + self.box_w
+            self._blend_centered(frame, chip, (right + self.frame_w) / 2, self.frame_h * 0.65)
         self._draw_label(frame, state, top)
         return frame
+
+
+def _bar(progress: float, width: int = 10) -> str:
+    filled = round(progress * width)
+    return "[" + "=" * filled + " " * (width - filled) + "]"
 
 
 def _premultiply(img: Image.Image) -> tuple[np.ndarray, np.ndarray]:

@@ -15,5 +15,8 @@ markdown-it-py
 # DrishtiMetalHelper), even with the CPU delegate.
 mediapipe==0.10.21
 
+# Milestone 4: microphone, one WAV per take
+sounddevice
+
 # Tests
 pytest

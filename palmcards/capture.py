@@ -1,4 +1,4 @@
-"""Camera capture (audio capture arrives in milestone 4).
+"""Camera and microphone capture.
 
 Frames are mirrored once here, at capture. Everything downstream (rendering,
 hit-testing) works in this flipped coordinate space.
@@ -6,8 +6,12 @@ hit-testing) works in this flipped coordinate space.
 A background thread reads the camera continuously, so the camera's own rate
 (`Camera.fps`) is measured independently of how long each frame takes to
 process. macOS webcams drop to ~15 fps on their own in dim light.
+
+Audio is buffered in memory per take (AudioRecorder) and saved as WAV by
+`palmcards.session`.
 """
 
+import math
 import threading
 import time
 from collections import deque
@@ -88,3 +92,70 @@ class Camera:
 
     def __exit__(self, *exc) -> None:
         self.release()
+
+
+class AudioRecorder:
+    """Default microphone, mono float32 at the device's own rate.
+
+    open() starts the input stream (the count-in doubles as its warm-up),
+    start() begins keeping blocks, stop() returns the take, close() releases
+    the microphone so macOS's recording indicator goes off between takes.
+    Without Microphone permission macOS delivers silence, not an error; the
+    take's peak shows it.
+    """
+
+    def __init__(self, device: int | str | None = None):
+        import sounddevice as sd
+
+        self._sd = sd
+        self.device = device
+        self.rate = int(sd.query_devices(device, kind="input")["default_samplerate"])
+        self.level = 0.0  # last block's loudness, 0 (-60 dBFS or less) .. 1 (full scale)
+        self.overflows = 0  # blocks the callback reported as dropped
+        self._lock = threading.Lock()
+        self._blocks: list[np.ndarray] = []
+        self._frames = 0
+        self._recording = False
+        self._stream = None
+
+    def open(self) -> None:
+        """Raises sounddevice.PortAudioError if the microphone can't be opened."""
+        if self._stream is None:
+            stream = self._sd.InputStream(device=self.device, samplerate=self.rate, channels=1,
+                                          dtype="float32", callback=self._callback)
+            stream.start()
+            self._stream = stream
+
+    def _callback(self, indata, frames, _time, status) -> None:
+        if status.input_overflow:
+            self.overflows += 1
+        block = indata[:, 0].copy()
+        rms = float(np.sqrt(np.mean(block * block))) if len(block) else 0.0
+        self.level = min(1.0, max(0.0, (20 * math.log10(max(rms, 1e-9)) + 60) / 60))
+        with self._lock:
+            if self._recording:
+                self._blocks.append(block)
+                self._frames += len(block)
+
+    def start(self) -> None:
+        with self._lock:
+            self._blocks, self._frames, self._recording = [], 0, True
+        self.overflows = 0
+
+    @property
+    def seconds(self) -> float:
+        """Length of the take so far."""
+        return self._frames / self.rate
+
+    def stop(self) -> np.ndarray:
+        with self._lock:
+            self._recording = False
+            blocks, self._blocks, self._frames = self._blocks, [], 0
+        return np.concatenate(blocks) if blocks else np.zeros(0, np.float32)
+
+    def close(self) -> None:
+        if self._stream is not None:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+        self.level = 0.0
