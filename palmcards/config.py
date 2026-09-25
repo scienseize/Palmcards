@@ -1,4 +1,4 @@
-"""Every gesture threshold in one place.
+"""Every gesture threshold in one place, and the speech and alignment settings.
 
 Hand distances are divided by the palm size, dist(wrist, middle MCP), so they
 hold at any distance from the camera. Screen positions are fractions of the
@@ -89,9 +89,63 @@ class Rehearse:
     dropout_s: float = 0.3  # tracking gaps shorter than this don't lose the hand
 
 
+@dataclass(frozen=True)
+class Speech:
+    model: str = "mlx-community/whisper-large-v3-turbo"  # or "mlx-community/whisper-small-mlx"
+    language: str = "en"  # default for `main.py --lang`
+    rate: int = 16000  # Whisper's input rate
+    # Leading/trailing silence is trimmed before transcription: a 20 ms frame
+    # is sound if it is above both of these.
+    trim_frame_s: float = 0.02
+    trim_floor_db: float = -50.0  # dBFS
+    trim_below_peak_db: float = 40.0  # below the loudest frame
+    trim_pad_s: float = 0.3  # kept on each side of the sound
+    # Skip text Whisper hallucinates into silences longer than this mid-take
+    # (a speaker pausing to think).
+    hallucination_silence_s: float = 2.0
+    # Whisper drops "um"/"uh" unless the prompt shows it they belong.
+    filler_prompts: tuple[tuple[str, str], ...] = (
+        ("en", "Um, uh, so, like, I mean... okay, so, um, here's the thing."),
+    )
+
+
+@dataclass(frozen=True)
+class Align:
+    # Score for pairing a note word with a transcript word of similarity s
+    # (rapidfuzz ratio, 0..1): match_score - fuzzy_slope * (1 - s). Steep, so
+    # a lone near-miss ("where" for "here") inside a skipped sentence isn't
+    # worth splitting the gap for. Pairs below min_sim are never made; the
+    # words become a skip and an extra instead.
+    match_score: float = 2.0
+    fuzzy_slope: float = 8.0
+    min_sim: float = 0.5
+    exact_sim: float = 0.999  # at or above: said as written, not misheard
+    # Affine gaps: skipping note words / adding transcript words costs
+    # open + extend per word, so a skipped sentence is one clean gap.
+    gap_open: float = 2.5
+    gap_extend: float = 0.3
+    filler_cost: float = 0.05  # an unmatched filler barely costs anything
+    # A word said in place of a note word and nothing like it: the note word
+    # is missed and the said word is an extra, but it costs less than
+    # opening two gaps, so one odd word doesn't derail the alignment.
+    substitute_cost: float = 1.5
+    join_min_sim: float = 0.9  # "every one" <-> "everyone"
+    # Restarts: a repeated attempt must match the notes at least this well
+    # (its last word may be cut off: "wh" for "where").
+    restart_sim: float = 0.6  # every full word of the attempt
+    restart_mean: float = 0.8  # ... and on average
+    restart_prefix_min: int = 2  # letters a cut-off last word must have
+    min_probability: float = 0.1  # Whisper word probability; below it the word is left out as unsure
+    spoken_min: float = 0.8  # sentence coverage for "spoken"
+    skipped_max: float = 0.25  # below this coverage the sentence is "skipped"
+    fillers: tuple[str, ...] = ("um", "umm", "uh", "uhh", "uhm", "er", "erm", "ah", "hmm", "mm", "like", "so")
+
+
 TRACKING = Tracking()
 POSE = Pose()
 TIMING = Timing()
 CURSOR = Cursor()
 OPS = Ops()
 REHEARSE = Rehearse()
+SPEECH = Speech()
+ALIGN = Align()

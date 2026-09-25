@@ -107,6 +107,12 @@ EDGE_PAUSES = re.compile(r"^(/{1,2})?(.*?)(/{1,2})?$", re.DOTALL)
 NORM_DROP = re.compile(r"[^\w']+")
 
 
+def normalize(text: str) -> str:
+    """A word as compared when aligning speech to notes: lowercase letters,
+    digits and inner apostrophes. "Being," -> "being", "That’s" -> "that's"."""
+    return NORM_DROP.sub("", text.lower().replace("\u2019", "'")).strip("'")
+
+
 def _pause(slashes: str) -> MarkKind:
     return MarkKind.LONG_PAUSE if len(slashes) == 2 else MarkKind.SHORT_PAUSE
 
@@ -161,7 +167,7 @@ def parse_sentence(raw: str, warnings: list[str] | None = None) -> Sentence:
         elif STRESS_OFF in core:
             stressed = False
 
-        norm = NORM_DROP.sub("", text.lower()).strip("'")
+        norm = normalize(text)
         if not norm:
             pieces.append(text)  # punctuation-only token, e.g. an em dash
         else:

@@ -18,5 +18,11 @@ mediapipe==0.10.21
 # Milestone 4: microphone, one WAV per take
 sounddevice
 
+# Milestone 5: transcription (Apple silicon; model fetched by
+# scripts/download_models.py), resampling to 16 kHz, notes alignment
+mlx-whisper
+scipy
+rapidfuzz
+
 # Tests
 pytest

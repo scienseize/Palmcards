@@ -1,7 +1,8 @@
 """PalmCards entry point.
 
-  python main.py [NOTES_FILE] [--trace]
+  python main.py [NOTES_FILE] [--lang xx] [--trace]
       NOTES_FILE: .txt, .md or .docx; defaults to the sample
+      --lang: language spoken in the takes, for Whisper (default en)
       --trace: also record every hand result's landmarks, for offline replay
 
 Mirrored webcam feed with the notes overlaid in the demo style. Prepare mode
@@ -27,6 +28,9 @@ Rehearse listens only to the command zone, top right:
 Review browses and focuses like Prepare, without the operations (verdicts
 come in milestone 6); a fist held 1 s starts a new take, an open palm held
 1.5 s in the command zone goes back to Prepare to edit before the next take.
+Each take is transcribed in the background as soon as it stops; the label
+shows TRANSCRIBING, then which sentences were spoken, and the terminal
+prints the full report.
 
 Operations are stubs until milestone 8. Poses and events are logged to
 sessions/gesture-logs/; each take is saved as a WAV in its session folder
@@ -36,6 +40,7 @@ Dev keys: space/j next sentence, k previous, d toggle landmarks and hand box,
 s save a screenshot to sessions/screens/, q/Esc quit.
 """
 
+import argparse
 import json
 import math
 import sys
@@ -45,7 +50,9 @@ from pathlib import Path
 
 import cv2
 
+from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
+from palmcards.config import SPEECH
 from palmcards.gestures import (
     GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine,
     draw_fingertips, draw_hand_box, draw_landmarks, draw_zone,
@@ -53,6 +60,7 @@ from palmcards.gestures import (
 from palmcards.notes import Notes, load_notes
 from palmcards.render import Hit, OpsView, TextOverlay, ViewState
 from palmcards.session import Session
+from palmcards.speech import Transcriber, make_job
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = Path(__file__).parent / "sessions" / "screens"
@@ -113,6 +121,8 @@ class Takes:
     def __init__(self, notes: Notes, session: Session, log: GestureLog):
         self.notes, self.session, self.log = notes, session, log
         self.recorder: AudioRecorder | None = None
+        self.transcriber = Transcriber()
+        self.t0 = time.perf_counter()  # the app clock's zero; main() sets it
         self.section = 0
         self.t_start = 0.0
         self.started = datetime.now()
@@ -124,9 +134,28 @@ class Takes:
         if mode in ("count_in", "rehearse"):
             title = self.notes.sections[self.section].title or "untitled"
             return f"SECTION {self.section + 1}/{len(self.notes.sections)}: {title.upper()}"
+        if self.transcriber.pending:
+            dots = "." * (int(time.perf_counter() * 2) % 4)
+            return f"TAKE {self.transcriber.pending[0]}: TRANSCRIBING{dots:<3}"
         if mode == "review" and self.last_saved:
             return f"{self.last_saved}  /  HOLD FIST: NEW TAKE"
         return "HOLD FIST: START A TAKE"
+
+    def on_transcribed(self, result: dict) -> str:
+        """A take's transcript and alignment arrived. Returns a label note."""
+        n = result["take"]
+        if not result["ok"]:
+            print(f"take {n}: transcription failed: {result['error']}. Retry with: "
+                  f"python -m palmcards.speech {self.session.dir} --take {n}", file=sys.stderr)
+            return "TRANSCRIPTION FAILED (SEE TERMINAL)"
+        self.session.set_result(n, result["transcript"], result["alignment"])
+        self.log(time.perf_counter() - self.t0, "transcribed", take=n, seconds=result["seconds"])
+        print(f"take {n} (transcribed in {result['seconds']:.1f} s)\n{result['report']}")
+        c = counts(result["alignment"])
+        parts = [f"{c['spoken']}/{len(result['alignment']['sentences'])} SPOKEN"]
+        parts += [f"{c[k]} {k.upper()}" for k in ("partial", "fillers", "restarts") if c[k]]
+        self.last_saved = f"TAKE {n}: {', '.join(parts)}"
+        return ""
 
     def handle(self, ev: GestureEvent, modes: ModeMachine, view: ViewState, overlay: TextOverlay) -> str:
         """Mode events. Returns a label note to show, or ""."""
@@ -171,6 +200,7 @@ class Takes:
             take = self.session.add_take(audio, self.recorder.rate, self.t_start, self.started, self.marks)
             self.log(ev.t, "take_stop", take=take.number, duration_s=take.duration_s, wav=take.wav)
             print(f"saved {self.session.dir / take.wav} ({take.duration_s:.1f} s)")
+            self.transcriber.submit(make_job(self.session, take, self.notes))
             view.current = next(i for i, s in enumerate(overlay.sentences) if s.section == self.section)
             view.scroll = overlay.scroll_to(view.current)
             m, s = divmod(round(take.duration_s), 60)
@@ -183,13 +213,28 @@ class Takes:
         return ""
 
     def close(self) -> None:
+        """Release the microphone; let pending transcriptions finish unless Ctrl-C."""
         if self.recorder is not None:
             self.recorder.close()
+        if self.transcriber.pending:
+            print(f"finishing transcription of take {', '.join(map(str, self.transcriber.pending))} "
+                  "(Ctrl-C to skip)")
+            try:
+                while self.transcriber.pending:
+                    for result in self.transcriber.poll(timeout=0.5):
+                        self.on_transcribed(result)
+            except KeyboardInterrupt:
+                print(f"skipped; transcribe later with: python -m palmcards.speech {self.session.dir}")
+        self.transcriber.close()
 
 
 def main() -> int:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    path = Path(args[0]) if args else SAMPLE
+    ap = argparse.ArgumentParser(description="PalmCards rehearsal mirror")
+    ap.add_argument("notes", nargs="?", type=Path, default=SAMPLE, help=".txt, .md or .docx")
+    ap.add_argument("--lang", default=SPEECH.language, help="language of the takes, for Whisper")
+    ap.add_argument("--trace", action="store_true", help="record hand landmarks for offline replay")
+    args = ap.parse_args()
+    path = args.notes
     try:
         notes = load_notes(path)
     except (OSError, ValueError) as exc:
@@ -207,8 +252,8 @@ def main() -> int:
 
     tracker = HandTracker()
     log = GestureLog.to_session_dir()
-    trace = log.path.with_suffix(".trace.jsonl").open("w") if "--trace" in sys.argv else None
-    takes = Takes(notes, Session.create(path, gesture_log=log.path), log)
+    trace = log.path.with_suffix(".trace.jsonl").open("w") if args.trace else None
+    takes = Takes(notes, Session.create(path, gesture_log=log.path, language=args.lang), log)
     with camera:
         frame = camera.read()
         h, w = frame.shape[:2]
@@ -220,6 +265,7 @@ def main() -> int:
         note_until = None
         fps, work_ms, last = 0.0, 0.0, time.perf_counter()
         t0 = prev_start = last
+        takes.t0 = t0
 
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(WINDOW, w, h)
@@ -238,6 +284,9 @@ def main() -> int:
             else:
                 events = []
             events += modes.tick(start - t0)
+            for result in takes.transcriber.poll():
+                if note := takes.on_transcribed(result):
+                    view.note, note_until = note, start + NOTE_S
             for ev in events:
                 if ev.kind in ("focus", "commit", "back"):
                     until = apply_event(ev, view, overlay, log)

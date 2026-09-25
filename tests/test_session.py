@@ -34,3 +34,28 @@ def test_takes_number_up_and_reload(tmp_path):
     loaded = Session.load(session.dir)
     assert [t.wav for t in loaded.takes] == ["take-01.wav", "take-02.wav"]
     assert loaded.takes[1].silent  # all zeros: the mic delivered nothing
+
+
+def test_language_transcript_and_alignment_round_trip(tmp_path):
+    session = Session.create("notes.md", root=tmp_path, language="de")
+    take = session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)])
+    assert take.transcript_name == "take-01.transcript.json"
+    data = json.loads((session.dir / "session.json").read_text())
+    assert data["language"] == "de"
+    assert "transcript" not in data["takes"][0]  # not there until transcribed
+
+    alignment = {"sentences": [], "fillers": [], "restarts": [], "extras": [], "unsure": []}
+    session.set_result(1, "take-01.transcript.json", alignment)
+    loaded = Session.load(session.dir)
+    assert loaded.language == "de"
+    assert loaded.take(1).transcript == "take-01.transcript.json"
+    assert loaded.take(1).alignment == alignment
+
+
+def test_loads_session_from_before_milestone_5(tmp_path):
+    (tmp_path / "session.json").write_text(json.dumps({"notes": "/x/notes.md", "gesture_log": None, "takes": [
+        {"number": 1, "wav": "take-01.wav", "started": "2026-09-25T10:14:34.435", "t_start": 48.787,
+         "duration_s": 53.323, "sample_rate": 48000, "peak": 0.4, "sections": [{"section": 0, "t": 0.0}]}]}))
+    loaded = Session.load(tmp_path)
+    assert loaded.language == "en"
+    assert loaded.take(1).transcript is None and loaded.take(1).alignment is None

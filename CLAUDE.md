@@ -138,6 +138,7 @@ sessions/
 ├── 20260925-101345-sample_notes/    # one folder per app run: <start time>-<notes file stem>
 │   ├── session.json                 # created with the first take; no takes, no folder
 │   ├── take-01.wav                  # 16-bit PCM mono at the mic's own rate (48 kHz on the MacBook Air)
+│   ├── take-01.transcript.json      # Whisper's words, written after the take stops
 │   └── take-02.wav
 ├── gesture-logs/
 │   ├── 20260925-101345.jsonl        # every pose and event, one JSON object per line
@@ -145,7 +146,7 @@ sessions/
 └── screens/                         # `s` key screenshots
 ```
 
-**One clock.** `t` in the gesture log, `t` in the trace and `t_start` of a take are all seconds since the app started. A moment in a take's audio at `x` seconds is app time `t_start + x`, so audio, poses and events line up.
+**One clock.** `t` in the gesture log, `t` in the trace, `t_start` of a take, and every word, filler and sentence time in transcripts and alignments are all seconds since the app started. A moment in a take's audio at `x` seconds is app time `t_start + x`, so audio, poses and events line up.
 
 `session.json`:
 
@@ -153,6 +154,7 @@ sessions/
 {
   "notes": "/abs/path/to/notes.md",
   "gesture_log": "gesture-logs/20260925-101345.jsonl",
+  "language": "en",
   "takes": [
     {
       "number": 1,
@@ -162,11 +164,22 @@ sessions/
       "duration_s": 53.323,
       "sample_rate": 48000,
       "peak": 0.40456,
-      "sections": [{"section": 0, "t": 0.0}, {"section": 1, "t": 30.943}]
+      "sections": [{"section": 0, "t": 0.0}, {"section": 1, "t": 30.943}],
+      "transcript": "take-01.transcript.json",
+      "alignment": {
+        "sentences": [{"sentence": 0, "status": "spoken", "coverage": 1.0, "start": 50.29, "end": 52.49,
+                       "words": [0, 1, 2], "misheard": []}],
+        "fillers": [{"word": 7, "text": "um", "t": 53.1}],
+        "restarts": [{"sentence": 2, "words": [9, 10, 11]}],
+        "extras": [{"sentence": 2, "words": [30, 31]}],
+        "unsure": []
+      }
     }
   ]
 }
 ```
+
+`language` is the Whisper language code for the session's takes (`main.py --lang`, default `en`).
 
 | Take field | Meaning |
 | --- | --- |
@@ -176,10 +189,22 @@ sessions/
 | `duration_s`, `sample_rate` | length of the WAV and its rate |
 | `peak` | loudest absolute sample, 0..1; below 0.001 the take is treated as silent (usually missing Microphone permission) |
 | `sections` | section indices (0-based, as in `Notes.sections`) with the time into the take each one came up; the first is always `t = 0` |
+| `transcript` | the take's transcript file; absent until transcription finishes |
+| `alignment` | the transcript matched to the notes (`palmcards/align.py`); word numbers index the transcript's `words` |
 
-Later milestones add their results to each take (transcript, alignment, verdicts, metrics) rather than inventing new files.
+| Alignment field | Meaning |
+| --- | --- |
+| `sentences[]` | one per note sentence (`Notes.sentences` order). `status`: `spoken` (coverage >= 0.8), `partial`, `skipped` (< 0.25). `coverage`: share of note words matched. `start`/`end`: first/last matched word, null when skipped. `words`: transcript word per note word, null if not said. `misheard`: note word indices matched only approximately. `joined` (optional): `[note word, last transcript word]` where Whisper split one word in two |
+| `fillers` | unmatched filler words (`um`, `uh`, `like`, `so`, ... in `config.ALIGN.fillers`) with their start time |
+| `restarts` | earlier attempts at a phrase that was then said again; the notes bind to the last attempt |
+| `extras` | ad-libs: unmatched non-filler words, grouped, with the sentence they fall in or after |
+| `unsure` | words Whisper gave a probability below 0.1 (usually hallucinations in noise), left out of the alignment |
 
-Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill_stub`, `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `take_start`, `section`, `take_stop` (take, duration_s, wav), `mic_error`, `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
+`take-01.transcript.json`: `{"take", "wav", "model", "language", "t_start", "offset_s", "text", "words": [{"text", "start", "end", "probability"}]}`. `offset_s` is the leading silence trimmed before Whisper ran; word times are already on the app clock (`t_start + offset_s + Whisper's time`).
+
+Later milestones add their results to each take (verdicts, metrics) rather than inventing new files.
+
+Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill_stub`, `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
 
 ## Code layout
 
@@ -192,8 +217,9 @@ palmcards/
 │   ├── gestures.py      # landmarks -> gesture events, mode-aware state machine, command zone
 │   ├── config.py        # every gesture threshold in one place
 │   ├── render.py        # Pillow text overlay onto mirrored frame
-│   ├── speech.py        # whisper transcription, prosody features
+│   ├── speech.py        # whisper transcription (worker process, offline CLI), prosody features
 │   ├── align.py         # transcript <-> notes alignment
+│   ├── player.py        # debug player: a take's audio with the notes highlighted as they're said
 │   ├── cues.py          # planned marks vs measured delivery -> verdicts
 │   ├── metrics.py       # gaze, posture, filler rate, pace
 │   ├── llm.py           # optional LLM helper behind one interface
@@ -208,6 +234,7 @@ palmcards/
 - Build one milestone at a time (below). Finish, run, commit, then move on.
 - Pure logic (`notes.py`, `cues.py`, `align.py`) gets unit tests with pytest. Camera and gesture code is tested by running the app; the user will report what they see or share screenshots.
 - Keep camera/gesture code runnable standalone (`python -m palmcards.gestures` shows a debug view with landmarks and the detected gesture name).
+- Speech runs offline on recorded sessions: `python -m palmcards.speech sessions/<run>` (transcribe and report; `--realign` re-aligns saved transcripts without Whisper) and `python -m palmcards.player sessions/<run> [--take N]` (hear a take with the notes highlighted as they're said).
 - macOS needs Camera and Microphone permission for the terminal app running Python (System Settings > Privacy & Security).
 
 ## Milestones

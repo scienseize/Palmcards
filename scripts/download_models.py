@@ -1,12 +1,18 @@
-"""Download the MediaPipe .task model files into models/.
+"""Download the MediaPipe .task model files into models/, and the Whisper model.
 
 Run once after installing requirements:  python scripts/download_models.py
 Files that already exist are skipped. Pass --force to re-download.
+
+The Whisper model (palmcards/config.py SPEECH.model, ~1.6 GB) goes to the
+Hugging Face cache (~/.cache/huggingface), where mlx-whisper looks for it.
 """
 
 import sys
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from palmcards.config import SPEECH  # noqa: E402
 
 BASE = "https://storage.googleapis.com/mediapipe-models"
 
@@ -45,6 +51,14 @@ def main() -> int:
         except Exception as exc:  # keep going; report at the end
             print(f" FAILED: {exc}")
             failed.append(name)
+    print(f"Fetching the Whisper model {SPEECH.model}")
+    try:
+        from huggingface_hub import snapshot_download
+
+        print(f"  in    {snapshot_download(SPEECH.model, force_download=force)}")
+    except Exception as exc:
+        print(f"  FAILED: {exc}")
+        failed.append(SPEECH.model)
     if failed:
         print(f"Failed: {', '.join(failed)}")
         return 1

@@ -3,6 +3,7 @@
   sessions/20260925-143000-sample_notes/
       session.json
       take-01.wav
+      take-01.transcript.json   (milestone 5, see palmcards.speech)
       take-02.wav
 
 Take times (`t_start`, and the gesture log's `t`) share one clock: seconds
@@ -37,10 +38,16 @@ class TakeRecord:
     sample_rate: int
     peak: float  # loudest |sample|, 0..1
     sections: list[dict] = field(default_factory=list)  # {"section": i, "t": s into the take}
+    transcript: str | None = None  # take-NN.transcript.json, once transcribed
+    alignment: dict | None = None  # see palmcards.align
 
     @property
     def silent(self) -> bool:
         return self.peak < SILENT_PEAK
+
+    @property
+    def transcript_name(self) -> str:
+        return Path(self.wav).with_suffix(".transcript.json").name
 
 
 @dataclass
@@ -49,23 +56,33 @@ class Session:
     dir: Path
     gesture_log: str | None = None  # path relative to the sessions root
     takes: list[TakeRecord] = field(default_factory=list)
+    language: str = "en"  # Whisper language code for every take
 
     @classmethod
     def create(cls, notes: str | Path, root: Path = SESSIONS_DIR, gesture_log: Path | None = None,
-               now: datetime | None = None) -> Session:
+               now: datetime | None = None, language: str = "en") -> Session:
         now = now or datetime.now()
         notes = Path(notes)
         log = None
         if gesture_log is not None:
             log = str(gesture_log.relative_to(root)) if gesture_log.is_relative_to(root) else str(gesture_log)
-        return cls(notes, root / f"{now:%Y%m%d-%H%M%S}-{notes.stem}", log)
+        return cls(notes, root / f"{now:%Y%m%d-%H%M%S}-{notes.stem}", log, language=language)
 
     @classmethod
     def load(cls, folder: str | Path) -> Session:
         folder = Path(folder)
         data = json.loads((folder / "session.json").read_text())
         takes = [TakeRecord(**t) for t in data["takes"]]
-        return cls(Path(data["notes"]), folder, data.get("gesture_log"), takes)
+        return cls(Path(data["notes"]), folder, data.get("gesture_log"), takes, data.get("language", "en"))
+
+    def take(self, number: int) -> TakeRecord:
+        return self.takes[number - 1]
+
+    def set_result(self, number: int, transcript: str, alignment: dict) -> None:
+        """Record a take's transcript file and its alignment to the notes."""
+        take = self.take(number)
+        take.transcript, take.alignment = transcript, alignment
+        self.save()
 
     def add_take(self, audio: np.ndarray, rate: int, t_start: float, started: datetime,
                  sections: list[tuple[float, int]]) -> TakeRecord:
@@ -92,7 +109,9 @@ class Session:
         data = {
             "notes": str(self.notes),
             "gesture_log": self.gesture_log,
-            "takes": [asdict(t) for t in self.takes],
+            "language": self.language,
+            # Fields a take doesn't have yet are left out, not written as null.
+            "takes": [{k: v for k, v in asdict(t).items() if v is not None} for t in self.takes],
         }
         tmp = self.dir / "session.json.tmp"
         tmp.write_text(json.dumps(data, indent=2) + "\n")
