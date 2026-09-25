@@ -235,6 +235,7 @@ sessions/
 | `duration_s`, `sample_rate` | length of the WAV and its rate |
 | `peak` | loudest absolute sample, 0..1; below 0.001 the take is treated as silent (usually missing Microphone permission) |
 | `sections` | section indices (0-based, as in `Notes.sections`) with the time into the take each one came up and its `source`: `start` (the first, `t = 0`), `voice`, `flick` or `key` |
+| `metrics` | `palmcards/metrics.py`, observations with what each rests on (None + reason when there is too little): `speech` (pace_wpm, fillers_per_min, unplanned_long_pauses, restarts, ad_libs), `hands` (shape_changes_per_min; with `--trace` also in_view_share and movement_palms_s), `gaze` and `posture` (not measured yet: face/pose models, calibration and validation needed) |
 | `live` | the voice follow during the take (display only, never the record): `engine`, `model`, `state` (`following` / `failed` ...), `words` confirmed, `lag_median_s` / `lag_p90_s` (confirmed after the word's end), `dropped_blocks`, `error` |
 | `transcript` | the take's transcript file; absent until transcription finishes |
 | `alignment` | the transcript matched to the notes (`palmcards/align.py`); word numbers index the transcript's `words` |
@@ -301,7 +302,7 @@ palmcards/
 │   ├── replay.py        # replay recorded hand landmarks through the gesture code (regression)
 │   ├── cues.py          # planned marks vs measured delivery -> verdicts
 │   ├── review.py        # which take each sentence shows in Review, verdict lines
-│   ├── metrics.py       # gaze, posture, filler rate, pace
+│   ├── metrics.py       # take metrics: pace, fillers, unplanned pauses, hand movement (gaze/posture pending)
 │   ├── llm.py           # optional LLM helper behind one interface
 │   ├── session.py       # session folders: schema, notes revisions, takes, lock, recovery
 │   ├── revisions.py     # notes snapshots with stable sentence/word/mark ids

@@ -87,7 +87,7 @@ Also working: stressing or unstressing a word from the options ring (a new versi
 
 Optional: word alternatives, tone and length rewrites, and suggested marks need a language model, and they are off by default. To use one on your Mac, install [Ollama](https://ollama.com), run `ollama pull llama3.1:8b`, and set `LLM.provider = "ollama"` in `palmcards/config.py`. Only what you explicitly ask about is sent (one sentence or paragraph, to localhost). Suggestions are shown as previews that you choose to use. Cloud models are not supported.
 
-Planned: gaze, posture and filler metrics (milestone 7).
+Each analysed take also records observations: pace, fillers per minute, unplanned long pauses, restarts, ad-libs, and hand movement (more detail with `--trace`). Planned: gaze and posture (milestone 7), which need the optional face and pose models, calibration and validation.
 
 The verdict thresholds are starting values checked on synthetic audio. They have not yet been validated against human judgments; see [docs/evaluation.md](docs/evaluation.md).
 

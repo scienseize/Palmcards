@@ -250,6 +250,15 @@ class Follow:
 
 
 @dataclass(frozen=True)
+class Metrics:
+    # Take metrics (palmcards.metrics): observations, each with what it rests on.
+    min_speaking_s: float = 5.0  # less speaking time: no pace
+    min_words: int = 10  # fewer words: no pace
+    min_take_s: float = 10.0  # a shorter take: no fillers per minute
+    long_pause_s: float = 1.5  # a silence this long that no pause mark asked for
+
+
+@dataclass(frozen=True)
 class Llm:
     # The optional LLM (palmcards.llm): off unless provider is set. "ollama"
     # runs a model on this Mac (install Ollama, `ollama pull <model>`).
@@ -283,3 +292,4 @@ CUES = Cues()
 FOLLOW = Follow()
 VOICE = Voice()
 LLM = Llm()
+METRICS = Metrics()

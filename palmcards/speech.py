@@ -167,6 +167,8 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
         "marks": [[[m.kind, m.word] for m in s.marks] for s in notes.sentences],
         "baseline": {"take": base.number, "verdicts": str(session.dir / base.verdicts_name)} if base else None,
         "gaps": capture_gaps(take),
+        "duration_s": take.duration_s,
+        "gesture_log": str(session.dir.parent / session.gesture_log) if session.gesture_log else None,
         "realign": realign,
     }
 
@@ -235,9 +237,16 @@ def run_job(job: dict) -> dict:
     tmp = vpath.with_suffix(".tmp")
     tmp.write_text(json.dumps(judged, indent=1) + "\n")
     tmp.replace(vpath)
+    from palmcards import metrics
+
+    log = Path(job["gesture_log"]) if job.get("gesture_log") else None
+    measured_take = metrics.take_metrics(
+        alignment, data["words"], job["t_start"], job.get("duration_s", 0.0), log,
+        log.with_suffix(".trace.jsonl") if log else None, metrics.planned_pause_words(alignment, job["marks"]))
     return {
         **_identity(job),
         "ok": True,
+        "metrics": measured_take,
         "transcript": path.name,
         "alignment": alignment,
         "verdicts": vpath.name,
@@ -245,7 +254,8 @@ def run_job(job: dict) -> dict:
         "marks": judged["counts"],
         "summary": f"{summary(alignment)}; {cues.summary(judged)}",
         "report": report(alignment, data["words"], job["texts"], job["t_start"]) + "\n"
-                  + cues.report(judged, job["words"], job["texts"]),
+                  + cues.report(judged, job["words"], job["texts"])
+                  + (f"\n  metrics  {metrics.summary(measured_take)}" if metrics.summary(measured_take) else ""),
         "seconds": round(time.perf_counter() - t0, 2),
     }
 
@@ -390,7 +400,7 @@ def _run_cli(args) -> int:
                 continue
         result = run_job(make_job(session, take, notes, realign=realign))
         session.set_result(take.number, result["transcript"], result["alignment"], result["verdicts"],
-                           result["marks"])
+                           result["marks"], result.get("metrics"))
         resolve_jobs(session.dir, take.number, "succeeded")  # any job the app left unfinished for it
         print(f"take {take.number} ({'re-aligned' if realign else 'transcribed'} in {result['seconds']:.1f} s)")
         print(result["report"])

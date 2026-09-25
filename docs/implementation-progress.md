@@ -19,7 +19,7 @@ user runs them. They are never inferred from unit tests.
 | 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
-| 8 — Product completion | In progress | Slices 1-5: reopen + playback; export; stress edits + undo; optional LLM; guidance (tutorial, hand area, hints), preferences (reach, holds, high contrast) | 376 passed | Slice 6: metrics; decisions: cloud LLM provider, left-handed layout, backward flick |
+| 8 — Product completion | Implemented, validation pending | Six slices: reopen + playback; export; stress edits + undo; optional LLM (off by default); tutorial, hints, preferences; take metrics (speech, hands; gaze/posture not measured) | 381 passed | Hardware checks; decisions: cloud LLM provider, left-handed layout, backward flick; gaze/posture need models + calibration |
 | End-to-end release gate | Pending | None | Not run | Run on target hardware |
 
 ## Log
@@ -693,4 +693,43 @@ Reason for any departure from this plan: handedness left as a decision (above); 
   hierarchy" addressed by the Phase 4 alert line and label backing rather than a rewrite of the
   label text.
 Next action: Phase 8 slice 6 (metrics).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 8 slice 6 (metrics, milestone 7 in part)
+Status: implemented for speech and hand observations; gaze and posture pending (models,
+  calibration, validation)
+Current HEAD / optional commit ID: d31bdd7 -> slice 6 commit (see git log)
+Pre-existing changes preserved: yes (real sessions only read).
+Files and behavior changed:
+  palmcards/metrics.py (was a placeholder): take_metrics() -> speech (pace over sentences said,
+    fillers per minute, unplanned long pauses excluding silences a pause mark asked for, restarts,
+    ad-libs), hands (hand-shape changes per minute from the gesture log; with --trace, share of
+    the take a hand was in view and wrist movement in palm widths/s), gaze and posture reported as
+    not measured with the reason. Each value carries its basis; too little evidence gives None and
+    a reason. summary() for the label.
+  palmcards/speech.py: jobs carry duration and the gesture log; run_job computes metrics in the
+    worker (never on the camera loop) and adds them to the result and the report.
+  palmcards/session.py: TakeRecord.metrics; set_result(..., metrics).
+  main.py: stores metrics with the result; the Review label adds "196 WPM, 0 FILLERS/MIN".
+  palmcards/config.py: METRICS thresholds. CLAUDE.md, README.md: the take `metrics` field.
+Migration / compatibility implications: takes gain "metrics" when analysed (older takes: after
+  python -m palmcards.speech --realign).
+Tests run and exact outcome: pytest (full) -> 381 passed. New tests/test_metrics.py (5): pace and
+  fillers, the planned 2.0 s pause not counted and the 1.8 s one counted; too little -> None with
+  reasons; gesture-log shape rate within the take window, trace in-view share and movement
+  (1.0 palm/s on a synthetic trace), no trace -> reason; gaze/posture not measured; a silent take's
+  metrics stored through run_job and session.json.
+Manual / hardware checks performed: read-only metrics on real takes: 20260925-101345 take 1: 196
+  wpm, 0 fillers/min, 1 unplanned long pause (its 18 s silence), 3.4 shapes/min, hand in view 38%,
+  1.3 palms/s (traced); 20260925-131002 take 1: 210 wpm, 2 unplanned long pauses, 1 restart, 8
+  ad-lib runs, 5.4 shapes/min, no trace (reported as such).
+Unverified assumptions and remaining risks: the thresholds (1.5 s long pause, minimum speaking
+  time) are starting values. Whisper may drop some fillers even with the filler prompt, so the
+  filler rate is a lower bound.
+Reason for any departure from this plan: gaze, posture and face touching are not implemented:
+  they need new models at runtime (with their cost to the camera loop measured), a calibration
+  step and validation against people; reporting them as "not measured" is the honest state.
+Next action: the end-to-end release gate on the target Mac (hardware; user).
 ```

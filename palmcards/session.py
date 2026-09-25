@@ -99,6 +99,7 @@ class TakeRecord:
     status: str = "saved"
     capture: dict | None = None  # clock, gaps, overflows: see Session.finish_take
     live: dict | None = None  # voice follow during the take: engine, state, words, lag (display only)
+    metrics: dict | None = None  # palmcards.metrics: observations about the take, once analysed
 
     @property
     def silent(self) -> bool:
@@ -413,12 +414,14 @@ class Session:
         return max([t.number for t in self.takes] + on_disk + [0]) + 1
 
     def set_result(self, number: int, transcript: str, alignment: dict, verdicts: str | None = None,
-                   marks: dict | None = None) -> None:
-        """Record a take's transcript file, its alignment to the notes and its verdicts file."""
+                   marks: dict | None = None, metrics: dict | None = None) -> None:
+        """Record a take's transcript file, its alignment to the notes, its verdicts file and metrics."""
         take = self.take(number)
         take.transcript, take.alignment = transcript, alignment
         if verdicts is not None:
             take.verdicts, take.marks = verdicts, marks
+        if metrics is not None:
+            take.metrics = metrics
         self.save()
 
     def add_take(self, audio: np.ndarray, rate: int, t_start: float, started: datetime,

@@ -95,6 +95,7 @@ from palmcards.render import (
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
+from palmcards.metrics import summary as metrics_summary
 from palmcards.playback import ClipPlayer, sentence_clip
 from palmcards.recording import TakeWriter
 from palmcards.revisions import from_snapshot
@@ -449,7 +450,8 @@ class Takes:
             print(f"take {n}: analysis failed: {result.get('error')}. Press r to retry, or run: "
                   f"python -m palmcards.speech {self.session.dir} --take {n}", file=sys.stderr)
             return ""
-        self.session.set_result(n, result["transcript"], result["alignment"], result["verdicts"], result["marks"])
+        self.session.set_result(n, result["transcript"], result["alignment"], result["verdicts"], result["marks"],
+                                result.get("metrics"))
         take = self.session.take(n)
         self.board.add(n, result["verdict_data"], take.drill)
         self.log(time.perf_counter() - self.t0, "transcribed", take=n, seconds=result["seconds"])
@@ -459,6 +461,8 @@ class Takes:
             return ""
         c = counts(result["alignment"])
         parts = [f"{c['spoken']}/{len(result['alignment']['sentences'])} SPOKEN", self.board.summary(n)]
+        if result.get("metrics") and (said := metrics_summary(result["metrics"])):
+            parts.append(said)
         parts += [f"{c[k]} {k.upper()}" for k in ("fillers", "restarts") if c[k]]
         self.last_saved = f"TAKE {n}: {', '.join(parts)}"
         return ""
