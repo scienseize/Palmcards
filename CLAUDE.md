@@ -220,12 +220,14 @@ palmcards/
 │   ├── speech.py        # whisper transcription (worker process, offline CLI), prosody features
 │   ├── align.py         # transcript <-> notes alignment
 │   ├── player.py        # debug player: a take's audio with the notes highlighted as they're said
+│   ├── replay.py        # replay recorded hand landmarks through the gesture code (regression)
 │   ├── cues.py          # planned marks vs measured delivery -> verdicts
 │   ├── metrics.py       # gaze, posture, filler rate, pace
 │   ├── llm.py           # optional LLM helper behind one interface
 │   └── session.py       # takes and results as JSON, export
 ├── models/              # MediaPipe .task files (gitignored)
 ├── samples/             # sample notes with markup for testing
+│   └── gestures/        # recorded hand landmarks + expected events, for the replay tests
 └── tests/
 ```
 
@@ -233,6 +235,7 @@ palmcards/
 
 - Build one milestone at a time (below). Finish, run, commit, then move on.
 - Pure logic (`notes.py`, `cues.py`, `align.py`) gets unit tests with pytest. Camera and gesture code is tested by running the app; the user will report what they see or share screenshots.
+- Gesture regression: `samples/gestures/*.json` are stretches of `main.py --trace` recordings (MediaPipe hand landmarks only, no video) with what the app recognised live. `tests/test_gesture_replay.py` replays them through `ModeMachine` and must reproduce it; `python -m palmcards.replay` prints the same check. Samples marked `known_issue` are strict expected failures that document a bug until it's fixed. New samples: record with `--trace`, add the window to `SEGMENTS` in `scripts/cut_gesture_samples.py`, run it. Never commit video.
 - Keep camera/gesture code runnable standalone (`python -m palmcards.gestures` shows a debug view with landmarks and the detected gesture name).
 - Speech runs offline on recorded sessions: `python -m palmcards.speech sessions/<run>` (transcribe and report; `--realign` re-aligns saved transcripts without Whisper) and `python -m palmcards.player sessions/<run> [--take N]` (hear a take with the notes highlighted as they're said).
 - macOS needs Camera and Microphone permission for the terminal app running Python (System Settings > Privacy & Security).

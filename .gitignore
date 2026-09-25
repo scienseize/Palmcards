@@ -17,3 +17,12 @@ secrets*
 
 # Local-only reference material (third-party frames, not ours to publish)
 docs/local/
+
+# Video recordings (your face): gesture samples are committed as landmark
+# JSON in samples/gestures/, never as video
+*.mp4
+*.mov
+*.m4v
+*.webm
+*.avi
+*.mkv

@@ -866,6 +866,10 @@ class ModeMachine:
             return [GestureEvent("take_start", t)]
         return []
 
+    def enter(self, mode: str, t: float) -> None:
+        """Jump straight into a mode, e.g. to replay a recording made in Rehearse."""
+        self._enter(mode, t)
+
     def cancel_count_in(self, t: float) -> None:
         """For the app, e.g. when the microphone can't be opened."""
         if self.mode == "count_in":
