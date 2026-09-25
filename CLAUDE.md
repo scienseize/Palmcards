@@ -23,7 +23,7 @@ Full design note: https://claude.ai/artifact/2mB94zAhFAKUNK7GnCsqSc
 | Hands | MediaPipe Hand Landmarker + Gesture Recognizer (built-in classes: Closed_Fist, Open_Palm, Thumb_Up, Pointing_Up) |
 | Gaze | MediaPipe Face Landmarker (head pose + iris) |
 | Posture | MediaPipe Pose Landmarker (lower frame rate than hands) |
-| Audio capture | sounddevice, buffered per take, saved as WAV |
+| Audio capture | sounddevice; each take streamed to disk as it is recorded (`palmcards/recording.py`), recoverable after a crash |
 | Transcription | mlx-whisper (or whisper.cpp), after each take, with word timestamps; language set per session. Behind one interface (`palmcards/asr.py`, engine picked by `SPEECH.backend`), which also has the live stream for 6b: Whisper base re-read every 0.3 s by default, Apple's on-device recogniser (`palmcards/asr_apple.py`, pyobjc) as the alternative |
 | Prosody | librosa: `pyin` for pitch, RMS for loudness |
 | Notes parsing | python-docx, markdown-it-py |
@@ -143,6 +143,8 @@ sessions/
 │   ├── source/sample_notes.md       # the imported notes file, byte for byte
 │   ├── notes/r1a2b3c4d5e6f.json     # a notes revision: the parsed notes a take was recorded with (palmcards/revisions.py)
 │   ├── take-01.wav                  # 16-bit PCM mono at the mic's own rate (48 kHz on the MacBook Air)
+│   ├── take-02.wav.part             # only while recording (or after a crash): the take so far, a valid WAV
+│   ├── take-02.recording.json       # only while recording: rate, first sample's app time, sections, gaps
 │   ├── take-01.transcript.json      # Whisper's words, written after the take stops
 │   ├── take-01.prosody.npz          # pitch and loudness per 10 ms frame (cache; verdicts are recomputed from it)
 │   ├── take-01.verdicts.json        # a verdict per delivery mark
@@ -152,6 +154,8 @@ sessions/
 │   └── 20260925-101345.trace.jsonl  # only with `main.py --trace`: raw landmarks for offline replay
 └── screens/                         # `s` key screenshots
 ```
+
+**Recording.** A take is written to disk while it is recorded: the audio callback hands blocks to a writer thread through a bounded queue (`RECORDING.queue_s`) and never waits; a full queue drops the block and records the gap. The writer rewrites the WAV header and fsyncs every `RECORDING.flush_s`. If the app dies mid-take, at most the queue's contents are lost (plus up to `flush_s` if the whole machine loses power); the next start salvages the rest as an `interrupted` take (`recover_all` in `session.py`). `main.run` owns every resource through one `ExitStack`: whatever fails (opening a model, the camera, drawing, Ctrl-C), everything opened is closed once, a take being recorded is kept, and the original error is raised.
 
 **One clock.** `t` in the gesture log, `t` in the trace, `t_start` of a take, and every word, filler and sentence time in transcripts and alignments are all seconds since the app started. A moment in a take's audio at `x` seconds is app time `t_start + x`, so audio, poses and events line up.
 
@@ -203,7 +207,7 @@ sessions/
 | `number`, `wav` | 1-based take number and its WAV file name in the same folder (numbers skip any take file already on disk, so nothing is overwritten) |
 | `revision` | the notes revision the take was recorded with; absent on takes from schema 1 until rebound |
 | `started` | wall-clock time recording began (after the count-in), ISO 8601 |
-| `t_start` | app time of the first audio sample |
+| `t_start` | app time of the first audio sample (from the device's timing where available) |
 | `duration_s`, `sample_rate` | length of the WAV and its rate |
 | `peak` | loudest absolute sample, 0..1; below 0.001 the take is treated as silent (usually missing Microphone permission) |
 | `sections` | section indices (0-based, as in `Notes.sections`) with the time into the take each one came up; the first is always `t = 0` |
@@ -211,6 +215,8 @@ sessions/
 | `alignment` | the transcript matched to the notes (`palmcards/align.py`); word numbers index the transcript's `words` |
 | `verdicts`, `marks` | the take's verdicts file and its verdict counts; absent until judged |
 | `drill` | only on a drill take: the sentence (`Notes.sentences` index) it rehearsed |
+| `status` | `saved` (finished normally), `interrupted` (cut short by an error, Ctrl-C or a crash; salvaged, `capture.recovered` if at the next start) or `failed` (the disk refused a write; the audio before it is kept). Only `saved` takes are analysed automatically; `python -m palmcards.speech <run> --incomplete` analyses the others |
+| `capture` | `clock`: how the first sample was placed on the app clock (`adc`: the device's timing, `callback`: the callback's arrival); `dropped_samples` and `discontinuities` (`at_s` into the take, `samples`, `why`: `queue_full`, `input_overflow`, `write_error`); `error`; `recovered` |
 
 | Alignment field | Meaning |
 | --- | --- |

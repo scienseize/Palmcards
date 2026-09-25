@@ -332,6 +332,8 @@ def _cli(argv: list[str]) -> int:
     ap.add_argument("--force", action="store_true", help="transcribe again even if a transcript exists")
     ap.add_argument("--realign", action="store_true", help="re-align saved transcripts, no Whisper")
     ap.add_argument("--lang", help="Whisper language code; saved to the session")
+    ap.add_argument("--incomplete", action="store_true",
+                    help="also analyse takes that were interrupted or failed while recording")
     ap.add_argument("--rebind", action="store_true",
                     help="give takes from before notes snapshots the notes file as it is now (marked unverified)")
     args = ap.parse_args(argv)
@@ -354,6 +356,10 @@ def _run_cli(args) -> int:
     takes = [session.take(args.take)] if args.take else session.takes
     status = 0
     for take in takes:
+        if take.status != "saved" and not args.incomplete:
+            print(f"take {take.number} is {take.status} (cut short while recording); skipped. "
+                  "Analyse it anyway with --incomplete")
+            continue
         have = take.transcript is not None and (session.dir / take.transcript).exists()
         realign = args.realign and have
         report_only = have and not (args.force or realign) and take.alignment is not None \

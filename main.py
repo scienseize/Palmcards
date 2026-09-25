@@ -55,14 +55,18 @@ import json
 import math
 import sys
 import time
+import traceback
+from contextlib import ExitStack
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import cv2
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import SPEECH
+from palmcards.config import RECORDING, SPEECH
 from palmcards.gestures import GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.render import (
@@ -70,7 +74,8 @@ from palmcards.render import (
     draw_fingertips, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
-from palmcards.session import Session
+from palmcards.recording import TakeWriter
+from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
 from palmcards.speech import Transcriber, make_job
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
@@ -127,17 +132,28 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
 
 
 class Takes:
-    """The recording side of the modes: microphone, sections, saved takes."""
+    """The recording side of the modes: microphone, sections, saved takes.
 
-    def __init__(self, notes: Notes, session: Session, log: GestureLog):
+    A take is streamed to disk while it is recorded (palmcards.recording).
+    Stopping hands the writer over to finish in the background; poll()
+    adds the finished take to the session and starts its analysis. close()
+    is safe to call more than once and after a failure: a take still being
+    recorded is finished and kept ("interrupted" if the app is closing
+    because of an error or Ctrl-C).
+    """
+
+    def __init__(self, notes: Notes, session: Session, log: GestureLog, devices: "Devices | None" = None):
         self.notes, self.session, self.log = notes, session, log
+        self.devices = devices or Devices()
         self.recorder: AudioRecorder | None = None
         self.transcriber = Transcriber()
         self.t0 = time.perf_counter()  # the app clock's zero; main() sets it
         self.section = 0
-        self.t_start = 0.0
-        self.started = datetime.now()
-        self.marks: list[tuple[float, int]] = []
+        self.writer: TakeWriter | None = None  # the take being recorded
+        self.finalizing: list[TakeWriter] = []  # stopped, still writing
+        self.alert = ""  # a recording problem, shown until the next take starts
+        self.interrupted = False  # the app is closing because of an error or Ctrl-C
+        self._closed = False
         self.last_saved = ""
         self.board = Board(notes)  # verdicts of the judged takes, for Review
         self.drill: int | None = None  # the sentence the current count-in or take drills
@@ -146,6 +162,8 @@ class Takes:
 
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown."""
+        if self.alert:
+            return self.alert
         if mode in ("count_in", "rehearse") and self.drill is not None:
             return f"SENTENCE {self.drill + 1}"
         if mode in ("count_in", "rehearse"):
@@ -153,6 +171,8 @@ class Takes:
             return f"SECTION {self.section + 1}/{len(self.notes.sections)}: {title.upper()}"
         if mode == "review" and view.mode == "focus" and view.level == "sentence" and view.focus is not None:
             return f"{self.board.take_label(view.focus.sentence)}  /  L-HAND: TAKES  /  PINCH + LIFT: DRILL"
+        if self.finalizing:
+            return f"TAKE {self.finalizing[0].number}: SAVING..."
         if self.transcriber.pending:
             dots = "." * (int(time.perf_counter() * 2) % 4)
             return f"TAKE {self.transcriber.pending[0]}: TRANSCRIBING{dots:<3}"
@@ -199,7 +219,7 @@ class Takes:
                 self.log(ev.t, "drill", sentence=self.drill)
             try:
                 if self.recorder is None:
-                    self.recorder = AudioRecorder()
+                    self.recorder = self.devices.recorder(clock=lambda: time.perf_counter() - self.t0)
                 self.recorder.open()
             except Exception as exc:  # no input device, PortAudio error
                 print(f"Could not open the microphone: {exc}. On macOS, allow Microphone access for "
@@ -222,45 +242,110 @@ class Takes:
             self.drill = None
             return "TAKE CANCELLED"
         if ev.kind == "take_start":
-            self.recorder.start()
-            self.t_start, self.started, self.marks = ev.t, datetime.now(), [(0.0, self.section)]
-            self.log(ev.t, "take_start", take=len(self.session.takes) + 1)
+            self.alert = ""
+            try:
+                number = self.session.begin_take()
+                self.writer = TakeWriter(self.session.dir, number, self.recorder.rate, {
+                    "started": datetime.now().isoformat(timespec="milliseconds"), "requested_t": round(ev.t, 3),
+                    "drill": self.drill, "revision": self.session.current_revision})
+            except (OSError, SessionError) as exc:
+                print(f"cannot record: {exc}", file=sys.stderr)
+                self.log(ev.t, "record_error", error=str(exc))
+                self.alert = "CANNOT RECORD (SEE TERMINAL): HOLD OPEN PALM TO STOP"
+                return ""
+            self.writer.mark_section(ev.t, self.section)
+            self.recorder.start(self.writer)
+            self.log(ev.t, "take_start", take=number)
             return ""
         if ev.kind == "next_section":
             if self.section + 1 >= len(self.notes.sections):
                 return "LAST SECTION"
             self.section += 1
-            self.marks.append((ev.t - self.t_start, self.section))
+            if self.writer is not None:
+                self.writer.mark_section(ev.t, self.section)
             self.log(ev.t, "section", section=self.section)
             return ""
         if ev.kind == "take_stop":
-            audio = self.recorder.stop()
-            self.recorder.close()
-            take = self.session.add_take(audio, self.recorder.rate, self.t_start, self.started, self.marks,
-                                         drill=self.drill)
-            self.log(ev.t, "take_stop", take=take.number, duration_s=take.duration_s, wav=take.wav)
-            print(f"saved {self.session.dir / take.wav} ({take.duration_s:.1f} s)")
-            self.transcriber.submit(make_job(self.session, take, self.notes))
+            writer = self._stop_recording()
+            if writer is not None:
+                self.log(ev.t, "take_stop", take=writer.number, duration_s=round(writer.seconds, 3), wav=writer.wav)
             if self.drill is not None:
                 view.current = self.drill
             else:
                 view.current = next(i for i, s in enumerate(overlay.sentences) if s.section == self.section)
             self.drill = None
             view.scroll = overlay.scroll_to(view.current)
-            m, s = divmod(round(take.duration_s), 60)
-            self.last_saved = f"TAKE {take.number} SAVED ({m}:{s:02d})"
-            if take.silent:
-                print("warning: the take is silent. On macOS, allow Microphone access for your terminal "
-                      "app in System Settings > Privacy & Security > Microphone.", file=sys.stderr)
-                return "TAKE IS SILENT: CHECK MICROPHONE ACCESS"
             return ""
         return ""
 
-    def close(self) -> None:
-        """Release the microphone; let pending transcriptions finish unless Ctrl-C."""
+    def _stop_recording(self) -> "TakeWriter | None":
+        """Stop the microphone; the take finishes writing in the background."""
+        writer, self.writer = self.writer, None
         if self.recorder is not None:
+            self.recorder.stop()
             self.recorder.close()
-        if self.transcriber.pending:
+        if writer is not None:
+            self.finalizing.append(writer)
+        return writer
+
+    def recording_problem(self) -> None:
+        """Surface a disk error while a take is still being recorded."""
+        if self.writer is not None and self.writer.error and not self.alert:
+            print(f"take {self.writer.number}: recording failed: {self.writer.error}; the audio up to here is kept",
+                  file=sys.stderr)
+            self.alert = "RECORDING FAILED: AUDIO SO FAR KEPT (SEE TERMINAL)"
+
+    def poll(self) -> str:
+        """Add takes that finished writing to the session. Returns a label note."""
+        note = ""
+        for writer in [w for w in self.finalizing if w.done.is_set()]:
+            self.finalizing.remove(writer)
+            note = self._finish(writer, "saved") or note
+        return note
+
+    def _finish(self, writer: TakeWriter, status: str) -> str:
+        manifest = writer.manifest()
+        if manifest["samples"] == 0:
+            print(f"take {writer.number}: no audio was written ({writer.error or 'none arrived'})", file=sys.stderr)
+            self.alert = "TAKE NOT SAVED: NO AUDIO (SEE TERMINAL)"
+            return ""
+        take = self.session.finish_take(manifest, None if status == "saved" else status)
+        m, s = divmod(round(take.duration_s), 60)
+        gaps = take.capture["dropped_samples"] / take.sample_rate if take.capture else 0.0
+        print(f"saved {self.session.dir / take.wav} ({take.duration_s:.1f} s, {take.status}"
+              + (f", {gaps:.2f} s of audio lost" if gaps else "") + ")")
+        if take.status != "saved":
+            self.alert = f"TAKE {take.number} {take.status.upper()}: KEPT, NOT ANALYSED (SEE TERMINAL)"
+            print(f"take {take.number} is {take.status}; analyse it anyway with: python -m palmcards.speech "
+                  f"{self.session.dir} --take {take.number} --incomplete", file=sys.stderr)
+            return ""
+        self.transcriber.submit(make_job(self.session, take, self.session.notes_for(take)))
+        self.last_saved = f"TAKE {take.number} SAVED ({m}:{s:02d})"
+        if take.silent:
+            print("warning: the take is silent. On macOS, allow Microphone access for your terminal "
+                  "app in System Settings > Privacy & Security > Microphone.", file=sys.stderr)
+            return "TAKE IS SILENT: CHECK MICROPHONE ACCESS"
+        return ""
+
+    def close(self) -> None:
+        """Finish any take (kept as "interrupted" when closing on an error), release
+        the microphone, then let pending transcriptions finish unless Ctrl-C.
+        Safe to call twice."""
+        if self._closed:
+            return
+        self._closed = True
+        active = self._stop_recording()  # the take being recorded right now, if any
+        for writer in self.finalizing:
+            if writer.wait(RECORDING.finalize_timeout_s):
+                try:
+                    self._finish(writer, "interrupted" if writer is active and self.interrupted else "saved")
+                except Exception:  # keep closing; the recording is on disk and recovered at the next start
+                    traceback.print_exc()
+            else:
+                print(f"take {writer.number} is still being written; it will be recovered at the next start",
+                      file=sys.stderr)
+        self.finalizing = []
+        if self.transcriber.pending and not self.interrupted:
             print(f"finishing transcription of take {', '.join(map(str, self.transcriber.pending))} "
                   "(Ctrl-C to skip)")
             try:
@@ -271,6 +356,33 @@ class Takes:
                 print(f"skipped; transcribe later with: python -m palmcards.speech {self.session.dir}")
         self.transcriber.close()
         self.session.release()
+
+
+@dataclass
+class Devices:
+    """What the app opens. Tests pass fakes, so failures can be injected
+    without a camera, a microphone or a window."""
+    camera: Callable = Camera
+    tracker: Callable = HandTracker
+    recorder: Callable = AudioRecorder
+    log: Callable = GestureLog.to_session_dir
+    named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
+    show: Callable = cv2.imshow
+    wait_key: Callable = lambda: cv2.waitKey(1) & 0xFF
+    window_open: Callable = lambda name: cv2.getWindowProperty(name, cv2.WND_PROP_VISIBLE) >= 1
+    destroy_windows: Callable = cv2.destroyAllWindows
+
+
+def guarded(fn: Callable[[], None], what: str) -> Callable[[], None]:
+    """A cleanup step that reports its own failure instead of raising, so the
+    other steps still run and the error that started the shutdown survives."""
+    def run() -> None:
+        try:
+            fn()
+        except BaseException:
+            print(f"error while closing {what}:", file=sys.stderr)
+            traceback.print_exc()
+    return run
 
 
 def main() -> int:
@@ -288,142 +400,165 @@ def main() -> int:
         return 1
     for warning in notes.warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    sentences = notes.sentences
-
+    for line in recover_all():
+        print(f"recovered: {line}")
     try:
-        camera = Camera()
+        return run(path, notes, source, lang=args.lang, trace=args.trace)
     except CameraError as exc:
         print(exc, file=sys.stderr)
         return 1
 
-    tracker = HandTracker()
-    log = GestureLog.to_session_dir()
-    trace = log.path.with_suffix(".trace.jsonl").open("w") if args.trace else None
-    session = Session.create(path, gesture_log=log.path, language=args.lang, parsed=notes, source=source)
-    takes = Takes(notes, session, log)
-    with camera:
-        frame = camera.read()
-        h, w = frame.shape[:2]
-        overlay = TextOverlay(sentences, (w, h))
-        modes = ModeMachine((w, h), log)
-        grammar = modes.grammar
-        view = ViewState()
-        show_debug = False
-        note_until = None
-        fps, work_ms, last = 0.0, 0.0, time.perf_counter()
-        t0 = prev_start = last
-        takes.t0 = t0
 
-        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WINDOW, w, h)
+def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
+        devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR) -> int:
+    """Open everything, run the frame loop, close everything.
 
-        while True:
-            frame = camera.read()
-            start = time.perf_counter()
-            tracker.submit(frame, start - t0)
-            # Hand results arrive asynchronously, usually one frame behind.
-            if (result := tracker.poll()) is not None:
-                if trace:
-                    hands, t_hand = result
-                    trace.write(json.dumps({"t": round(t_hand, 3), "hands": [
-                        {"label": hd.handedness, "points": hd.points.round(1).tolist()} for hd in hands]}) + "\n")
-                events = modes.update(*result)
-            else:
-                events = []
-            events += modes.tick(start - t0)
-            for done in takes.transcriber.poll():
-                if note := takes.on_transcribed(done):
-                    view.note, note_until = note, start + NOTE_S
-            for ev in events:
-                if ev.kind == "commit" and view.app == "review":  # a drill of this sentence may follow
-                    takes.drill_sentence = view.focus.sentence if view.focus else view.current
-                if ev.kind == "focus":
-                    takes.dial_seen = 0
-                if ev.kind in ("focus", "commit", "back"):
-                    until = apply_event(ev, view, overlay, log)
-                elif note := takes.handle(ev, modes, view, overlay):
-                    view.note, until = note, start + NOTE_S
-                else:
-                    until = None
-                if until is not None:
-                    note_until = until
-            view.app = modes.mode
-            zone = modes.zone
-            view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
-            view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
-            if modes.mode in ("prepare", "review"):
-                if result is not None:
-                    sync_view(grammar, view, overlay)
-                view.start_progress = modes.start_progress
-                if modes.mode == "review":
-                    takes.sync_review(grammar, view)
-                else:
-                    view.mark_verdicts, view.detail = (), ()
-            else:
-                view.section = takes.section
-                view.count_in = max(1, math.ceil(modes.count_in_end - (start - t0)))
-                view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" else 0.0
-                view.mic = takes.recorder.level
-                view.start_progress = 0.0
-                view.mark_verdicts, view.detail = (), ()
-            view.status = takes.status(modes.mode, view)
-            # Edge scrolling advances every displayed frame so it stays smooth.
-            if view.app in ("prepare", "review") and view.mode == "browse" and grammar.state.scroll_rate:
-                view.scroll = overlay.clamp_scroll(view.scroll + grammar.state.scroll_rate * (start - prev_start))
-            prev_start = start
-            if note_until is not None and start > note_until:
-                view.note, note_until = "", None
-
-            overlay.draw(frame, view)
-            if show_debug:
-                if view.app != "prepare":
-                    draw_zone_outline(frame, modes.zone)
-                else:
-                    draw_hand_box(frame, grammar.cursor)
-                for track in (grammar.state.primary, grammar.state.secondary):
-                    if track is not None:
-                        draw_landmarks(frame, track.hand)
-            draw_fingertips(frame, grammar.state)
-
-            now = time.perf_counter()
-            fps = 0.9 * fps + 0.1 / max(now - last, 1e-6)
-            work_ms = 0.9 * work_ms + 0.1 * (now - start) * 1000
-            last = now
-            # cam: rate the camera delivers; shown: rate we display;
-            # hands: tracker latency; work: our per-frame processing.
-            stats = (f"cam {camera.fps:4.1f}  shown {fps:4.1f} fps  "
-                     f"hands {tracker.latency_ms:4.1f} ms  work {work_ms:4.1f} ms")
-            draw_stats(frame, stats)
-
-            cv2.imshow(WINDOW, frame)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
-                break
-            if key in (ord(" "), ord("j"), ord("k")) and view.app in ("prepare", "review"):
-                step = -1 if key == ord("k") else 1
-                view.current = min(max(view.current + step, 0), len(sentences) - 1)
-                if not overlay.is_visible(view.current, view.scroll):
-                    view.scroll = overlay.scroll_to(view.current)
-            elif key == ord("d"):
-                show_debug = not show_debug
-            elif key == ord("s"):
-                SCREENS_DIR.mkdir(parents=True, exist_ok=True)
-                shot = SCREENS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.png"
-                cv2.imwrite(str(shot), frame)
-                log(time.perf_counter() - t0, "screenshot", path=shot.name)
-                print(f"saved {shot}")
-            if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
-                break
-
-        if modes.mode == "rehearse":  # quit mid-take: keep what was recorded
-            takes.handle(GestureEvent("take_stop", time.perf_counter() - t0), modes, view, overlay)
-    takes.close()
-    log.close()
-    if trace:
-        trace.close()
-    tracker.close()
-    cv2.destroyAllWindows()
+    Every resource is registered for cleanup as soon as it exists, so a
+    failure while opening the next one, a camera or drawing error mid-loop,
+    or Ctrl-C still closes what was opened, in reverse order, each step on
+    its own; a take being recorded is kept."""
+    devices = devices or Devices()
+    sentences = notes.sentences
+    with ExitStack() as stack:
+        camera = devices.camera()
+        stack.callback(guarded(camera.release, "the camera"))
+        tracker = devices.tracker()
+        stack.callback(guarded(tracker.close, "hand tracking"))
+        log = devices.log()
+        stack.callback(guarded(log.close, "the gesture log"))
+        trace_file = log.path.with_suffix(".trace.jsonl").open("w") if trace and log.path else None
+        if trace_file:
+            stack.callback(guarded(trace_file.close, "the trace"))
+        session = Session.create(path, root=sessions_root, gesture_log=log.path, language=lang, parsed=notes,
+                                 source=source)
+        takes = Takes(notes, session, log, devices)
+        stack.callback(guarded(takes.close, "the takes"))
+        stack.callback(guarded(devices.destroy_windows, "the window"))
+        try:
+            frame_loop(camera, tracker, log, trace_file, takes, sentences, devices)
+        except BaseException:
+            takes.interrupted = True
+            raise
     return 0
+
+
+def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentences, devices: Devices) -> None:
+    frame = camera.read()
+    h, w = frame.shape[:2]
+    overlay = TextOverlay(sentences, (w, h))
+    modes = ModeMachine((w, h), log)
+    grammar = modes.grammar
+    view = ViewState()
+    show_debug = False
+    note_until = None
+    fps, work_ms, last = 0.0, 0.0, time.perf_counter()
+    t0 = prev_start = last
+    takes.t0 = t0
+    devices.named_window(WINDOW, w, h)
+
+    while True:
+        frame = camera.read()
+        start = time.perf_counter()
+        tracker.submit(frame, start - t0)
+        # Hand results arrive asynchronously, usually one frame behind.
+        if (result := tracker.poll()) is not None:
+            if trace:
+                hands, t_hand = result
+                trace.write(json.dumps({"t": round(t_hand, 3), "hands": [
+                    {"label": hd.handedness, "points": hd.points.round(1).tolist()} for hd in hands]}) + "\n")
+            events = modes.update(*result)
+        else:
+            events = []
+        events += modes.tick(start - t0)
+        for done in takes.transcriber.poll():
+            if note := takes.on_transcribed(done):
+                view.note, note_until = note, start + NOTE_S
+        if note := takes.poll():
+            view.note, note_until = note, start + NOTE_S
+        takes.recording_problem()
+        for ev in events:
+            if ev.kind == "commit" and view.app == "review":  # a drill of this sentence may follow
+                takes.drill_sentence = view.focus.sentence if view.focus else view.current
+            if ev.kind == "focus":
+                takes.dial_seen = 0
+            if ev.kind in ("focus", "commit", "back"):
+                until = apply_event(ev, view, overlay, log)
+            elif note := takes.handle(ev, modes, view, overlay):
+                view.note, until = note, start + NOTE_S
+            else:
+                until = None
+            if until is not None:
+                note_until = until
+        view.app = modes.mode
+        zone = modes.zone
+        view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
+        view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
+        if modes.mode in ("prepare", "review"):
+            if result is not None:
+                sync_view(grammar, view, overlay)
+            view.start_progress = modes.start_progress
+            if modes.mode == "review":
+                takes.sync_review(grammar, view)
+            else:
+                view.mark_verdicts, view.detail = (), ()
+        else:
+            view.section = takes.section
+            view.count_in = max(1, math.ceil(modes.count_in_end - (start - t0)))
+            view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" and takes.recorder else 0.0
+            view.mic = takes.recorder.level if takes.recorder else 0.0
+            view.start_progress = 0.0
+            view.mark_verdicts, view.detail = (), ()
+        view.status = takes.status(modes.mode, view)
+        # Edge scrolling advances every displayed frame so it stays smooth.
+        if view.app in ("prepare", "review") and view.mode == "browse" and grammar.state.scroll_rate:
+            view.scroll = overlay.clamp_scroll(view.scroll + grammar.state.scroll_rate * (start - prev_start))
+        prev_start = start
+        if note_until is not None and start > note_until:
+            view.note, note_until = "", None
+
+        overlay.draw(frame, view)
+        if show_debug:
+            if view.app != "prepare":
+                draw_zone_outline(frame, modes.zone)
+            else:
+                draw_hand_box(frame, grammar.cursor)
+            for track in (grammar.state.primary, grammar.state.secondary):
+                if track is not None:
+                    draw_landmarks(frame, track.hand)
+        draw_fingertips(frame, grammar.state)
+
+        now = time.perf_counter()
+        fps = 0.9 * fps + 0.1 / max(now - last, 1e-6)
+        work_ms = 0.9 * work_ms + 0.1 * (now - start) * 1000
+        last = now
+        # cam: rate the camera delivers; shown: rate we display;
+        # hands: tracker latency; work: our per-frame processing.
+        stats = (f"cam {camera.fps:4.1f}  shown {fps:4.1f} fps  "
+                 f"hands {tracker.latency_ms:4.1f} ms  work {work_ms:4.1f} ms")
+        draw_stats(frame, stats)
+
+        devices.show(WINDOW, frame)
+        key = devices.wait_key()
+        if key in (ord("q"), 27):
+            break
+        if key in (ord(" "), ord("j"), ord("k")) and view.app in ("prepare", "review"):
+            step = -1 if key == ord("k") else 1
+            view.current = min(max(view.current + step, 0), len(sentences) - 1)
+            if not overlay.is_visible(view.current, view.scroll):
+                view.scroll = overlay.scroll_to(view.current)
+        elif key == ord("d"):
+            show_debug = not show_debug
+        elif key == ord("s"):
+            SCREENS_DIR.mkdir(parents=True, exist_ok=True)
+            shot = SCREENS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.png"
+            cv2.imwrite(str(shot), frame)
+            log(time.perf_counter() - t0, "screenshot", path=shot.name)
+            print(f"saved {shot}")
+        if not devices.window_open(WINDOW):
+            break
+
+    if modes.mode == "rehearse":  # quit mid-take: keep what was recorded, as a normal take
+        takes.handle(GestureEvent("take_stop", time.perf_counter() - t0), modes, view, overlay)
 
 
 if __name__ == "__main__":

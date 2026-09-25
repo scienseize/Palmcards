@@ -59,6 +59,8 @@ SESSIONS_DIR = Path(__file__).resolve().parent.parent / "sessions"
 SILENT_PEAK = 1e-3  # a take whose loudest sample is below this is silence
 SCHEMA = 2
 TAKE_WAV = re.compile(r"take-(\d+)\.wav$")
+TAKE_FILE = re.compile(r"take-(\d+)\.(?:wav|wav\.part|recording\.json)$")
+STATUSES = ("saved", "interrupted", "failed")
 
 
 class SessionError(Exception):
@@ -89,6 +91,12 @@ class TakeRecord:
     marks: dict | None = None  # verdict counts: {"hit": 5, "missed": 2, "unclear": 1, "skipped": 0}
     drill: int | None = None  # a drill: the one sentence (Notes.sentences index) it rehearsed
     revision: str | None = None  # the notes revision it was recorded with; None before schema 2
+    # "saved": recorded and finished normally; "interrupted": cut short (the app
+    # stopped or crashed mid-take; recovered at the next start); "failed": the
+    # disk refused a write, what came before it is kept. Only saved takes are
+    # analysed automatically.
+    status: str = "saved"
+    capture: dict | None = None  # clock, gaps, overflows: see Session.finish_take
 
     @property
     def silent(self) -> bool:
@@ -363,7 +371,7 @@ class Session:
 
     def _next_number(self) -> int:
         """One past every take and every take file on disk: never overwrite a WAV."""
-        on_disk = [int(m.group(1)) for p in self.dir.glob("take-*.wav") if (m := TAKE_WAV.match(p.name))]
+        on_disk = [int(m.group(1)) for p in self.dir.glob("take-*") if (m := TAKE_FILE.match(p.name))]
         return max([t.number for t in self.takes] + on_disk + [0]) + 1
 
     def set_result(self, number: int, transcript: str, alignment: dict, verdicts: str | None = None,
@@ -400,6 +408,73 @@ class Session:
         self.save()
         return take
 
+    def begin_take(self) -> int:
+        """Get ready to record the next take: the folder, notes and session.json
+        exist (so an interrupted take can be recovered). Returns its number."""
+        self._ensure_written()
+        self.save()
+        return self._next_number()
+
+    def finish_take(self, manifest: dict, status: str | None = None, recovered: bool = False) -> TakeRecord:
+        """Add a take written by palmcards.recording.TakeWriter, from its
+        manifest, and delete the manifest. Times: t_start is the first
+        sample's app time; section times become seconds into the take."""
+        status = status or ("failed" if manifest["state"] == "failed" else "saved")
+        if status not in STATUSES:
+            raise ValueError(f"unknown take status {status!r}")
+        rate = manifest["rate"]
+        t_start = manifest["first_sample_t"]
+        if t_start is None:  # no audio arrived: the moment recording was asked for
+            t_start = manifest.get("requested_t", 0.0)
+        sections = [{"section": s, "t": round(max(0.0, t - t_start), 3)} for t, s in manifest["sections"]]
+        gaps = manifest["discontinuities"]
+        capture = {
+            "clock": manifest["clock"],
+            "dropped_samples": sum(g["samples"] or 0 for g in gaps),
+            "discontinuities": [{"at_s": round(g["at"] / rate, 3), "samples": g["samples"], "why": g["why"]}
+                                for g in gaps],
+        }
+        if manifest.get("error"):
+            capture["error"] = manifest["error"]
+        if recovered:
+            capture["recovered"] = True
+        take = TakeRecord(
+            number=manifest["take"], wav=manifest["wav"], started=manifest["started"], t_start=round(t_start, 3),
+            duration_s=round(manifest["samples"] / rate, 3), sample_rate=rate, peak=manifest["peak"],
+            sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
+            status=status, capture=capture,
+        )
+        self.takes = [t for t in self.takes if t.number != take.number] + [take]
+        self.takes.sort(key=lambda t: t.number)
+        self.save()
+        (self.dir / f"take-{take.number:02d}.recording.json").unlink(missing_ok=True)
+        return take
+
+    def recover(self) -> list[TakeRecord]:
+        """Takes whose recording never finished (the app stopped or crashed
+        mid-take): salvage the audio written so far as "interrupted" takes."""
+        from palmcards.recording import repair_wav
+
+        out = []
+        for path in sorted(self.dir.glob("take-*.recording.json")):
+            manifest = json.loads(path.read_text())
+            if any(t.number == manifest["take"] for t in self.takes):
+                path.unlink()  # finished, only the manifest's removal was missed
+                continue
+            part, wav = self.dir / manifest["part"], self.dir / manifest["wav"]
+            if part.exists():
+                manifest["samples"] = repair_wav(part)
+                part.replace(wav)
+            if not wav.exists() or manifest["samples"] == 0:
+                path.replace(path.with_name(path.name + ".empty"))  # nothing to salvage; keep the evidence
+                continue
+            audio, _ = read_wav(wav)
+            manifest["peak"] = round(float(np.abs(audio).max()) if len(audio) else 0.0, 5)
+            finished = manifest["state"] in ("saved", "failed")
+            status = ("failed" if manifest["state"] == "failed" else "saved") if finished else "interrupted"
+            out.append(self.finish_take(manifest, status, recovered=True))
+        return out
+
     def save(self) -> None:
         self.acquire()
         path = self.dir / "session.json"
@@ -418,6 +493,28 @@ class Session:
         }
         _write_atomic(path, (json.dumps(data, indent=2) + "\n").encode())
         self._loaded_schema = SCHEMA
+
+
+def recover_all(root: Path = SESSIONS_DIR) -> list[str]:
+    """At startup: salvage takes left mid-recording in any session under
+    `root`. A session open in another running PalmCards is left alone.
+    Returns a line per session touched, for the terminal."""
+    lines = []
+    for folder in sorted({p.parent for p in root.glob("*/take-*.recording.json")}):
+        try:
+            session = Session.load(folder)
+            session.acquire()
+        except SessionBusy:
+            continue
+        except SessionError as exc:
+            lines.append(f"{folder.name}: could not recover: {exc}")
+            continue
+        try:
+            for take in session.recover():
+                lines.append(f"{folder.name}: take {take.number} recovered ({take.duration_s:.1f} s, {take.status})")
+        finally:
+            session.release()
+    return lines
 
 
 def write_wav(path: Path, audio: np.ndarray, rate: int) -> None:

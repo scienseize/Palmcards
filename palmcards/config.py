@@ -94,6 +94,15 @@ class Rehearse:
 
 
 @dataclass(frozen=True)
+class Recording:
+    # Takes are streamed to disk as they are recorded (palmcards.recording).
+    block_frames: int = 1024  # microphone block size (21 ms at 48 kHz)
+    queue_s: float = 2.0  # audio the callback can hand over before blocks are dropped (and recorded as a gap)
+    flush_s: float = 1.0  # header rewritten and file fsynced this often
+    finalize_timeout_s: float = 5.0  # waiting this long for a take to finish writing when the app closes
+
+
+@dataclass(frozen=True)
 class Speech:
     backend: str = "mlx-whisper"  # palmcards.asr BACKENDS: "mlx-whisper" or "apple"
     model: str = "mlx-community/whisper-large-v3-turbo"  # or "mlx-community/whisper-small-mlx"
@@ -231,6 +240,7 @@ TIMING = Timing()
 CURSOR = Cursor()
 OPS = Ops()
 REHEARSE = Rehearse()
+RECORDING = Recording()
 SPEECH = Speech()
 ALIGN = Align()
 CUES = Cues()

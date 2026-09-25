@@ -7,17 +7,21 @@ A background thread reads the camera continuously, so the camera's own rate
 (`Camera.fps`) is measured independently of how long each frame takes to
 process. macOS webcams drop to ~15 fps on their own in dim light.
 
-Audio is buffered in memory per take (AudioRecorder) and saved as WAV by
-`palmcards.session`.
+Audio is streamed to disk as it is recorded (AudioRecorder hands blocks
+to palmcards.recording.TakeWriter); nothing accumulates in memory.
 """
 
 import math
 import threading
 import time
 from collections import deque
+from typing import Callable
 
 import cv2
 import numpy as np
+
+from palmcards.config import RECORDING
+from palmcards.recording import first_sample_time
 
 
 class CameraError(RuntimeError):
@@ -98,64 +102,71 @@ class AudioRecorder:
     """Default microphone, mono float32 at the device's own rate.
 
     open() starts the input stream (the count-in doubles as its warm-up),
-    start() begins keeping blocks, stop() returns the take, close() releases
-    the microphone so macOS's recording indicator goes off between takes.
-    Without Microphone permission macOS delivers silence, not an error; the
-    take's peak shows it.
+    start(writer) streams blocks to a palmcards.recording.TakeWriter,
+    stop() hands the writer back (it finishes writing in the background),
+    close() releases the microphone so macOS's recording indicator goes off
+    between takes. The callback only copies the block and hands it over: no
+    disk, no locks, no waiting. Without Microphone permission macOS delivers
+    silence, not an error; the take's peak shows it.
+
+    `clock` is the app clock (seconds since the app started); the first
+    sample of a take is placed on it with the device's timing.
     """
 
-    def __init__(self, device: int | str | None = None):
+    def __init__(self, device: int | str | None = None, clock: Callable[[], float] = time.perf_counter):
         import sounddevice as sd
 
         self._sd = sd
         self.device = device
+        self.clock = clock
         self.rate = int(sd.query_devices(device, kind="input")["default_samplerate"])
         self.level = 0.0  # last block's loudness, 0 (-60 dBFS or less) .. 1 (full scale)
-        self.overflows = 0  # blocks the callback reported as dropped
-        self._lock = threading.Lock()
-        self._blocks: list[np.ndarray] = []
-        self._frames = 0
-        self._recording = False
+        self.overflows = 0  # blocks the device reported as dropped during the take
+        self.writer = None  # TakeWriter while recording
         self._stream = None
 
     def open(self) -> None:
         """Raises sounddevice.PortAudioError if the microphone can't be opened."""
         if self._stream is None:
-            stream = self._sd.InputStream(device=self.device, samplerate=self.rate, channels=1,
-                                          dtype="float32", callback=self._callback)
+            stream = self._sd.InputStream(device=self.device, samplerate=self.rate, channels=1, dtype="float32",
+                                          blocksize=RECORDING.block_frames, callback=self._callback)
             stream.start()
             self._stream = stream
 
-    def _callback(self, indata, frames, _time, status) -> None:
-        if status.input_overflow:
-            self.overflows += 1
+    def _callback(self, indata, frames, time_info, status) -> None:
         block = indata[:, 0].copy()
         rms = float(np.sqrt(np.mean(block * block))) if len(block) else 0.0
         self.level = min(1.0, max(0.0, (20 * math.log10(max(rms, 1e-9)) + 60) / 60))
-        with self._lock:
-            if self._recording:
-                self._blocks.append(block)
-                self._frames += len(block)
+        writer = self.writer
+        if writer is None:
+            return
+        if getattr(status, "input_overflow", False):
+            self.overflows += 1
+            writer.mark_overflow()
+        if writer.started:
+            writer.push(block)
+        else:
+            writer.push(block, *first_sample_time(self.clock(), time_info, frames, self.rate))
 
-    def start(self) -> None:
-        with self._lock:
-            self._blocks, self._frames, self._recording = [], 0, True
+    def start(self, writer) -> None:
         self.overflows = 0
+        self.writer = writer
 
     @property
     def seconds(self) -> float:
         """Length of the take so far."""
-        return self._frames / self.rate
+        return self.writer.seconds if self.writer is not None else 0.0
 
-    def stop(self) -> np.ndarray:
-        with self._lock:
-            self._recording = False
-            blocks, self._blocks, self._frames = self._blocks, [], 0
-        return np.concatenate(blocks) if blocks else np.zeros(0, np.float32)
+    def stop(self):
+        """Stop streaming to the writer; it finishes in the background. Returns it."""
+        writer, self.writer = self.writer, None
+        if writer is not None:
+            writer.stop()
+        return writer
 
     def close(self) -> None:
         if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+            stream, self._stream = self._stream, None
+            stream.stop()
+            stream.close()
         self.level = 0.0

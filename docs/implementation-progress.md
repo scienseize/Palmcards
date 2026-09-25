@@ -13,7 +13,7 @@ user runs them. They are never inferred from unit tests.
 | --- | --- | --- | --- | --- |
 | 0 — Current baseline | Verified | Ledger created; no source changes | 200 passed; all 8 findings reproduced on HEAD `c5a5dd2` (see log) | — |
 | 1 — Sessions and notes | Implemented, validation pending | Schema 2 + migration, notes snapshots/revisions with stable ids, exclusive session folders, flock writer lock, atomic WAVs, orphan report | 216 passed; F3/F7 regression tests; CLI rebind run on a temp copy of a real session | App run on hardware (first take writes the new layout); orphan *salvage* is Phase 2 |
-| 2 — Recording lifecycle | Pending | None | Static failure-path inspection | Implement finalization and recovery |
+| 2 — Recording lifecycle | Implemented, validation pending | Takes streamed to disk (bounded queue, writer thread, fsynced valid WAV + manifest), saved/interrupted/failed states, startup salvage, device-clock first sample, ExitStack-owned resources with guarded cleanup | 235 passed; SIGKILL mid-recording salvaged; injected camera/draw/init/Ctrl-C/disk-full/queue-overflow failures | Hardware: real mic run, clock sync measurement |
 | 3 — Analysis supervision | Pending | None | Review reproductions only | Implement bounded transport/generations |
 | 4 — Navigation and controls | Pending | None | Review renders only | Implement viewports and fallback controls |
 | 5 — Scoring/provenance | Pending | None | Review false-positive reproduction | Fix tail evidence and cache metadata |
@@ -121,4 +121,71 @@ Unverified assumptions and remaining risks: flock semantics verified on macOS on
 Reason for any departure from this plan: none. Session folders are still created at the first
   take (existing behaviour), exclusively.
 Next action: Phase 2.
+```
+
+```text
+Date: 2026-09-25
+Phase / issue IDs: Phase 2 (F1 exceptions discard the active recording; clock accuracy; overflows)
+Status: implemented, validation pending (hardware)
+Current HEAD / optional commit ID: cbeef80 -> Phase 2 commit (see git log)
+Pre-existing changes preserved: yes (clean tree at start; real sessions not touched).
+Files and behavior changed:
+  palmcards/recording.py (new): TakeWriter. The audio callback pushes blocks into a bounded queue
+    (RECORDING.queue_s = 2 s) with put_nowait: never blocks, never touches the disk; a full queue
+    drops the block and records a queue_full gap at its place in the file; PortAudio input
+    overflows are recorded as gaps too. A writer thread appends 16-bit PCM to take-NN.wav.part,
+    rewrites the WAV header and fsyncs every RECORDING.flush_s (1 s), and rewrites the manifest
+    take-NN.recording.json atomically. A write error (disk full) keeps what was written, marks the
+    take failed and records the rest as a write_error gap. stop() never blocks: the writer drains,
+    fixes the header, renames .part -> .wav in the background. first_sample_time(): the first
+    sample's app time from PortAudio's ADC time, else callback arrival minus block length.
+    repair_wav() rebuilds a stale header from the file size.
+  palmcards/capture.py: AudioRecorder streams to a TakeWriter (fixed 1024-frame blocks, app clock
+    injected); no audio kept in memory; overflow counted per take.
+  palmcards/session.py: TakeRecord.status (saved | interrupted | failed) and capture (clock,
+    dropped_samples, discontinuities with at_s/samples/why, error, recovered). begin_take()
+    writes folder, notes and session.json before recording so a crash is recoverable;
+    finish_take(manifest) adds the take (t_start = first sample, section times relative to it) and
+    removes the manifest; recover() salvages leftover .part/.wav as interrupted takes (headerless
+    parts kept as *.recording.json.empty evidence; already-added takes just lose the manifest);
+    recover_all(root) at startup skips sessions another running PalmCards holds. Take numbering
+    also skips .wav.part and manifests.
+  main.py: Devices (camera, tracker, recorder, log, window functions; tests pass fakes); run()
+    registers each resource in one ExitStack as soon as it is opened, cleanup steps are guarded
+    (a failing step is reported and the rest still run; the original exception is re-raised);
+    any exception or Ctrl-C marks the active take interrupted. Takes: begin_take + TakeWriter at
+    take_start, sections marked on the writer in app time, stop hands the writer to background
+    finalization, poll() adds finished takes and submits analysis only for saved takes;
+    recording errors and interrupted/failed takes show a persistent status line; close() is
+    idempotent and waits at most RECORDING.finalize_timeout_s per take (a take still writing is
+    left for recovery). main() runs recover_all() at startup.
+  palmcards/speech.py CLI: skips interrupted/failed takes unless --incomplete.
+  palmcards/config.py: RECORDING (block_frames, queue_s, flush_s, finalize_timeout_s).
+  CLAUDE.md: recording lifecycle, take status/capture fields, part/manifest files.
+Migration / compatibility implications: schema unchanged (2); takes without status read as
+  "saved". The session folder now appears when a take starts (it used to appear when the first
+  take was saved). Session.add_take (in-memory audio) remains for tests and tools.
+Tests run and exact outcome: pytest (full) -> 235 passed in 12.09s. New:
+  tests/test_recording.py (11): stream-to-WAV exactness, section/t_start mapping, device-clock
+    and fallback stamping, callback hand-over with overflow, queue overflow (worst push < 5 ms,
+    written + dropped == pushed, gap recorded), disk full mid-take (5 blocks kept, failed,
+    write_error gap), open failure, header repair, SIGKILLed subprocess salvaged by
+    recover_all (>= 3 s - flush_s kept, interrupted, recovered flag, idempotent), recovery skips
+    a session still open, stale manifest cleanup, no-audio take timing.
+  tests/test_app_lifecycle.py (8, main.run with fake devices): camera failure, drawing error,
+    Ctrl-C mid-take -> take interrupted, not analysed, everything closed once, lock released, no
+    part/manifest left; q mid-take -> saved and submitted once; failing cleanup step reported,
+    others still run, original CameraError raised; tracker init failure -> camera released, no
+    session folder; take_stop twice -> one take, one job; cancelled count-in -> nothing written.
+Manual / hardware checks performed: none. Real microphone callback timing, ADC-time availability
+  on the MacBook Air mic, and audio/camera synchronisation error are not measured.
+Evidence or artifact paths: tests above.
+Unverified assumptions and remaining risks: PortAudio on macOS is assumed to report
+  inputBufferAdcTime (fallback path covered by tests). Maximum loss if the app is killed:
+  the queue (<= 2 s); on power loss up to a further 1 s. The frame loop still draws while a take
+  finalizes; the fsync happens on the writer thread.
+Reason for any departure from this plan: the plan suggests a separate controller object; resource
+  ownership was centralised in run() + Takes with an ExitStack instead, a smaller change
+  (the fuller state controller is Phase 6).
+Next action: Phase 3.
 ```
