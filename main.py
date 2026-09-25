@@ -83,7 +83,9 @@ from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import ANALYSIS, FOLLOW, RECORDING, SPEECH
 from palmcards.gestures import OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.notes import Notes, notes_from_bytes
-from palmcards.edit import is_stressed, toggle_stress
+from palmcards.edit import add_marks, is_stressed, replace_text, replace_word, toggle_stress
+from palmcards.llm import Assistant, alternatives_request, get_provider, marks_request, parse_alternatives, \
+    parse_marks, parse_rewrite, rewrite_request
 from palmcards.render import (
     HEAR_IT, STRESS, UNSTRESS, Hit, OpsView, TextOverlay, ViewState,
     draw_fingertips, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
@@ -145,8 +147,15 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
     elif ev.kind == "commit":
         sentence = view.focus.sentence if view.focus else None
         picked = overlay.ring_labels(view)[view.ops.picked] if ev.op == "ring" else None
+        unit = tuple(overlay.unit(ev.level, sentence)) if sentence is not None else ()
         if picked in (STRESS, UNSTRESS) and takes is not None and view.focus is not None:
             view.note = takes.edit_stress(view.focus.sentence, view.focus.word)
+        elif picked in view.alternatives and takes is not None and view.focus is not None and view.ops.picked > 0:
+            view.note = takes.use_alternative(view.focus.sentence, view.focus.word, picked)
+        elif ev.op in ("tone", "stretch") and takes is not None and unit:
+            view.note = takes.ask_rewrite("tone" if ev.op == "tone" else "length", unit, ev.value)
+        elif ev.op is None and takes is not None and unit in takes.proposals:
+            view.note = takes.use_proposal(unit)
         elif picked == HEAR_IT and view.focus is not None:
             s = overlay.sentences[view.focus.sentence]
             stressed = {m.word for m in s.marks if m.kind == "stress"} | {view.focus.word}
@@ -163,6 +172,8 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
             view.note = f"{what} EDITS ARE NOT AVAILABLE YET: NOTHING CHANGED"
         else:
             view.note = "NO CHANGE"
+    if ev.kind == "back" and takes is not None and view.focus is not None:  # backing out discards a proposal
+        takes.proposals.pop(tuple(overlay.unit(ev.level, view.focus.sentence)), None)
     view.focus = None
     view.ops = OpsView()
     return time.perf_counter() + NOTE_S if ev.kind == "commit" and view.note else None
@@ -187,6 +198,10 @@ class Takes:
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
         self.player = None  # Review playback, made at the first play
         self.notes_version = 0  # bumped when an edit or undo changes the notes
+        provider = self.devices.llm()
+        self.assistant = Assistant(provider) if provider is not None else None
+        self.alternatives: dict[tuple[int, int], tuple[str, ...]] = {}  # (sentence, word) -> words, this revision
+        self.proposals: dict[tuple[int, ...], tuple[str, object, str]] = {}  # unit -> (kind, value, text shown)
         self._follow_reported = False
         self.recorder: AudioRecorder | None = None
         self.analysis = Supervisor()
@@ -250,6 +265,7 @@ class Takes:
         self.notes = notes
         self.board = Board(notes)
         self._fill_board()
+        self.alternatives, self.proposals = {}, {}  # they were for other text
         if self.follow is not None:
             self.follow.notes = notes
         self.notes_version += 1
@@ -268,6 +284,93 @@ class Takes:
         self.log(time.perf_counter() - self.t0, "edit", op="stress", on=on, sentence=sentence, word=word,
                  revision=rid)
         return f'{"STRESSED" if on else "UNSTRESSED"} "{text.upper()}"  /  U: UNDO'
+
+    # --- the optional LLM: requests from explicit actions, answers as previews ---
+
+    NO_LLM = "NEED THE OPTIONAL LLM (NOT SET UP, SEE README): NOTHING SENT"
+
+    def ask_alternatives(self, sentence: int, word: int) -> None:
+        """Opening the options ring on a word: ask once for alternatives."""
+        key = (sentence, word)
+        if self.assistant is None or key in self.alternatives or self.assistant.asking("alternatives", key):
+            return
+        s = self.notes.sentences[sentence]
+        text = s.words[word].text
+        self.assistant.ask("alternatives", key, self.session.current_revision or "imported",
+                           alternatives_request(s.text, text), lambda reply: parse_alternatives(reply, text))
+        self.log(time.perf_counter() - self.t0, "llm", ask="alternatives", sentence=sentence, word=word)
+
+    def ask_rewrite(self, kind: str, unit: tuple[int, ...], amount: float) -> str:
+        what = "TONE" if kind == "tone" else "LENGTH"
+        if self.assistant is None:
+            return f"{what} EDITS {self.NO_LLM}"
+        text = " ".join(self.notes.sentences[i].text for i in unit)
+        self.assistant.ask(kind, unit, self.session.current_revision or "imported",
+                           rewrite_request(kind, text, amount), lambda reply: parse_rewrite(reply, text, kind, amount))
+        self.log(time.perf_counter() - self.t0, "llm", ask=kind, sentences=list(unit), amount=amount)
+        return f"ASKING FOR A {'WARMER' if kind == 'tone' and amount > 0 else 'COOLER' if kind == 'tone' else 'LONGER' if amount > 1 else 'SHORTER'} VERSION..."
+
+    def ask_marks(self, sentence: int) -> str:
+        if self.assistant is None:
+            return f"MARK SUGGESTIONS {self.NO_LLM}"
+        words = [w.text for w in self.notes.sentences[sentence].words]
+        self.assistant.ask("marks", (sentence,), self.session.current_revision or "imported",
+                           marks_request(words), lambda reply: parse_marks(reply, len(words)))
+        self.log(time.perf_counter() - self.t0, "llm", ask="marks", sentence=sentence)
+        return "ASKING FOR MARK SUGGESTIONS..."
+
+    def poll_llm(self) -> str:
+        """Answers in: alternatives onto the ring, rewrites and marks as proposals.
+        One made on notes that have changed since is dropped."""
+        from palmcards.export import marked
+
+        if self.assistant is None:
+            return ""
+        note = ""
+        for a in self.assistant.poll():
+            if a.revision != (self.session.current_revision or "imported"):
+                note = "THE NOTES CHANGED: SUGGESTION DROPPED"
+                continue
+            if a.error:
+                print(f"LLM {a.kind}: {a.error}", file=sys.stderr)
+                note = "SUGGESTION FAILED (SEE TERMINAL)"
+                continue
+            if a.kind == "alternatives":
+                self.alternatives[a.key] = tuple(a.value)
+                continue
+            if a.kind == "marks":
+                preview = marked(add_marks(self.notes, a.key[0], a.value).sentences[a.key[0]])
+            else:
+                preview = a.value
+            self.proposals[a.key] = (a.kind, a.value, preview)
+            note = "PROPOSAL READY: FOCUS IT AGAIN TO SEE IT"
+        return note
+
+    def _save_edit(self, notes: Notes, what: str, **log) -> str:
+        try:
+            rid = self.session.edit(notes, note=what)
+        except (OSError, SessionError) as exc:
+            print(f"could not save the edit: {exc}", file=sys.stderr)
+            return "EDIT NOT SAVED (SEE TERMINAL)"
+        self._use_notes(self.session.current_notes())
+        self.log(time.perf_counter() - self.t0, "edit", revision=rid, **log)
+        return ""
+
+    def use_alternative(self, sentence: int, word: int, text: str) -> str:
+        old = self.notes.sentences[sentence].words[word].text
+        note = self._save_edit(replace_word(self.notes, sentence, word, text), f'"{old}" -> "{text}"',
+                               op="alternative", sentence=sentence, word=word, text=text)
+        return note or f'"{old.upper()}" -> "{text.upper()}"  /  U: UNDO'
+
+    def use_proposal(self, unit: tuple[int, ...]) -> str:
+        kind, value, _ = self.proposals.pop(unit)
+        if kind == "marks":
+            notes = add_marks(self.notes, unit[0], value)
+        else:
+            notes = replace_text(self.notes, list(unit), value)
+        note = self._save_edit(notes, f"{kind} proposal used", op=kind, sentences=list(unit))
+        extra = "  (ITS MARKS WERE FOR THE OLD WORDS: MARK IT AGAIN)" if kind != "marks" else ""
+        return note or f"{kind.upper()} PROPOSAL USED{extra}  /  U: UNDO"
 
     def undo(self) -> str:
         if self.session.current_revision is None or self.session._parsed is not None:
@@ -596,6 +699,7 @@ class Devices:
     log: Callable = GestureLog.to_session_dir
     speaker: Callable = get_speaker
     player: Callable = ClipPlayer
+    llm: Callable = get_provider  # None: the optional LLM is off
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
     named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
     show: Callable = cv2.imshow
@@ -747,6 +851,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         events, queued = queued + events, []
         if note := takes.poll_analysis():
             view.note, note_until = note, start + NOTE_S
+        if note := takes.poll_llm():
+            view.note, note_until = note, start + NOTE_S
         if note := takes.poll():
             view.note, note_until = note, start + NOTE_S
         takes.recording_problem()
@@ -768,6 +874,18 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         zone = modes.zone
         view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
+        if modes.mode == "prepare":  # the optional LLM: what the focused word or unit has
+            word_key = (view.focus.sentence, view.focus.word) if view.mode == "focus" and view.focus is not None \
+                and view.focus.word is not None else None
+            if word_key and grammar.state.op == "ring":
+                takes.ask_alternatives(*word_key)  # opening the ring asks
+            view.alternatives = takes.alternatives.get(word_key, ()) if word_key else ()
+            view.loading = bool(word_key) and takes.assistant is not None and \
+                takes.assistant.asking("alternatives", word_key)
+            unit = tuple(overlay.unit(view.level, view.focus.sentence)) \
+                if view.mode == "focus" and view.focus is not None and view.level in ("sentence", "paragraph") else ()
+            proposal = takes.proposals.get(unit) if unit else None
+            view.proposal = proposal[2] if proposal else ""
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)
@@ -775,7 +893,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if modes.mode == "review":
                 takes.sync_review(grammar, view)
             else:
-                view.mark_verdicts, view.detail = (), ()
+                view.mark_verdicts = ()
+                view.detail = (("", f"PROPOSED: {view.proposal}"),) if view.proposal else ()
         else:
             if modes.mode == "rehearse":
                 takes.poll_follow(view, overlay)
@@ -867,6 +986,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                     view.scroll = overlay.scroll_to(view.current)
         elif key == ord("h"):
             view.keys_help = not view.keys_help
+        elif key == ord("m") and view.app == "prepare" and view.mode == "focus" and view.level == "sentence" \
+                and view.focus is not None:
+            view.note, note_until = takes.ask_marks(view.focus.sentence), time.perf_counter() + NOTE_S
         elif key == ord("u") and view.app == "prepare":
             view.note, note_until = takes.undo(), time.perf_counter() + NOTE_S
         elif key == ord("a") and view.app == "review":

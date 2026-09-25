@@ -81,6 +81,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 
 ### What the screen promises
 - Prepare offers only what works: the options ring holds the original word, **stress** / **unstress** (a real edit: a new notes revision, `palmcards/edit.py`) and **hear it** (speaks the sentence with the word stressed, via `palmcards/tts.py`); `u` undoes the last edit (the session's current revision steps back to its parent; nothing is deleted). Word alternatives, tone and length need the optional LLM: without one, tone and length preview their controls and say "not available yet"; a commit never claims a change it didn't make.
+- The optional LLM (`palmcards/llm.py`, off unless `LLM.provider` is set; "ollama" runs a model on the Mac, cloud providers are not wired in): opening the options ring asks for word alternatives (the word's glyphs scramble while it waits, then they join the ring); committing a tone or length change asks for a rewrite; `m` on a focused sentence asks for delivery marks. Rewrites and marks come back as a *proposal*, shown under the unit when it is focused again: pinch + lift uses it (a new revision, `u` undoes), dropping the hand discards it. Only explicit actions send anything; only the unit's text goes, inside `<notes>` tags with a system prompt that treats it as data; answers are validated; an answer for notes that changed since is dropped. Without a provider these say so and nothing is sent.
 - Edits never touch the imported file. Takes keep the revision they were recorded with; Review places older takes on the current notes by sentence id, so an edited sentence starts without verdicts. Sentence ids are unique across the whole session, including branches after an undo.
 - The focus panel is a viewport over the whole unit: never under the label, never off the frame; long sections and long verdict lists scroll (scrollbar, more-above/below markers). In Rehearse the current sentence is orange and kept in view. A focused Review panel too tall for the frame pages itself every few seconds.
 - Verdicts carry a symbol as well as a colour (✓ hit, ✗ missed, ? unclear, – skipped), and counts are given separately ("4 HIT, 3 MISSED, 2 UNCLEAR"): unclear is too little evidence, not a miss.
@@ -302,7 +303,8 @@ palmcards/
 │   ├── paths.py         # where data lives ($PALMCARDS_DATA, sessions/, Application Support)
 │   ├── data.py          # list / export / delete / prune recordings (python -m palmcards.data)
 │   ├── playback.py      # Review: play a sentence of a take
-│   ├── edit.py          # edits to the notes (stress), each a new Notes for a new revision
+│   ├── edit.py          # edits to the notes (stress, alternatives, rewrites, marks), each a new Notes
+│   ├── llm.py           # the optional LLM: providers (fake, Ollama), checked answers, background requests
 │   └── export.py        # a notes revision back out as .txt / .md / .docx (python -m palmcards.export)
 ├── models/              # MediaPipe .task files (gitignored; scripts/download_models.py, pinned + checksummed)
 ├── scripts/             # download_models, bench_live, profile_align, evaluate, cut_gesture_samples

@@ -250,6 +250,18 @@ class Follow:
 
 
 @dataclass(frozen=True)
+class Llm:
+    # The optional LLM (palmcards.llm): off unless provider is set. "ollama"
+    # runs a model on this Mac (install Ollama, `ollama pull <model>`).
+    provider: str | None = None
+    model: str = "llama3.1:8b"
+    url: str = "http://localhost:11434"
+    timeout_s: float = 20.0
+    max_chars: int = 1200  # the most text a request carries
+    max_alternatives: int = 3  # word alternatives on the options ring
+
+
+@dataclass(frozen=True)
 class Voice:
     # Text to speech (palmcards.tts), for the options ring's "hear it" node.
     backend: str = "say"  # palmcards.tts BACKENDS; macOS `say`
@@ -270,3 +282,4 @@ ALIGN = Align()
 CUES = Cues()
 FOLLOW = Follow()
 VOICE = Voice()
+LLM = Llm()

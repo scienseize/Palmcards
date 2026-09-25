@@ -45,6 +45,7 @@ from __future__ import annotations
 import math
 import re
 import textwrap
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -67,7 +68,8 @@ CLEAR = (0, 0, 0, 0)
 PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
-HEAR_IT, STRESS, UNSTRESS = "hear it", "stress", "unstress"  # ring nodes after the original word
+HEAR_IT, STRESS, UNSTRESS = "hear it", "stress", "unstress"  # ring nodes after the original word (and alternatives)
+SCRAMBLE = "abcdefghijklmnopqrstuvwxyz#%&@$"
 FOCUS_HINTS = {
     "word": "OPEN PALM: STRESS, HEAR IT  /  DROP HAND: BACK",
     "sentence": "L-HAND, THEN TILT: TONE (PREVIEW ONLY)  /  DROP HAND: BACK",
@@ -141,6 +143,12 @@ class ViewState:
     # Rehearse: the next section shown faint under the current one, while its
     # predecessor's last sentence is being said (hides the follow's lag).
     preview_next: bool = False
+    # Prepare, the optional LLM: alternatives for the focused word (on the
+    # ring), a request in flight (the word's glyphs scramble), and a proposal
+    # for the focused unit (shown under it; pinch + lift uses it).
+    alternatives: tuple[str, ...] = ()
+    loading: bool = False
+    proposal: str = ""
 
 
 @dataclass
@@ -409,18 +417,22 @@ class TextOverlay:
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
-            second = "TURN AN L-HAND TO PICK"
+            second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "TURN AN L-HAND TO PICK"
             if ops.pointing:
                 picked = self.ring_labels(state)[ops.picked]
                 word = self.word_text(state.focus).upper() if state.focus and state.focus.word is not None else ""
                 second = {HEAR_IT: "PINCH + LIFT: HEAR IT", STRESS: f'PINCH + LIFT: STRESS "{word}"',
-                          UNSTRESS: f'PINCH + LIFT: UNSTRESS "{word}"'}.get(picked, "KEEP THE WORD (NO CHANGE)")
+                          UNSTRESS: f'PINCH + LIFT: UNSTRESS "{word}"'}.get(picked)
+                if second is None:
+                    second = "KEEP THE WORD (NO CHANGE)" if ops.picked == 0 else f'PINCH + LIFT: USE "{picked.upper()}"'
         elif ops.kind == "tone":
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
             second = f"SENTENCE TONE: {tone}  (PREVIEW ONLY, NOT AVAILABLE YET)"
         elif ops.kind == "stretch":
             change = "LONGER" if ops.stretch > 1.05 else "SHORTER" if ops.stretch < 0.95 else "SAME"
             second = f"PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}  (PREVIEW ONLY, NOT AVAILABLE YET)"
+        elif state.mode == "focus" and state.app == "prepare" and state.proposal:
+            second = "PINCH + LIFT: USE THE PROPOSAL  /  DROP HAND: DISCARD IT"
         elif state.mode == "focus" and state.app == "prepare":  # nothing started yet: say what the next shape does
             second = FOCUS_HINTS.get(state.level, "")
         elif state.mode == "focus":
@@ -436,7 +448,7 @@ class TextOverlay:
             return ("original", HEAR_IT)
         stressed = any(m.kind == MarkKind.STRESS and m.word == state.focus.word
                        for m in self.sentences[state.focus.sentence].marks)
-        return (self.word_text(state.focus), UNSTRESS if stressed else STRESS, HEAR_IT)
+        return (self.word_text(state.focus), *state.alternatives, UNSTRESS if stressed else STRESS, HEAR_IT)
 
     # --- drawing: text -----------------------------------------------------
 
@@ -862,6 +874,9 @@ class TextOverlay:
                 if state.ops.kind == "ring":
                     self._draw_ring(frame, state, center)
                 text = self.ring_labels(state)[state.ops.picked] if state.ops.kind == "ring" else self.word_text(state.focus)
+                if state.loading:  # glyph scramble: the word is being rewritten
+                    text = "".join(SCRAMBLE[(ord(c) + int(time.time() * 12)) % len(SCRAMBLE)] if c.isalpha() else c
+                                   for c in text)
                 chip = self._chip(text, round(self.font_size * CHIPS.focus_scale), C.orange, C.dark_fill)
                 self._blend_centered(frame, chip, *center)
 

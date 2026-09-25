@@ -83,10 +83,11 @@ Working now:
 - transcription (mlx-whisper), alignment to the notes, and verdicts for every mark;
 - Review with drills and a dial for stepping through takes.
 
-Planned:
-- gaze, posture and filler metrics (milestone 7);
-- editing the notes by gesture, with word alternatives, tone and length, and an optional LLM (milestone 8). Until then those controls preview and say so;
-- exporting revised notes (milestone 9).
+Also working: stressing or unstressing a word from the options ring (a new version of the notes, `u` to undo), and exporting any version of your notes (`python -m palmcards.export RUN`).
+
+Optional: word alternatives, tone and length rewrites, and suggested marks need a language model, and they are off by default. To use one on your Mac, install [Ollama](https://ollama.com), run `ollama pull llama3.1:8b`, and set `LLM.provider = "ollama"` in `palmcards/config.py`. Only what you explicitly ask about is sent (one sentence or paragraph, to localhost). Suggestions are shown as previews that you choose to use. Cloud models are not supported.
+
+Planned: gaze, posture and filler metrics (milestone 7).
 
 The verdict thresholds are starting values checked on synthetic audio. They have not yet been validated against human judgments; see [docs/evaluation.md](docs/evaluation.md).
 

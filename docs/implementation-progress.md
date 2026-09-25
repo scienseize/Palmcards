@@ -19,7 +19,7 @@ user runs them. They are never inferred from unit tests.
 | 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
-| 8 — Product completion | In progress | Slices 1-3: reopen + playback; export; stress edits as revisions with undo (session-wide unique ids) | 357 passed | Slices: LLM interface, guidance/prefs, metrics |
+| 8 — Product completion | In progress | Slices 1-4: reopen + playback; export; stress edits + undo; optional LLM (off by default; Ollama; alternatives, tone/length proposals, mark suggestions) | 369 passed | Slices: guidance/prefs, metrics; a cloud LLM provider needs your decision |
 | End-to-end release gate | Pending | None | Not run | Run on target hardware |
 
 ## Log
@@ -598,4 +598,58 @@ Unverified assumptions and remaining risks: after an edit, the edited sentence's
   are no longer shown (by design: they were for other words); users may expect them.
 Reason for any departure from this plan: none.
 Next action: Phase 8 slice 4 (LLM interface).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 8 slice 4 (optional LLM)
+Status: implemented, validation pending (no provider available here: no Ollama; a cloud provider
+  was not used, see below)
+Current HEAD / optional commit ID: 9f1e8d7 -> slice 4 commit (see git log)
+Pre-existing changes preserved: yes.
+Files and behavior changed:
+  palmcards/llm.py (was a placeholder): Provider protocol; FakeProvider (tests); OllamaProvider
+    (http://localhost:11434/api/chat, format json, no account); get_provider() -> None unless
+    config LLM.provider is set. Prompts: a fixed system prompt that treats the text in <notes>...
+    </notes> as data and never as instructions; the user's text is cut to LLM.max_chars and a
+    stray closing tag in it is neutralised. Validators: alternatives (<= 3 words, no markup, not
+    the word itself, no duplicates, at most LLM.max_alternatives), rewrites (non-empty, no markup,
+    length bounded), marks (known kinds, indices that fit the words, at most 4). Assistant: each
+    request in a daemon thread with LLM.timeout_s, answers via poll(), cancel() drops an answer.
+  palmcards/edit.py: replace_word (keeps the word's punctuation, marks stay in place), replace_text
+    (a sentence or paragraph rewritten; its marks dropped, the user marks it again), add_marks.
+  palmcards/config.py: LLM (provider None, model llama3.1:8b, url, timeout 20 s, max_chars 1200,
+    max_alternatives 3).
+  palmcards/render.py: ring = word, alternatives, stress/unstress, hear it; "EXPLORE ALTERNATIVES:
+    LOADING" and a glyph scramble of the word while waiting; 'PINCH + LIFT: USE "..."'; a focused
+    unit with a proposal says "PINCH + LIFT: USE THE PROPOSAL / DROP HAND: DISCARD IT".
+  main.py: Devices.llm; Takes.assistant; opening the ring on a word asks for alternatives (once
+    per word and revision); a tone/stretch commit asks for a rewrite ("ASKING FOR A WARMER
+    VERSION..."); key m on a focused sentence asks for marks; answers become ring nodes or
+    proposals (shown as a detail line under the unit); a commit with no operation on a unit with a
+    proposal uses it (new revision, undo); backing out discards it; answers made on another
+    revision are dropped ("THE NOTES CHANGED: SUGGESTION DROPPED"); failures go to stderr;
+    `llm` and `edit` log entries. Without a provider: "... NEED THE OPTIONAL LLM (NOT SET UP, SEE
+    README): NOTHING SENT", and the ring simply has no alternatives.
+  CLAUDE.md, README.md: the optional LLM and how to set up Ollama.
+Migration / compatibility implications: none.
+Tests run and exact outcome: pytest (full) -> 369 passed. New tests/test_llm.py (12): notes stay in
+  the user message inside one data block (an injected "</notes>" can't close it early), bounded
+  length; alternative, rewrite and mark validation; background answer (< 50 ms to ask), cancel,
+  provider error as an answer; Ollama request shape against a stand-in server on 127.0.0.1; off
+  by default; replace_word/replace_text/add_marks; in the app: alternatives asked once, used as
+  a revision, undone; a tone rewrite is a proposal until used; an answer about changed notes is
+  dropped; without a provider nothing is sent and it says so.
+Manual / hardware checks performed: none with a real model.
+Evidence or artifact paths: tests above.
+Unverified assumptions and remaining risks: suggestion quality depends on the model and is
+  unmeasured. Mark suggestions are applied as a whole proposal (no per-mark toggling by L-hand
+  yet), and asked for with the m key: a sentence-level open-palm gesture would change the gesture
+  grammar and its regression fixtures, so it is left for a deliberate grammar change.
+  Decision needed from the user: a cloud provider (e.g. Anthropic): ANTHROPIC_API_KEY is set in
+  this environment, but sending notes off the Mac, and its cost, were not authorised, so no cloud
+  provider was implemented or called.
+Reason for any departure from this plan: the per-mark L-hand toggle and the open-palm gesture for
+  mark suggestions (see above).
+Next action: Phase 8 slice 5 (guidance, accessibility, preferences).
 ```
