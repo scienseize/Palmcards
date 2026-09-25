@@ -14,6 +14,9 @@ gesture code hit-tests against them, so they stay in palmcards/config.py.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+
+FONTS_DIR = Path(__file__).resolve().parent / "fonts"
 
 RGB = tuple[int, int, int]
 RGBA = tuple[int, int, int, int]
@@ -67,11 +70,8 @@ class Colors:
 
 @dataclass(frozen=True)
 class Text:
-    fonts: tuple[str, ...] = (
-        "/System/Library/Fonts/Menlo.ttc",
-        "/System/Library/Fonts/SFNSMono.ttf",
-        "/Library/Fonts/Courier New.ttf",
-    )
+    # Shipped with the app (Menlo, the old default, is derived from it); licence beside it.
+    font: Path = FONTS_DIR / "DejaVuSansMono.ttf"
     rows_per_frame: int = 26  # text size = frame height / this ...
     min_size: int = 18  # ... but at least this, px
     line_spacing: float = 1.45  # line height, x the font's own

@@ -6,9 +6,9 @@ between takes. For each take it:
 
   1. resamples to 16 kHz and trims leading/trailing silence (`offset_s` is
      how much was cut from the front),
-  2. runs mlx-whisper with word timestamps, the session's language, a
-     filler-laden initial prompt (so "um"/"uh" survive) and
-     condition_on_previous_text off,
+  2. runs the recogniser (palmcards.asr; mlx-whisper) with word
+     timestamps, the session's language, a filler-laden initial prompt (so
+     "um"/"uh" survive) and condition_on_previous_text off,
   3. writes take-NN.transcript.json, every word on the app clock:
      app time = t_start + offset_s + Whisper's time,
   4. aligns the words to the notes (palmcards.align),
@@ -44,13 +44,12 @@ import sys
 import threading
 import time
 import traceback
-from math import gcd
 from pathlib import Path
-
-import numpy as np
 
 from palmcards import cues, prosody
 from palmcards.align import align, summary
+from palmcards.asr import Transcription, get_recognizer, initial_prompt  # noqa: F401 (initial_prompt: re-exported)
+from palmcards.audio import prepare_audio, resample, trim_silence  # noqa: F401 (re-exported)
 from palmcards.config import SPEECH
 from palmcards.notes import Notes
 from palmcards.prosody import Prosody
@@ -59,41 +58,7 @@ from palmcards.session import Session, TakeRecord, read_wav
 ROOT = Path(__file__).resolve().parent.parent
 
 
-# --- audio -------------------------------------------------------------------
-
-def resample(audio: np.ndarray, rate: int, target: int = SPEECH.rate) -> np.ndarray:
-    if rate == target:
-        return audio.astype(np.float32)
-    from scipy.signal import resample_poly
-
-    g = gcd(rate, target)
-    return resample_poly(audio, target // g, rate // g).astype(np.float32)
-
-
-def trim_silence(audio: np.ndarray, rate: int) -> tuple[int, int]:
-    """(start, end) sample range holding the sound, padded; (0, 0) if none."""
-    frame = max(1, int(rate * SPEECH.trim_frame_s))
-    n = len(audio) // frame
-    if n == 0:
-        return 0, 0
-    frames = audio[: n * frame].reshape(n, frame)
-    rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
-    db = 20 * np.log10(np.maximum(rms, 1e-9))
-    loud = np.flatnonzero(db > max(SPEECH.trim_floor_db, db.max() - SPEECH.trim_below_peak_db))
-    if len(loud) == 0:
-        return 0, 0
-    pad = int(rate * SPEECH.trim_pad_s)
-    return max(0, loud[0] * frame - pad), min(len(audio), (loud[-1] + 1) * frame + pad)
-
-
-def prepare_audio(wav: Path) -> tuple[np.ndarray, float]:
-    """16 kHz mono float32 with the silence at both ends trimmed, and the
-    seconds cut from the front."""
-    audio, rate = read_wav(wav)
-    audio = resample(audio, rate)
-    start, end = trim_silence(audio, SPEECH.rate)
-    return audio[start:end], start / SPEECH.rate
-
+# --- pitch and loudness --------------------------------------------------------
 
 def take_prosody(wav: Path, t_start: float, cache: Path, silent: bool) -> Prosody:
     """The take's pitch and loudness, from the cache or measured (and cached)."""
@@ -109,25 +74,6 @@ def take_prosody(wav: Path, t_start: float, cache: Path, silent: bool) -> Prosod
 
 
 # --- Whisper -----------------------------------------------------------------
-
-def initial_prompt(language: str) -> str | None:
-    return dict(SPEECH.filler_prompts).get(language)
-
-
-def transcribe(audio: np.ndarray, language: str) -> dict:
-    import mlx_whisper  # heavy; only the worker needs it
-
-    return mlx_whisper.transcribe(
-        audio,
-        path_or_hf_repo=SPEECH.model,
-        language=language,
-        word_timestamps=True,
-        condition_on_previous_text=False,
-        initial_prompt=initial_prompt(language),
-        hallucination_silence_threshold=SPEECH.hallucination_silence_s,
-        verbose=None,
-    )
-
 
 def words_on_clock(result: dict, t_start: float, offset_s: float) -> list[dict]:
     """Whisper's words, times moved onto the app clock."""
@@ -203,22 +149,20 @@ def run_job(job: dict) -> dict:
     if job.get("realign") and path.exists():
         data = json.loads(path.read_text())
     else:
-        audio, offset_s = (np.zeros(0, np.float32), 0.0) if job["silent"] else prepare_audio(Path(job["wav"]))
-        if len(audio):
-            print(f"transcribing take {job['take']} ({len(audio) / SPEECH.rate:.1f} s of sound)...",
-                  file=sys.stderr, flush=True)
-            result = transcribe(audio, job["language"])
+        recognizer = get_recognizer()
+        if job["silent"]:
+            tr = Transcription("", 0.0, [], recognizer.model)
         else:
-            result = {"text": "", "segments": []}
+            tr = recognizer.transcribe(Path(job["wav"]), job["language"])
         data = {
             "take": job["take"],
             "wav": Path(job["wav"]).name,
-            "model": SPEECH.model,
+            "model": tr.model,
             "language": job["language"],
             "t_start": job["t_start"],
-            "offset_s": round(offset_s, 3),
-            "text": result.get("text", "").strip(),
-            "words": words_on_clock(result, job["t_start"], offset_s),
+            "offset_s": round(tr.offset_s, 3),
+            "text": tr.text,
+            "words": words_on_clock({"segments": tr.segments}, job["t_start"], tr.offset_s),
         }
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")

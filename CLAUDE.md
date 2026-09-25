@@ -19,12 +19,12 @@ Full design note: https://claude.ai/artifact/2mB94zAhFAKUNK7GnCsqSc
 | Layer | Choice |
 | --- | --- |
 | Camera and compositing | OpenCV |
-| Text rendering | Pillow with a TTF monospace font, pasted onto the frame (OpenCV's built-in fonts are too crude) |
+| Text rendering | Pillow with a TTF monospace font (DejaVu Sans Mono, shipped in `palmcards/fonts/`), pasted onto the frame (OpenCV's built-in fonts are too crude) |
 | Hands | MediaPipe Hand Landmarker + Gesture Recognizer (built-in classes: Closed_Fist, Open_Palm, Thumb_Up, Pointing_Up) |
 | Gaze | MediaPipe Face Landmarker (head pose + iris) |
 | Posture | MediaPipe Pose Landmarker (lower frame rate than hands) |
 | Audio capture | sounddevice, buffered per take, saved as WAV |
-| Transcription | mlx-whisper (or whisper.cpp), after each take, with word timestamps; language set per session |
+| Transcription | mlx-whisper (or whisper.cpp), after each take, with word timestamps; language set per session. Behind one interface (`palmcards/asr.py`, engine picked by `SPEECH.backend`), which also has the live stream for 6b |
 | Prosody | librosa: `pyin` for pitch, RMS for loudness |
 | Notes parsing | python-docx, markdown-it-py |
 | Script alignment | rapidfuzz (fuzzy match transcript words to note words) |
@@ -241,7 +241,11 @@ palmcards/
 │   ├── config.py        # every gesture threshold in one place
 │   ├── render.py        # every visual: text overlay, chips, ring, gauge, zone, labels, fingertip dots, debug drawings, player caption/strip
 │   ├── style.py         # how it looks: colours (RGB/RGBA), fonts, sizes, spacing, positions
+│   ├── fonts/           # DejaVuSansMono.ttf and its licence
 │   ├── speech.py        # whisper transcription and judging (worker process, offline CLI)
+│   ├── asr.py           # speech recognition interface: transcribe(wav), live stream of confirmed words; mlx-whisper
+│   ├── audio.py         # 16 kHz resampling, silence trimming
+│   ├── tts.py           # text to speech interface; macOS say
 │   ├── prosody.py       # pitch (pyin) and loudness per take, cached
 │   ├── align.py         # transcript <-> notes alignment
 │   ├── player.py        # debug player: a take's audio with the notes highlighted as they're said

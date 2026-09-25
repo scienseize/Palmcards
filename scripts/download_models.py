@@ -3,8 +3,10 @@
 Run once after installing requirements:  python scripts/download_models.py
 Files that already exist are skipped. Pass --force to re-download.
 
-The Whisper model (palmcards/config.py SPEECH.model, ~1.6 GB) goes to the
-Hugging Face cache (~/.cache/huggingface), where mlx-whisper looks for it.
+The Whisper models (palmcards/config.py SPEECH.model, ~1.6 GB, for each take
+after it stops, and SPEECH.live_model, small, for following the voice during
+a take) go to the Hugging Face cache (~/.cache/huggingface), where
+mlx-whisper looks for them.
 """
 
 import sys
@@ -51,14 +53,15 @@ def main() -> int:
         except Exception as exc:  # keep going; report at the end
             print(f" FAILED: {exc}")
             failed.append(name)
-    print(f"Fetching the Whisper model {SPEECH.model}")
-    try:
-        from huggingface_hub import snapshot_download
+    for repo in dict.fromkeys((SPEECH.model, SPEECH.live_model)):
+        print(f"Fetching the Whisper model {repo}")
+        try:
+            from huggingface_hub import snapshot_download
 
-        print(f"  in    {snapshot_download(SPEECH.model, force_download=force)}")
-    except Exception as exc:
-        print(f"  FAILED: {exc}")
-        failed.append(SPEECH.model)
+            print(f"  in    {snapshot_download(repo, force_download=force)}")
+        except Exception as exc:
+            print(f"  FAILED: {exc}")
+            failed.append(repo)
     if failed:
         print(f"Failed: {', '.join(failed)}")
         return 1

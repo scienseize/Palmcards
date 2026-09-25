@@ -32,7 +32,6 @@ import math
 import re
 import textwrap
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import cv2
@@ -62,11 +61,10 @@ FOCUS_HINTS = {
 }  # cursor this close to the hand-box centre keeps the pick
 
 
-def load_font(size: int) -> ImageFont.ImageFont:
-    for path in TEXT.fonts:
-        if Path(path).exists():
-            return ImageFont.truetype(path, size)
-    return ImageFont.load_default(size)
+def load_font(size: int) -> ImageFont.FreeTypeFont:
+    if not TEXT.font.exists():
+        raise FileNotFoundError(f"font missing: {TEXT.font} (it ships in the repo; restore it with git)")
+    return ImageFont.truetype(TEXT.font, size)
 
 
 @dataclass(frozen=True)

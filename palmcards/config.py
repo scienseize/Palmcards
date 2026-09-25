@@ -95,6 +95,7 @@ class Rehearse:
 
 @dataclass(frozen=True)
 class Speech:
+    backend: str = "mlx-whisper"  # palmcards.asr BACKENDS
     model: str = "mlx-community/whisper-large-v3-turbo"  # or "mlx-community/whisper-small-mlx"
     language: str = "en"  # default for `main.py --lang`
     rate: int = 16000  # Whisper's input rate
@@ -111,6 +112,16 @@ class Speech:
     filler_prompts: tuple[tuple[str, str], ...] = (
         ("en", "Um, uh, so, like, I mean... okay, so, um, here's the thing."),
     )
+    # Live recognition during a take (milestone 6b): a small model re-reads
+    # the last window of audio every step; a word is confirmed once two
+    # consecutive readings agree on it (palmcards.asr).
+    live_model: str = "mlx-community/whisper-base-mlx"
+    live_window_s: float = 4.0
+    live_step_s: float = 0.5
+    live_min_rms_db: float = -45.0  # quieter windows (dBFS) are not read
+    live_edge_s: float = 0.2  # words starting this close to a full window's start may be cut off
+    live_overlap_s: float = 0.1  # word edges move this much between readings
+    live_agree_s: float = 0.5  # two readings' copies of a word start within this
 
 
 @dataclass(frozen=True)
@@ -182,6 +193,14 @@ class Cues:
     ending_slope_st_s: float = 3.0  # semitones per second, up for rise, down for fall
 
 
+@dataclass(frozen=True)
+class Voice:
+    # Text to speech (palmcards.tts), for the options ring's "hear it" node.
+    backend: str = "say"  # palmcards.tts BACKENDS; macOS `say`
+    voice: str | None = None  # `say -v`; None: the system voice
+    rate_wpm: int | None = None  # `say -r`; None: the system rate
+
+
 TRACKING = Tracking()
 POSE = Pose()
 TIMING = Timing()
@@ -191,3 +210,4 @@ REHEARSE = Rehearse()
 SPEECH = Speech()
 ALIGN = Align()
 CUES = Cues()
+VOICE = Voice()
