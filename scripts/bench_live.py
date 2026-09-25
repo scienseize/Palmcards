@@ -46,8 +46,19 @@ from palmcards.asr import LiveWord, get_recognizer  # noqa: E402
 from palmcards.audio import resample  # noqa: E402
 from palmcards.config import SPEECH  # noqa: E402
 from palmcards.follow import FollowEvent, Follower  # noqa: E402
-from palmcards.notes import Notes, load_notes, normalize  # noqa: E402
-from palmcards.session import Session, read_wav  # noqa: E402
+from palmcards.notes import Notes, normalize  # noqa: E402
+from palmcards.session import LegacyNotes, Session, read_wav  # noqa: E402
+
+
+def take_notes(session: Session, take) -> Notes:
+    """The notes the take was recorded with; for an old take (no saved notes)
+    the notes file as it is now, with a warning."""
+    try:
+        return session.notes_for(take)
+    except LegacyNotes:
+        print(f"warning: take {take.number} has no saved notes; scoring against {session.notes} as it is now",
+              file=sys.stderr)
+        return session.current_notes_unverified()
 
 BLOCK_S = 0.1  # audio is fed in blocks this long, as the app's feeder will
 GRACE_S = 2.0  # keep listening this long after the audio ends
@@ -336,7 +347,7 @@ def main() -> int:
             take = session.take(result["take"])
             live = [LiveWord(*w) for w in result["live_words"]]
             post = json.loads((session.dir / take.transcript).read_text())["words"]
-            result["score"] = score(load_notes(session.notes), post, live, take.t_start)
+            result["score"] = score(take_notes(session, take), post, live, take.t_start)
             path.write_text(json.dumps(result, indent=1) + "\n")
             print(f"{path}\n{report(result)}")
         return 0
@@ -355,7 +366,7 @@ def main() -> int:
     if take.drill is not None:
         print(f"take {take.number} is a drill; the notes don't follow the voice in drills", file=sys.stderr)
         return 1
-    notes = load_notes(session.notes)
+    notes = take_notes(session, take)
     post = json.loads((session.dir / take.transcript).read_text())["words"]
     audio, rate = read_wav(session.dir / take.wav)
     audio = resample(audio, rate)

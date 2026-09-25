@@ -20,11 +20,17 @@ Run `python -m palmcards.notes FILE` to print the parsed structure.
 
 from __future__ import annotations
 
+import io
 import re
 import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+
+
+# Bump when parsing changes what a file turns into, so saved notes snapshots
+# (palmcards.revisions) say which parser made them.
+PARSER_VERSION = 1
 
 
 class MarkKind(StrEnum):
@@ -263,12 +269,12 @@ def _md_blocks(text: str) -> list[Block]:
     return blocks
 
 
-def _docx_blocks(path: Path) -> list[Block]:
+def _docx_blocks(data: bytes) -> list[Block]:
     import docx
 
     blocks: list[Block] = []
     blank_run = 0
-    for p in docx.Document(str(path)).paragraphs:
+    for p in docx.Document(io.BytesIO(data)).paragraphs:
         text = p.text.strip()
         if not text:
             blank_run += 1
@@ -320,23 +326,37 @@ def parse_text(text: str, fmt: str = "txt") -> Notes:
     return build_notes(blocks)
 
 
-def load_notes(path: str | Path) -> Notes:
-    path = Path(path)
-    ext = path.suffix.lower()
+def check_format(path: str | Path) -> str:
+    """The file's extension if it is a supported notes format; else ValueError."""
+    ext = Path(path).suffix.lower()
     if ext == ".doc":
         raise ValueError("Legacy .doc files are not supported. Save the file as .docx and open that.")
-    if ext == ".docx":
-        blocks = _docx_blocks(path)
-    elif ext in (".md", ".markdown"):
-        blocks = _md_blocks(path.read_text(encoding="utf-8-sig"))
-    elif ext == ".txt":
-        blocks = _txt_blocks(path.read_text(encoding="utf-8-sig"))
-    else:
+    if ext not in (".docx", ".md", ".markdown", ".txt"):
         raise ValueError(f"Unsupported file type {ext or '(none)'}: use .txt, .md or .docx.")
+    return ext
+
+
+def notes_from_bytes(data: bytes, path: str | Path) -> Notes:
+    """Parse a notes file's contents; `path` gives the format (and the name in messages).
+    Parsing the bytes that are also saved in the session keeps the two in step."""
+    path = Path(path)
+    ext = check_format(path)
+    if ext == ".docx":
+        blocks = _docx_blocks(data)
+    elif ext in (".md", ".markdown"):
+        blocks = _md_blocks(data.decode("utf-8-sig"))
+    else:
+        blocks = _txt_blocks(data.decode("utf-8-sig"))
     notes = build_notes(blocks, source=path)
     if not notes.sentences:
         raise ValueError(f"No text found in {path.name}.")
     return notes
+
+
+def load_notes(path: str | Path) -> Notes:
+    path = Path(path)
+    check_format(path)
+    return notes_from_bytes(path.read_bytes(), path)
 
 
 def _describe(notes: Notes) -> str:

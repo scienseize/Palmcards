@@ -64,7 +64,7 @@ from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import SPEECH
 from palmcards.gestures import GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
-from palmcards.notes import Notes, load_notes
+from palmcards.notes import Notes, notes_from_bytes
 from palmcards.render import (
     Hit, OpsView, TextOverlay, ViewState,
     draw_fingertips, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
@@ -270,6 +270,7 @@ class Takes:
             except KeyboardInterrupt:
                 print(f"skipped; transcribe later with: python -m palmcards.speech {self.session.dir}")
         self.transcriber.close()
+        self.session.release()
 
 
 def main() -> int:
@@ -280,7 +281,8 @@ def main() -> int:
     args = ap.parse_args()
     path = args.notes
     try:
-        notes = load_notes(path)
+        source = path.read_bytes()  # parsed once and kept byte for byte in the session
+        notes = notes_from_bytes(source, path)
     except (OSError, ValueError) as exc:
         print(f"Could not open notes: {exc}", file=sys.stderr)
         return 1
@@ -297,7 +299,8 @@ def main() -> int:
     tracker = HandTracker()
     log = GestureLog.to_session_dir()
     trace = log.path.with_suffix(".trace.jsonl").open("w") if args.trace else None
-    takes = Takes(notes, Session.create(path, gesture_log=log.path, language=args.lang), log)
+    session = Session.create(path, gesture_log=log.path, language=args.lang, parsed=notes, source=source)
+    takes = Takes(notes, session, log)
     with camera:
         frame = camera.read()
         h, w = frame.shape[:2]

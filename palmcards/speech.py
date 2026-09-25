@@ -23,12 +23,15 @@ sentence only, and its pace is judged against the last full take's.
 
 Offline, for takes already recorded:
 
-  python -m palmcards.speech SESSION_DIR [--take N] [--force] [--realign] [--lang xx]
+  python -m palmcards.speech SESSION_DIR [--take N] [--force] [--realign] [--lang xx] [--rebind]
       transcribes takes that have no transcript yet and prints a report;
       --force transcribes again, --realign re-aligns the saved transcripts
       and judges them again without running Whisper or pyin (fast, for
       tuning palmcards/config.py ALIGN and CUES). Takes transcribed before
-      milestone 6 get their verdicts on a plain run.
+      milestone 6 get their verdicts on a plain run. Every take is analysed
+      against the notes revision it was recorded with (palmcards.session).
+      Takes from before notes snapshots have none: --rebind saves the notes
+      file as it is now for them, marked unverified.
 
 `python -m palmcards.speech --serve` is the worker: one JSON job per line
 on stdin, one JSON result per line on stdout.
@@ -321,7 +324,7 @@ class Transcriber:
 def _cli(argv: list[str]) -> int:
     import argparse
 
-    from palmcards.notes import load_notes
+    from palmcards.session import SessionError
 
     ap = argparse.ArgumentParser(prog="python -m palmcards.speech", description=__doc__.split("\n\n")[0])
     ap.add_argument("session", type=Path, help="a folder under sessions/")
@@ -329,18 +332,46 @@ def _cli(argv: list[str]) -> int:
     ap.add_argument("--force", action="store_true", help="transcribe again even if a transcript exists")
     ap.add_argument("--realign", action="store_true", help="re-align saved transcripts, no Whisper")
     ap.add_argument("--lang", help="Whisper language code; saved to the session")
+    ap.add_argument("--rebind", action="store_true",
+                    help="give takes from before notes snapshots the notes file as it is now (marked unverified)")
     args = ap.parse_args(argv)
+    try:
+        return _run_cli(args)
+    except SessionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _run_cli(args) -> int:
+    from palmcards.session import LegacyNotes
 
     session = Session.load(args.session)
+    if args.rebind:
+        rid = session.rebind_legacy()
+        print(f"bound takes without notes to {session.notes} as revision {rid} (unverified)")
     if args.lang:
         session.language = args.lang
-    notes = load_notes(session.notes)
     takes = [session.take(args.take)] if args.take else session.takes
+    status = 0
     for take in takes:
         have = take.transcript is not None and (session.dir / take.transcript).exists()
         realign = args.realign and have
+        report_only = have and not (args.force or realign) and take.alignment is not None \
+            and take.verdicts is not None and (session.dir / take.verdicts).exists()
+        try:
+            notes = session.notes_for(take)
+            if not session.verified(take):
+                print(f"take {take.number}: notes revision is unverified (bound after the take was recorded)")
+        except LegacyNotes as exc:
+            if not report_only:  # results must be tied to known notes
+                print(f"error: {exc}", file=sys.stderr)
+                status = 1
+                continue
+            print(f"warning: take {take.number} has no saved notes; reporting against {session.notes} as it is "
+                  "now, which may differ from what was rehearsed", file=sys.stderr)
+            notes = session.current_notes_unverified()
         if have and not (args.force or realign):
-            if take.alignment is None or take.verdicts is None or not (session.dir / take.verdicts).exists():
+            if not report_only:
                 realign = True  # transcribed before milestone 6: judge it now
             else:
                 t = json.loads((session.dir / take.transcript).read_text())
@@ -355,7 +386,7 @@ def _cli(argv: list[str]) -> int:
                            result["marks"])
         print(f"take {take.number} ({'re-aligned' if realign else 'transcribed'} in {result['seconds']:.1f} s)")
         print(result["report"])
-    return 0
+    return status
 
 
 if __name__ == "__main__":

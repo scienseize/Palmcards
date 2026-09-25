@@ -137,8 +137,11 @@ Everything is written under `sessions/` (gitignored). `palmcards/session.py` rea
 
 ```
 sessions/
-├── 20260925-101345-sample_notes/    # one folder per app run: <start time>-<notes file stem>
+├── 20260925-101345-sample_notes-3fa9c1/  # one folder per app run: <start time>-<notes stem>-<random>, created exclusively
 │   ├── session.json                 # created with the first take; no takes, no folder
+│   ├── session.lock                 # flock held by the process writing the session (released on exit or crash)
+│   ├── source/sample_notes.md       # the imported notes file, byte for byte
+│   ├── notes/r1a2b3c4d5e6f.json     # a notes revision: the parsed notes a take was recorded with (palmcards/revisions.py)
 │   ├── take-01.wav                  # 16-bit PCM mono at the mic's own rate (48 kHz on the MacBook Air)
 │   ├── take-01.transcript.json      # Whisper's words, written after the take stops
 │   ├── take-01.prosody.npz          # pitch and loudness per 10 ms frame (cache; verdicts are recomputed from it)
@@ -156,12 +159,18 @@ sessions/
 
 ```json
 {
+  "schema": 2,
+  "id": "9c1f0e7a2b4d6e8f",
   "notes": "/abs/path/to/notes.md",
+  "source": {"file": "source/notes.md", "sha256": "…", "size": 1234},
+  "revisions": [{"id": "r1a2b3c4d5e6f", "file": "notes/r1a2b3c4d5e6f.json", "hash": "…", "parser": 1,
+                 "parent": null, "created": "2026-09-25T10:13:45", "provenance": "imported"}],
   "gesture_log": "gesture-logs/20260925-101345.jsonl",
   "language": "en",
   "takes": [
     {
       "number": 1,
+      "revision": "r1a2b3c4d5e6f",
       "wav": "take-01.wav",
       "started": "2026-09-25T10:14:34.435",
       "t_start": 48.787,
@@ -187,9 +196,12 @@ sessions/
 
 `language` is the Whisper language code for the session's takes (`main.py --lang`, default `en`).
 
+**Notes are kept, not referenced.** `notes` is only where the file was imported from. The session keeps the file's bytes (`source`) and each notes revision: a normalised snapshot of sections, sentences, words and marks, with stable ids (`s1`, `s1.w0`, `s1.m0`; an unchanged sentence keeps its id across revisions, an edited one gets a new id and an `ancestry` entry naming the one it replaces). Each take names its `revision`; playback and re-analysis read that, never the file. A revision's `hash` covers its content, not its ids, and is checked on load. `provenance` is `imported`, or `legacy-unverified` for notes bound after the fact to takes recorded before snapshots (schema 1, no `schema` key): those sessions stay readable, and `python -m palmcards.speech <run> --rebind` binds the notes file as it is now, keeping the old file as `session.v1.json`. Sessions with a newer schema are refused, not rewritten.
+
 | Take field | Meaning |
 | --- | --- |
-| `number`, `wav` | 1-based take number and its WAV file name in the same folder |
+| `number`, `wav` | 1-based take number and its WAV file name in the same folder (numbers skip any take file already on disk, so nothing is overwritten) |
+| `revision` | the notes revision the take was recorded with; absent on takes from schema 1 until rebound |
 | `started` | wall-clock time recording began (after the count-in), ISO 8601 |
 | `t_start` | app time of the first audio sample |
 | `duration_s`, `sample_rate` | length of the WAV and its rate |

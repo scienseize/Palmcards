@@ -27,9 +27,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from palmcards.notes import load_notes
 from palmcards.render import Hit, TextOverlay, ViewState, draw_strip as _draw_strip
-from palmcards.session import Session, read_wav
+from palmcards.session import LegacyNotes, Session, read_wav
 from palmcards.style import PLAYER, bgr
 
 WINDOW = "PalmCards take player"
@@ -177,7 +176,12 @@ def main(argv: list[str]) -> int:
         print(f"Take {take.number} has no alignment yet. Run: python -m palmcards.speech {session.dir} "
               f"--take {take.number}", file=sys.stderr)
         return 1
-    notes = load_notes(session.notes)
+    try:
+        notes = session.notes_for(take)
+    except LegacyNotes:
+        print(f"warning: take {take.number} was recorded before PalmCards kept the notes; showing {session.notes} "
+              "as it is now, which may differ from what was rehearsed", file=sys.stderr)
+        notes = session.current_notes_unverified()
     if len(notes.sentences) != len(take.alignment["sentences"]):
         print("warning: the notes have changed since this take was aligned; the highlight may be off. "
               f"Re-align with: python -m palmcards.speech {session.dir} --realign", file=sys.stderr)

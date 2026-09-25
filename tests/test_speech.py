@@ -102,8 +102,10 @@ def test_realign_uses_saved_transcript(tmp_path):
 
 
 def test_drill_job_matches_only_its_sentence_and_borrows_the_pace(tmp_path):
-    notes = parse_text("Hello there my friend. [slow] Good evening to you all.")
-    session = Session.create("notes.md", root=tmp_path)
+    text = "Hello there my friend. [slow] Good evening to you all."
+    notes = parse_text(text)
+    (tmp_path / "notes.txt").write_text(text)
+    session = Session.create(tmp_path / "notes.txt", root=tmp_path / "sessions")
     full = session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)])
     drill = session.add_take(np.zeros(800, np.float32), 8000, 5.0, datetime.now(), [(0.0, 0)], drill=1)
     job = make_job(session, drill, notes)
