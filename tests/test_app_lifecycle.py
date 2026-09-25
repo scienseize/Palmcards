@@ -206,7 +206,11 @@ class Rig:
 
     def run(self):
         return main.run(self.notes_path, notes_from_bytes(NOTES, self.notes_path), NOTES, devices=self.devices,
-                        sessions_root=self.tmp / "sessions")
+                        sessions_root=self.tmp / "sessions", prefs_file=self.prefs_file)
+
+    @property
+    def prefs_file(self):
+        return self.tmp / "prefs.json"  # never the real preferences
 
     def session(self) -> Session:
         (folder,) = (self.tmp / "sessions").glob("2*")

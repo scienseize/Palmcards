@@ -13,7 +13,7 @@ gesture code hit-tests against them, so they stay in palmcards/config.py.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 FONTS_DIR = Path(__file__).resolve().parent / "fonts"
@@ -71,6 +71,7 @@ class Colors:
     debug_box: RGB = (160, 160, 160)  # hand box, zone outline, cursor ring
     debug_band: RGB = (100, 100, 100)  # hand box scroll bands
     stats: RGB = (200, 200, 200)
+    hand_area: RGB = (140, 140, 140)  # the hand box, drawn faintly while a hand is up
     debug_text: RGB = (255, 255, 255)
 
 
@@ -242,6 +243,11 @@ class Player:
 
 
 COLORS = Colors()
+# Preferences > high contrast (key c): dimmed text much brighter, context
+# readable, a darker backing; the highlight stays orange.
+HIGH_CONTRAST = replace(COLORS, dim=(245, 245, 245, 200), dim_mark=(245, 245, 245, 150), faint=(235, 235, 235, 130),
+                        faint_mark=(235, 235, 235, 100), backing=(0, 0, 0, 215), label_fill=(0, 0, 0, 230),
+                        focus_mark=(255, 255, 255, 200), detail_text=(255, 255, 255, 255))
 TEXT = Text()
 CHIPS = Chips()
 LABEL = Label()

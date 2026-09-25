@@ -86,7 +86,7 @@ def test_reopening_goes_to_review_plays_a_sentence_and_resumes_analysis(tmp_path
     session = Session.load(saved.dir)
     session.acquire()
     notes = notes_from_bytes(NOTES, rig.notes_path)
-    assert main.run(session.notes, notes, b"", devices=rig.devices, session=session) == 0
+    assert main.run(session.notes, notes, b"", devices=rig.devices, session=session, prefs_file=rig.prefs_file) == 0
     assert FakePlayer.played == [(int(1.5 * 16000), 16000)]  # sentence 1 of take 1
     (supervisor,) = rig.transcribers
     assert [j["take"] for j in supervisor.jobs] == [2]  # the unfinished take, submitted again

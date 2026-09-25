@@ -79,6 +79,12 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 ### Keyboard fallback (supplements the gestures; works with no hand tracked)
 `ModeMachine.command` runs the same transitions as the gestures, logged as `key` events. `t` start a take (count-in), `x` stop it or cancel the count-in, `n` next section, `p` back to Prepare from Review, `space`/`j` and `k` next/previous sentence (in Rehearse within the section; in a focused panel they scroll it), `r` retry failed analysis, `h` show the keys, `q` quit. No text editing.
 
+### Guidance and preferences
+- First run: a tutorial card teaches one gesture at a time (hand in the box, one finger, two fingers, fold to focus, drop to come back, fist to start); each step advances when it is done; Enter skips a step, `g` shows or hides it (`palmcards/tutorial.py`).
+- The hand box is drawn faintly (its corners) whenever a hand is up in Prepare or Review.
+- Hints when a gesture is seen but does nothing and that would puzzle: a fist formed from another pose ("raise it closed"), an open palm held outside the command zone in Rehearse; at most one every 6 s.
+- Preferences (`palmcards/prefs.py`, `prefs.json` in the data directory, apart from the sessions): hand reach (hand box size), fist and palm hold times, high contrast (`c`), hand box shown, tutorial seen. `python -m palmcards.prefs set KEY VALUE`. Left-handed layout (mirroring text, hand box and zone) is an open design question.
+
 ### What the screen promises
 - Prepare offers only what works: the options ring holds the original word, **stress** / **unstress** (a real edit: a new notes revision, `palmcards/edit.py`) and **hear it** (speaks the sentence with the word stressed, via `palmcards/tts.py`); `u` undoes the last edit (the session's current revision steps back to its parent; nothing is deleted). Word alternatives, tone and length need the optional LLM: without one, tone and length preview their controls and say "not available yet"; a commit never claims a change it didn't make.
 - The optional LLM (`palmcards/llm.py`, off unless `LLM.provider` is set; "ollama" runs a model on the Mac, cloud providers are not wired in): opening the options ring asks for word alternatives (the word's glyphs scramble while it waits, then they join the ring); committing a tone or length change asks for a rewrite; `m` on a focused sentence asks for delivery marks. Rewrites and marks come back as a *proposal*, shown under the unit when it is focused again: pinch + lift uses it (a new revision, `u` undoes), dropping the hand discards it. Only explicit actions send anything; only the unit's text goes, inside `<notes>` tags with a system prompt that treats it as data; answers are validated; an answer for notes that changed since is dropped. Without a provider these say so and nothing is sent.
@@ -305,6 +311,8 @@ palmcards/
 │   ├── playback.py      # Review: play a sentence of a take
 │   ├── edit.py          # edits to the notes (stress, alternatives, rewrites, marks), each a new Notes
 │   ├── llm.py           # the optional LLM: providers (fake, Ollama), checked answers, background requests
+│   ├── prefs.py         # preferences (reach, holds, contrast), apart from session evidence
+│   ├── tutorial.py      # the first-run gesture tutorial
 │   └── export.py        # a notes revision back out as .txt / .md / .docx (python -m palmcards.export)
 ├── models/              # MediaPipe .task files (gitignored; scripts/download_models.py, pinned + checksummed)
 ├── scripts/             # download_models, bench_live, profile_align, evaluate, cut_gesture_samples

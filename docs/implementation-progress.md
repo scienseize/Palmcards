@@ -19,7 +19,7 @@ user runs them. They are never inferred from unit tests.
 | 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
-| 8 — Product completion | In progress | Slices 1-4: reopen + playback; export; stress edits + undo; optional LLM (off by default; Ollama; alternatives, tone/length proposals, mark suggestions) | 369 passed | Slices: guidance/prefs, metrics; a cloud LLM provider needs your decision |
+| 8 — Product completion | In progress | Slices 1-5: reopen + playback; export; stress edits + undo; optional LLM; guidance (tutorial, hand area, hints), preferences (reach, holds, high contrast) | 376 passed | Slice 6: metrics; decisions: cloud LLM provider, left-handed layout, backward flick |
 | End-to-end release gate | Pending | None | Not run | Run on target hardware |
 
 ## Log
@@ -652,4 +652,45 @@ Unverified assumptions and remaining risks: suggestion quality depends on the mo
 Reason for any departure from this plan: the per-mark L-hand toggle and the open-palm gesture for
   mark suggestions (see above).
 Next action: Phase 8 slice 5 (guidance, accessibility, preferences).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 8 slice 5 (guidance and accessibility)
+Status: implemented, validation pending (hands-on with the camera)
+Current HEAD / optional commit ID: 6f64dbc -> slice 5 commit (see git log)
+Pre-existing changes preserved: yes.
+Files and behavior changed:
+  palmcards/prefs.py (new): Prefs (tutorial_done, high_contrast, show_hand_box, reach 0.6-1.4,
+    start_hold_s, stop_hold_s; clamped), load (missing -> defaults, broken -> defaults + warning,
+    unknown keys ignored), atomic save to <data dir>/prefs.json, hand_box(reach), apply() (replaces
+    only the fields preferences own in gestures.CURSOR / REHEARSE and render.REHEARSE; contrast),
+    CLI `python -m palmcards.prefs [set KEY VALUE]`.
+  palmcards/tutorial.py (new): six steps, each advanced by the gesture it teaches (hand held up
+    0.5 s, browse by word, browse by sentence, fold-focus, back, count-in).
+  palmcards/style.py, render.py: HIGH_CONTRAST palette and set_contrast(); the tutorial card
+    (progress dots, "ENTER: SKIP / G: HIDE", the step) at the bottom centre; draw_hand_area (faint
+    corners of the hand box).
+  main.py: preferences loaded and applied before the overlay and machines are built (run(...,
+    prefs_file)); tutorial shown in Prepare until done (saved); Enter skips, g shows/hides; c
+    toggles high contrast (saved, overlay rebuilt); the hand area while a hand is up; hints for a
+    fist formed from another pose and an open palm outside the zone (throttled to one per 6 s).
+  tests/test_app_lifecycle.py: the rig uses its own prefs file (never the real one).
+  CLAUDE.md: guidance and preferences.
+Migration / compatibility implications: a prefs.json may appear in the data directory.
+Tests run and exact outcome: pytest (full) -> 376 passed. New tests/test_guidance.py (7): prefs
+  defaults/clamp/unknown keys/broken file; reach scaling on the right half; apply() changes only
+  its fields; tutorial steps; hints (formed fist -> hint, real fist -> none, open palm outside the
+  zone after 0.8 s -> hint, inside -> none); contrast, card and hand area drawn; keys c and Enter
+  (x6) in the app save high_contrast and tutorial_done to the rig's prefs file.
+Manual / hardware checks performed: synthetic render sessions/renders/phase8/tutorial-highcontrast-
+  busy.png inspected: card and high-contrast text readable over a busy background; the hand area
+  corners are faint there by design.
+Unverified assumptions and remaining risks: whether the hints fire at helpful moments in real use.
+  Open decision: a left-handed layout (mirror text, hand box and zone); MediaPipe's handedness label
+  is too unreliable to key it on.
+Reason for any departure from this plan: handedness left as a decision (above); "readable status
+  hierarchy" addressed by the Phase 4 alert line and label backing rather than a rewrite of the
+  label text.
+Next action: Phase 8 slice 6 (metrics).
 ```

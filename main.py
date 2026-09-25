@@ -60,7 +60,8 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
   a play the focused sentence (Review), u undo the last edit (Prepare), r retry failed analysis,
-  h keys, q/Esc quit.
+  g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit.
+Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
 Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
 """
 
@@ -81,14 +82,17 @@ import cv2
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import ANALYSIS, FOLLOW, RECORDING, SPEECH
-from palmcards.gestures import OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
+from palmcards import prefs as preferences
+from palmcards import render
+from palmcards.gestures import FIST, OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
+from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.edit import add_marks, is_stressed, replace_text, replace_word, toggle_stress
 from palmcards.llm import Assistant, alternatives_request, get_provider, marks_request, parse_alternatives, \
     parse_marks, parse_rewrite, rewrite_request
 from palmcards.render import (
     HEAR_IT, STRESS, UNSTRESS, Hit, OpsView, TextOverlay, ViewState,
-    draw_fingertips, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
+    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
 from palmcards.playback import ClipPlayer, sentence_clip
@@ -107,6 +111,21 @@ SCREENS_DIR = SESSIONS_DIR / "screens"
 WINDOW = "PalmCards"
 NOTE_S = 1.5  # how long a commit message stays in the label
 PLAY_HOLD_S = 0.6  # open palm held on a focused sentence in Review: play it
+HINT_EVERY_S = 6.0  # a hint about a gesture that didn't act is shown at most this often
+ENTER = 13
+
+
+def nonactivation_hint(mode: str, gs, zone_active: bool, open_s: float) -> str:
+    """Why a gesture the camera sees is not doing anything, when that's likely
+    to puzzle: a fist formed from another pose, an open palm outside the zone."""
+    p = gs.primary
+    if p is None:
+        return ""
+    if mode in ("prepare", "review") and p.stable == FIST and p.first_pose != FIST and gs.mode != "focus":
+        return "A FIST STARTS A TAKE ONLY WHEN RAISED CLOSED: DROP THE HAND, THEN RAISE A FIST"
+    if mode == "rehearse" and p.stable == OPEN and not zone_active and open_s > 0.8:
+        return "AN OPEN PALM ONLY COUNTS IN THE BOX AT THE TOP RIGHT"
+    return ""
 KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("b"): "previous",
                 ord("p"): "prepare"}  # ModeMachine.command
 
@@ -778,7 +797,7 @@ def reopen(args) -> int:
 
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
         devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled,
-        session: Session | None = None) -> int:
+        session: Session | None = None, prefs_file: Path | None = None) -> int:
     """Open everything, run the frame loop, close everything.
 
     Every resource is registered for cleanup as soon as it exists, so a
@@ -805,7 +824,8 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
         review = takes.restore()
         stack.callback(guarded(devices.destroy_windows, "the window"))
         try:
-            frame_loop(camera, tracker, log, trace_file, takes, sentences, devices, "review" if review else None)
+            frame_loop(camera, tracker, log, trace_file, takes, sentences, devices, "review" if review else None,
+                       prefs_file)
         except BaseException:
             takes.interrupted = True
             raise
@@ -813,9 +833,12 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
 
 
 def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentences, devices: Devices,
-               start_mode: str | None = None) -> None:
+               start_mode: str | None = None, prefs_file: Path | None = None) -> None:
     frame = camera.read()
     h, w = frame.shape[:2]
+    prefs = preferences.load(prefs_file)
+    preferences.apply(prefs)  # before the overlay and the machines are built: box, holds, contrast
+    tutorial = Tutorial(active=not prefs.tutorial_done)
     overlay = TextOverlay(sentences, (w, h))
     modes = ModeMachine((w, h), log)
     if start_mode:
@@ -832,6 +855,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
     palm_since, played_for = None, None  # Review: an open palm held on a focused sentence plays it
+    hint_after, rehearse_open_since = 0.0, None
     notes_seen = takes.notes_version
 
     while True:
@@ -916,6 +940,17 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         elif start - palm_since >= PLAY_HOLD_S and played_for != focused:
             view.note, note_until = takes.play_sentence(focused), start + NOTE_S
             played_for = focused
+        if tutorial.update(grammar.state, events, start - t0) and tutorial.done:
+            prefs.tutorial_done = True
+            preferences.save(prefs, prefs_file)
+        view.tutorial = tutorial.card if modes.mode == "prepare" else None
+        p = grammar.state.primary
+        opened = modes.mode == "rehearse" and p is not None and p.stable == OPEN and not modes.zone.active
+        rehearse_open_since = (rehearse_open_since or start) if opened else None
+        hint = nonactivation_hint(modes.mode, grammar.state, modes.zone.active,
+                                  start - rehearse_open_since if rehearse_open_since else 0.0)
+        if hint and start >= hint_after and not view.note:
+            view.note, note_until, hint_after = hint, start + 2 * NOTE_S, start + HINT_EVERY_S
         if takes.notes_version != notes_seen:  # an edit or undo: lay the new notes out
             notes_seen = takes.notes_version
             sentences = takes.notes.sentences
@@ -941,6 +976,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.note, note_until = "", None
 
         overlay.draw(frame, view)
+        if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
+            draw_hand_area(frame, grammar.cursor)
         if show_debug:
             if view.app != "prepare":
                 draw_zone_outline(frame, modes.zone)
@@ -986,6 +1023,20 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                     view.scroll = overlay.scroll_to(view.current)
         elif key == ord("h"):
             view.keys_help = not view.keys_help
+        elif key == ENTER and tutorial.card is not None:
+            tutorial.skip()
+            if tutorial.done:
+                prefs.tutorial_done = True
+                preferences.save(prefs, prefs_file)
+        elif key == ord("g"):
+            tutorial.active = not tutorial.active if not tutorial.done else True
+            if tutorial.done:
+                tutorial.restart()
+        elif key == ord("c"):
+            prefs.high_contrast = not prefs.high_contrast
+            preferences.save(prefs, prefs_file)
+            render.set_contrast(prefs.high_contrast)
+            overlay = TextOverlay(sentences, (w, h))  # its cached text was drawn in the old colours
         elif key == ord("m") and view.app == "prepare" and view.mode == "focus" and view.level == "sentence" \
                 and view.focus is not None:
             view.note, note_until = takes.ask_marks(view.focus.sentence), time.perf_counter() + NOTE_S

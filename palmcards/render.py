@@ -57,7 +57,7 @@ from palmcards.config import CURSOR, REHEARSE
 from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
 from palmcards.notes import MarkKind, Sentence
 from palmcards.style import (
-    CHIPS, COLORS, COUNT_IN, DEBUG, DETAIL, GAUGE, HANDS, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
+    CHIPS, COLORS, COUNT_IN, DEBUG, DETAIL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
 )
 
 if TYPE_CHECKING:
@@ -65,6 +65,12 @@ if TYPE_CHECKING:
 
 C = COLORS
 CLEAR = (0, 0, 0, 0)
+
+
+def set_contrast(high: bool) -> None:
+    """High-contrast colours (preferences); build a new TextOverlay afterwards."""
+    global C
+    C = HIGH_CONTRAST if high else COLORS
 PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
@@ -149,6 +155,7 @@ class ViewState:
     alternatives: tuple[str, ...] = ()
     loading: bool = False
     proposal: str = ""
+    tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
 
 @dataclass
@@ -897,12 +904,24 @@ class TextOverlay:
             size = round(self.font_size * LABEL.second_scale)
             chip = self._chip(state.alert, size, C.alert_text, C.alert_fill)
             _blend(frame, self.x + self.margin, min(bottom + self.pad // 2, self.frame_h - chip[0].shape[0]), *chip)
+        if state.tutorial is not None:
+            self._draw_tutorial(frame, *state.tutorial)
         if state.keys_help:
             self._draw_keys(frame)
         elif state.app in ("prepare", "count_in", "rehearse", "review"):
             chip = self._chip("H: KEYS", round(self.font_size * ZONE.hint_scale), C.dim, C.label_fill)
             _blend(frame, self.x + self.margin, self.frame_h - chip[0].shape[0] - LABEL.min_top, *chip)
         return frame
+
+    def _draw_tutorial(self, frame: np.ndarray, step: int, of: int, text: str) -> None:
+        """One gesture at a time, bottom centre, with where it is in the steps."""
+        size = round(self.font_size * LABEL.second_scale)
+        dots = " ".join("●" if k < step else "○" for k in range(of))
+        for i, line in enumerate((f"{dots}   ENTER: SKIP  /  G: HIDE", text)):
+            chip = self._chip(line, size if i == 0 else round(self.font_size * LABEL.first_scale * 0.8),
+                              C.node_text if i == 0 else C.orange, C.dark_fill)
+            h = chip[0].shape[0]
+            self._blend_centered(frame, chip, self.frame_w / 2, self.frame_h - (2.4 - i * 1.1) * h - LABEL.min_top)
 
     def _draw_keys(self, frame: np.ndarray) -> None:
         size = round(self.font_size * ZONE.hint_scale)
@@ -987,6 +1006,15 @@ def draw_hand_box(frame: np.ndarray, cursor: RelativeCursor) -> None:
         u, v = cursor.uv
         cv2.circle(frame, (int(x0 + u * (x1 - x0)), int(y0 + v * (y1 - y0))), HANDS.cursor_r, bgr(C.debug_box),
                    HANDS.box_stroke, cv2.LINE_AA)
+
+
+def draw_hand_area(frame: np.ndarray, cursor: RelativeCursor) -> None:
+    """Where the hand steers the highlight: the hand box, faint, with its corners marked."""
+    x0, y0, x1, y1 = (int(v) for v in cursor.box)
+    arm = max(10, (x1 - x0) // 10)
+    for (x, y), (dx, dy) in (((x0, y0), (1, 1)), ((x1, y0), (-1, 1)), ((x0, y1), (1, -1)), ((x1, y1), (-1, -1))):
+        cv2.line(frame, (x, y), (x + dx * arm, y), bgr(C.hand_area), 2, cv2.LINE_AA)
+        cv2.line(frame, (x, y), (x, y + dy * arm), bgr(C.hand_area), 2, cv2.LINE_AA)
 
 
 def draw_zone_outline(frame: np.ndarray, zone: CommandZone) -> None:
