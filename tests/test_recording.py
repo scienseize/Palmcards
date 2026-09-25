@@ -47,7 +47,7 @@ def test_blocks_stream_to_a_wav_and_the_take_is_added(tmp_path):
     w.mark_section(5.0, 0)
     for k in range(1, 20):
         w.push(ramp(BLOCK, k * BLOCK))
-    w.mark_section(5.9, 1)
+    w.mark_section(5.9, 1, "voice")
     w.stop()
     w.stop()  # twice is fine
     assert w.wait(5) and w.state == "saved" and not w.part.exists()
@@ -57,7 +57,8 @@ def test_blocks_stream_to_a_wav_and_the_take_is_added(tmp_path):
 
     take = session.finish_take(w.manifest())
     assert (take.number, take.status, take.t_start, take.duration_s) == (1, "saved", 5.02, round(20 * BLOCK / RATE, 3))
-    assert take.sections == [{"section": 0, "t": 0.0}, {"section": 1, "t": 0.88}]  # from the first sample
+    assert take.sections == [{"section": 0, "t": 0.0, "source": "start"},
+                             {"section": 1, "t": 0.88, "source": "voice"}]  # from the first sample
     assert take.capture == {"clock": "adc", "dropped_samples": 0, "discontinuities": []}
     assert not (session.dir / "take-01.recording.json").exists()
     assert Session.load(session.dir).take(1).status == "saved"
@@ -87,17 +88,24 @@ class FakeWriter:
 
 def test_the_callback_hands_blocks_over_and_stamps_the_first():
     rec = object.__new__(AudioRecorder)  # no sounddevice: just the callback's logic
-    rec.clock, rec.rate, rec.level, rec.overflows, rec.writer = (lambda: 20.0), 48000, 0.0, 0, None
+    rec.clock, rec.rate, rec.level, rec.overflows, rec.writer, rec.tap = (lambda: 20.0), 48000, 0.0, 0, None, None
     block = np.full((1024, 1), 0.1, np.float32)
     ok = SimpleNamespace(input_overflow=False)
     rec._callback(block, 1024, SimpleNamespace(inputBufferAdcTime=5.0, currentTime=5.02), ok)
     assert rec.level > 0  # metered even when not recording
     w = FakeWriter()
+    w.first_sample_t, w.enqueued = None, 0
+    tapped = []
+    rec.tap = lambda block, t_end: tapped.append(t_end)
     rec.start(w)
     rec._callback(block, 1024, SimpleNamespace(inputBufferAdcTime=5.0, currentTime=5.02), ok)
     rec._callback(block, 1024, SimpleNamespace(), SimpleNamespace(input_overflow=True))
     assert len(w.blocks) == 2 and w.firsts == [(pytest.approx(19.98), "adc")] and w.overflows == 1
     assert rec.overflows == 1
+    assert tapped == []  # FakeWriter has no first sample time: nothing to place the block on
+    w.first_sample_t, w.enqueued = 19.98, 2048
+    rec._callback(block, 1024, SimpleNamespace(), ok)
+    assert tapped == [pytest.approx(19.98 + 2048 / 48000)]  # the block's end, on the app clock
 
 
 class SlowFile:
@@ -256,7 +264,7 @@ def test_a_killed_recording_is_salvaged_at_the_next_start(tmp_path):
     assert take.status == "interrupted" and take.capture["recovered"]
     # Everything but the queue's last moments survives: at least the three seconds before the signal.
     assert take.duration_s >= 3.0 - RECORDING.flush_s and take.peak == pytest.approx(0.25, abs=1e-3)
-    assert take.t_start == 3.01 and take.sections == [{"section": 0, "t": 0.0}]
+    assert take.t_start == 3.01 and take.sections == [{"section": 0, "t": 0.0, "source": "start"}]
     assert not (folder / "take-01.wav.part").exists() and not (folder / "take-01.recording.json").exists()
     assert recover_all(tmp_path / "sessions") == []  # nothing left to do: repeatable
 
@@ -296,4 +304,4 @@ def test_a_take_with_no_audio_uses_the_moment_it_was_asked_for(tmp_path):
     m = w.manifest()
     assert m["first_sample_t"] is None and m["samples"] == 0
     take = session.finish_take(m)
-    assert (take.t_start, take.duration_s, take.sections) == (5.0, 0.0, [{"section": 0, "t": 0.0}])
+    assert (take.t_start, take.duration_s, take.sections) == (5.0, 0.0, [{"section": 0, "t": 0.0, "source": "start"}])

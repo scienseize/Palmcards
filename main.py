@@ -1,6 +1,6 @@
 """PalmCards entry point.
 
-  python main.py [NOTES_FILE] [--lang xx] [--trace]
+  python main.py [NOTES_FILE] [--lang xx] [--trace] [--no-follow]
       NOTES_FILE: .txt, .md or .docx; defaults to the sample
       --lang: language spoken in the takes, for Whisper (default en)
       --trace: also record every hand result's landmarks, for offline replay
@@ -26,6 +26,9 @@ the right of the frame; it steers the highlight in the text on the left.
 Rehearse listens only to the command zone, top right:
   flick sideways           next section
   open palm held 1.5 s     stop the take (or cancel the count-in), on to Review
+The notes follow your voice (the current sentence in orange, the next
+section shown faint as you start the last sentence of one); a flick, n or b
+moves by hand and the voice carries on from there. Off with --no-follow.
 
 Review browses and focuses like Prepare, without Prepare's operations.
 Each take is transcribed, measured and judged in the background as soon as
@@ -49,7 +52,7 @@ folder under sessions/, with its transcript, pitch and verdicts and
 session.json.
 
 Keys, the fallback when gestures won't do (h shows them in the app):
-  t start a take, x stop it (or cancel the count-in), n next section,
+  t start a take, x stop it (or cancel the count-in), n next section, b previous section,
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
   r retry failed analysis, h keys, q/Esc quit.
@@ -72,7 +75,7 @@ import cv2
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import ANALYSIS, RECORDING, SPEECH
+from palmcards.config import ANALYSIS, FOLLOW, RECORDING, SPEECH
 from palmcards.gestures import GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.render import (
@@ -85,13 +88,16 @@ from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
 from palmcards.style import TEXT
 from palmcards.tts import get_speaker
 from palmcards.analysis import Supervisor
+from palmcards.asr import get_recognizer
+from palmcards.follow import LiveFollow
 from palmcards.speech import make_job
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = Path(__file__).parent / "sessions" / "screens"
 WINDOW = "PalmCards"
 NOTE_S = 1.5  # how long a commit message stays in the label
-KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("p"): "prepare"}  # ModeMachine.command
+KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("b"): "previous",
+                ord("p"): "prepare"}  # ModeMachine.command
 
 
 def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
@@ -161,9 +167,13 @@ class Takes:
     because of an error or Ctrl-C).
     """
 
-    def __init__(self, notes: Notes, session: Session, log: GestureLog, devices: "Devices | None" = None):
+    def __init__(self, notes: Notes, session: Session, log: GestureLog, devices: "Devices | None" = None,
+                 follow: bool = FOLLOW.enabled):
         self.notes, self.session, self.log = notes, session, log
         self.devices = devices or Devices()
+        self.follow_enabled = follow
+        self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
+        self._follow_reported = False
         self.recorder: AudioRecorder | None = None
         self.analysis = Supervisor()
         self.deferred: list[int] = []  # takes the analysis queue had no room for yet
@@ -178,7 +188,6 @@ class Takes:
         self.last_saved = ""
         self.board = Board(notes)  # verdicts of the judged takes, for Review
         self.drill: int | None = None  # the sentence the current count-in or take drills
-        self.drill_sentence: int | None = None  # set by a Review commit, used by the drill event
         self.dial_seen = 0  # take-dial steps already applied
 
     def status(self, mode: str, view: ViewState) -> str:
@@ -200,10 +209,13 @@ class Takes:
             return f"{self.last_saved}  /  RAISE A FIST: NEW TAKE"
         return "RAISE A FIST: START A TAKE"
 
-    def alert_line(self) -> str:
-        """Persistent trouble (recording, analysis), shown until it is dealt with."""
+    def alert_line(self, mode: str = "") -> str:
+        """Persistent trouble (recording, analysis, voice follow), shown until it is dealt with."""
         if self.alert:
             return self.alert
+        if mode in ("count_in", "rehearse") and self.follow is not None and self.follow.state == "failed" \
+                and self.drill is None:
+            return "VOICE FOLLOW OFF (SEE TERMINAL)  /  FLICK OR N: NEXT SECTION"
         if failed := self.analysis.failed():
             return f"TAKE {failed[0]}: ANALYSIS FAILED (SEE TERMINAL)  /  R: RETRY"
         return ""
@@ -242,7 +254,7 @@ class Takes:
     def handle(self, ev: GestureEvent, modes: ModeMachine, view: ViewState, overlay: TextOverlay) -> str:
         """Mode events. Returns a label note to show, or ""."""
         if ev.kind in ("count_in", "drill"):
-            self.drill = self.drill_sentence if ev.kind == "drill" else None
+            self.drill = ev.sentence if ev.kind == "drill" else None
             if self.drill is not None:
                 self.log(ev.t, "drill", sentence=self.drill)
             try:
@@ -259,7 +271,9 @@ class Takes:
                 return "MICROPHONE UNAVAILABLE"
             self.section = 0 if self.drill is None else self.notes.sentences[self.drill].section
             view.current = self.drill if self.drill is not None else self.first_of(self.section)
-            view.panel_scroll = 0.0
+            view.panel_scroll, view.preview_next = 0.0, False
+            if self.drill is None and self._ensure_follow():
+                self.follow.prepare()  # the model loads during the count-in
             view.hover = view.focus = None
             view.mode, view.level, view.ops = "idle", None, OpsView()
             return ""
@@ -283,18 +297,35 @@ class Takes:
                 self.log(ev.t, "record_error", error=str(exc))
                 self.alert = "CANNOT RECORD (SEE TERMINAL): HOLD OPEN PALM TO STOP"
                 return ""
-            self.writer.mark_section(ev.t, self.section)
+            self.writer.mark_section(ev.t, self.section, "start")
             self.recorder.start(self.writer)
+            if self.drill is None and self.follow is not None:
+                self.follow.start_take(self.section)
+                self.recorder.tap = self.follow.tap
             self.log(ev.t, "take_start", take=number)
             return ""
         if ev.kind == "next_section":
             if self.section + 1 >= len(self.notes.sections):
                 return "LAST SECTION"
+            source = "key" if ev.source == "key" else "flick"
             self.section += 1
-            view.current, view.panel_scroll = self.first_of(self.section), 0.0
+            view.current, view.panel_scroll, view.preview_next = self.first_of(self.section), 0.0, False
             if self.writer is not None:
-                self.writer.mark_section(ev.t, self.section)
-            self.log(ev.t, "section", section=self.section)
+                self.writer.mark_section(ev.t, self.section, source)
+            if self.follow is not None:
+                self.follow.flick(ev.t)  # the voice carries on from the new section
+            self.log(ev.t, "section", section=self.section, source=source)
+            return ""
+        if ev.kind == "previous_section":  # a key: undo a wrong move
+            if self.section == 0:
+                return "FIRST SECTION"
+            self.section -= 1
+            view.current, view.panel_scroll, view.preview_next = self.first_of(self.section), 0.0, False
+            if self.writer is not None:
+                self.writer.mark_section(ev.t, self.section, "key")
+            if self.follow is not None:
+                self.follow.jump(self.section, view.current)
+            self.log(ev.t, "section", section=self.section, source="key")
             return ""
         if ev.kind == "take_stop":
             writer = self._stop_recording()
@@ -315,10 +346,45 @@ class Takes:
     def section_sentences(self) -> list[int]:
         return [i for i, s in enumerate(self.notes.sentences) if s.section == self.section]
 
+    def _ensure_follow(self) -> bool:
+        """The voice follow, made once the microphone's rate is known."""
+        if self.follow is None and self.follow_enabled and self.recorder is not None:
+            clock = lambda: time.perf_counter() - self.t0  # noqa: E731
+            hints = tuple(s.text for s in self.notes.sentences)
+            model = SPEECH.live_model if SPEECH.backend == "mlx-whisper" else SPEECH.backend
+            self.follow = LiveFollow(self.notes, lambda: self.devices.live(self.session.language, clock, hints),
+                                     self.recorder.rate, SPEECH.backend, model)
+        return self.follow is not None
+
+    def poll_follow(self, view: ViewState, overlay: TextOverlay) -> None:
+        """Move the display with the voice: the sentence, the section (recorded
+        with source "voice"), and the preview of the next section."""
+        if self.follow is None or self.writer is None or self.drill is not None:
+            return
+        for ev in self.follow.poll():
+            if ev.kind == "section" and ev.index == self.section + 1:
+                self.section = ev.index
+                self.writer.mark_section(ev.t, ev.index, "voice")
+                self.log(ev.t, "section", section=ev.index, source="voice")
+            elif ev.kind == "sentence":
+                view.current = ev.index
+        if self.follow.state == "failed" and not self._follow_reported:
+            print(f"voice follow off: {self.follow.error}", file=sys.stderr)
+            self._follow_reported = True
+        section = self.section_sentences()
+        view.section = self.section
+        view.preview_next = view.current == section[-1] and self.section + 1 < len(self.notes.sections)
+        view.panel_scroll = overlay.panel_scroll_to(view, view.current)
+
     def _stop_recording(self) -> "TakeWriter | None":
         """Stop the microphone; the take finishes writing in the background."""
         writer, self.writer = self.writer, None
+        if self.follow is not None and self.follow.follower is not None:
+            live = self.follow.stop_take()
+            if writer is not None:
+                writer.meta["live"] = live
         if self.recorder is not None:
+            self.recorder.tap = None
             self.recorder.stop()
             self.recorder.close()
         if writer is not None:
@@ -417,6 +483,8 @@ class Takes:
                     time.sleep(0.1)
             except KeyboardInterrupt:
                 pass
+        if self.follow is not None:
+            self.follow.close()
         left = self.analysis.close(timeout=1.0)
         self.poll_analysis()
         if left or self.deferred:
@@ -435,6 +503,7 @@ class Devices:
     recorder: Callable = AudioRecorder
     log: Callable = GestureLog.to_session_dir
     speaker: Callable = get_speaker
+    live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
     named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
     show: Callable = cv2.imshow
     wait_key: Callable = lambda: cv2.waitKey(1) & 0xFF
@@ -459,6 +528,7 @@ def main() -> int:
     ap.add_argument("notes", nargs="?", type=Path, default=SAMPLE, help=".txt, .md or .docx")
     ap.add_argument("--lang", default=SPEECH.language, help="language of the takes, for Whisper")
     ap.add_argument("--trace", action="store_true", help="record hand landmarks for offline replay")
+    ap.add_argument("--no-follow", action="store_true", help="don't follow the voice during takes")
     args = ap.parse_args()
     path = args.notes
     try:
@@ -472,14 +542,14 @@ def main() -> int:
     for line in recover_all():
         print(f"recovered: {line}")
     try:
-        return run(path, notes, source, lang=args.lang, trace=args.trace)
+        return run(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow)
     except CameraError as exc:
         print(exc, file=sys.stderr)
         return 1
 
 
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
-        devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR) -> int:
+        devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled) -> int:
     """Open everything, run the frame loop, close everything.
 
     Every resource is registered for cleanup as soon as it exists, so a
@@ -500,7 +570,7 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
             stack.callback(guarded(trace_file.close, "the trace"))
         session = Session.create(path, root=sessions_root, gesture_log=log.path, language=lang, parsed=notes,
                                  source=source)
-        takes = Takes(notes, session, log, devices)
+        takes = Takes(notes, session, log, devices, follow)
         stack.callback(guarded(takes.close, "the takes"))
         stack.callback(guarded(devices.destroy_windows, "the window"))
         try:
@@ -548,9 +618,10 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if note := takes.poll():
             view.note, note_until = note, start + NOTE_S
         takes.recording_problem()
+        for ev in events:  # a drill rehearses the sentence focused now, before any handler clears the focus
+            if ev.kind == "drill" and ev.sentence is None:
+                ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
-            if ev.kind == "commit" and view.app == "review":  # a drill of this sentence may follow
-                takes.drill_sentence = view.focus.sentence if view.focus else view.current
             if ev.kind == "focus":
                 takes.dial_seen = 0
             if ev.kind in ("focus", "commit", "back"):
@@ -574,6 +645,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             else:
                 view.mark_verdicts, view.detail = (), ()
         else:
+            if modes.mode == "rehearse":
+                takes.poll_follow(view, overlay)
             view.section = takes.section
             view.count_in = max(1, math.ceil(modes.count_in_end - (start - t0)))
             view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" and takes.recorder else 0.0
@@ -581,7 +654,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.start_progress = 0.0
             view.mark_verdicts, view.detail = (), ()
         view.status = takes.status(modes.mode, view)
-        view.alert = takes.alert_line()
+        view.alert = takes.alert_line(modes.mode)
         # A focused panel taller than the frame turns its own pages, so every
         # verdict line is reachable without keys; a key pauses it.
         if view.app in ("prepare", "review") and view.mode == "focus" and (most := overlay.panel_max_scroll(view)):
@@ -633,6 +706,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 i = unit.index(view.current) if view.current in unit else 0
                 view.current = unit[min(max(i + step, 0), len(unit) - 1)]
                 view.panel_scroll = overlay.panel_scroll_to(view, view.current)
+                if takes.follow is not None:
+                    takes.follow.jump(takes.section, view.current)  # the voice carries on from here
             elif view.mode == "focus" and overlay.panel_max_scroll(view):  # scroll the focused panel
                 view.panel_scroll = overlay.clamp_panel_scroll(view, view.panel_scroll + step * 3 * overlay.line_h)
                 page_pause_until = time.perf_counter() + TEXT.page_pause_s

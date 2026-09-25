@@ -108,7 +108,7 @@ class TakeWriter:
         self.samples = 0  # samples in the file, silence filling dropped stretches included
         self.peak = 0.0
         self.discontinuities: list[dict] = []  # {"at": sample in the file, "samples": n or None, "why": ...}
-        self.sections: list[tuple[float, int]] = []  # (app time, section)
+        self.sections: list[tuple[float, int, str]] = []  # (app time, section, source)
         self.done = threading.Event()
         self._open = open_file
         self._queue: queue.Queue = queue.Queue(maxsize=max(2, int(RECORDING.queue_s * rate / block_frames)))
@@ -148,9 +148,11 @@ class TakeWriter:
 
     # --- the app's side -----------------------------------------------------
 
-    def mark_section(self, t: float, section: int) -> None:
+    def mark_section(self, t: float, section: int, source: str = "start") -> None:
+        """A section came up: at the start ("start"), by the voice ("voice"),
+        a flick ("flick") or a key ("key")."""
         with self._lock:
-            self.sections.append((t, section))
+            self.sections.append((t, section, source))
 
     def stop(self) -> None:
         """Finish in the background: drain, fix the header, publish. Never blocks."""
@@ -177,7 +179,7 @@ class TakeWriter:
             "state": self.state, "error": self.error,
             "first_sample_t": self.first_sample_t, "clock": self.clock_source,
             "samples": self.samples, "peak": round(self.peak, 5),
-            "discontinuities": gaps, "sections": [[round(t, 3), s] for t, s in sections],
+            "discontinuities": gaps, "sections": [[round(t, 3), s, src] for t, s, src in sections],
             **self.meta,
         }
 

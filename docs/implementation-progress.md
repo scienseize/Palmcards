@@ -17,7 +17,7 @@ user runs them. They are never inferred from unit tests.
 | 3 — Analysis supervision | Implemented, validation pending | Supervisor thread owns jobs; non-blocking submit; persisted job records with generations; reconcile on exit; result identity checks; timeouts; bounded close; drill baseline by take identity; in-app retry (r) | 251 passed; F5/F6 regression tests; real worker answers a silent take | Real Whisper run in the app; long takes vs job_timeout_s |
 | 4 — Navigation and controls | Implemented, validation pending | Panel viewport + scroll, Rehearse current sentence nav, long-word splitting, keyboard fallback (ModeMachine.command), persistent alert line, truthful Prepare ops (hear it via TTS; tone/length preview only), verdict symbols + separate counts, label backing | 266 passed; reachability at 640x480/1280x720/1920x1080; synthetic dark/light/busy renders inspected | Real camera scenes; gesture-based panel scrolling not added (keys + auto-paging instead) |
 | 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
-| 6 — Live following/state | Pending | Live-follow WIP since committed (`678bfd1`, `c5a5dd2`) | Headless + camera benchmark (user-run) | Integrate after foundations |
+| 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Pending | None | No real-speaker validation | Lock environment and establish evaluation |
 | 8 — Product completion | Pending | None | Planned milestones only | Implement features in small complete slices |
 | End-to-end release gate | Pending | None | Not run | Run on target hardware |
@@ -366,4 +366,70 @@ Unverified assumptions and remaining risks: tail_min_probability (0.3) is a star
 Reason for any departure from this plan: filling dropped audio with silence (a recording change)
   was added because gaps otherwise shifted every later timestamp, which the gap rules depend on.
 Next action: Phase 6.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 6 (F8 false live readiness; live-follow integration; drill state)
+Status: implemented, validation pending (live microphone + camera run by the user)
+Current HEAD / optional commit ID: 32a778b -> Phase 6 commit (see git log)
+Pre-existing changes preserved: yes (clean tree at start).
+Files and behavior changed:
+  palmcards/asr.py: LiveStream.state starting/ready/failed/closed (+ ready property, errors,
+    reset()). MlxWhisperLive: a warm-up error fails the stream (was ready=True, errors=[]); fails if
+    the model hasn't loaded within SPEECH.live_start_timeout_s (60 s) or the reader thread/process
+    died; reset() clears window, agreement and in-flight windows (epoch-tagged) but keeps the
+    model; close() idempotent, joins/terminates the reader. AppleLive: state, reset().
+  palmcards/follow.py: LiveFollow. tap(block, t_end) appends to a bounded deque (FOLLOW.tap_blocks)
+    from the audio callback, never blocks; a feeder thread resamples mic-rate chunks to 16 kHz every
+    FOLLOW.feed_s and feeds the stream; poll() -> Follower events. Any exception or a failed stream
+    turns the follow "failed" (error kept) and it returns no more events; recording and manual
+    control are untouched. prepare() at the count-in loads the model and warms the scipy import off
+    the frame loop. flick()/jump() are the manual overrides; stop_take() -> per-take stats.
+  palmcards/capture.py: AudioRecorder.tap gets each recorded block with its end on the app clock.
+  palmcards/recording.py, session.py: sections carry a source (start/voice/flick/key); TakeRecord.live.
+  palmcards/gestures.py: GestureEvent.source ("key") and .sentence (a drill's target);
+    ModeMachine.command("previous").
+  palmcards/render.py: ViewState.preview_next: the next section in the rehearse panel, faint.
+  main.py: Takes owns LiveFollow (one stream per app run, made at the first count-in via
+    Devices.live); take_start taps the recorder and starts the follow (not for drills); each
+    rehearse frame poll_follow() moves view.current, advances the recorded section only on a voice
+    `section` event for the next section (source voice), sets preview_next while the section's
+    last sentence is current, and scrolls the panel; flick/n record source flick/key and tell the
+    follow; b (previous section) and j/k jump the follow; take_stop saves the follow's stats in the
+    take's manifest (-> TakeRecord.live); a failed follow shows on the alert line. The drill target
+    is set on the drill event from the focus at the moment the events arrive, before any handler
+    clears the focus (was read from a mutable field set by the commit handler). --no-follow.
+  scripts/bench_live.py: wait_ready raises (and main exits 1) when the stream fails, the reader dies,
+    or no answer arrives (backstop timeout); sentence tracking only over spoken sentence spans
+    (silence between sentences no longer counts as behind); frame-time p50/p90/p99 and peak RSS.
+  CLAUDE.md: voice follow behaviour, sections source, live field, log kinds.
+Migration / compatibility implications: sections entries gain "source" (older takes lack it);
+  takes gain "live". The first count-in now starts the live model (a separate process for
+  mlx-whisper) unless --no-follow.
+Tests run and exact outcome: pytest (full) -> 292 passed in 26.54 s. New tests/test_live_follow.py
+  (12): failing warm-up -> failed, not ready (F8); silent reader -> failed at the deadline; dead
+  reader -> failed; reset drops answers to older windows; LiveFollow turns words into
+  sentence/section moves, resamples 48k->16k, keeps stats; a failing stream or factory only turns
+  the follow off; in the app (fake devices): the voice advances the section (recorded "voice", take
+  live stats saved), flick then b recorded "flick" then "key", a broken live stream leaves the take
+  saved, a drill records the sentence current when it was decided and runs without the follow;
+  benchmark raises on a stream that never starts; tracking ignores a 17 s silence.
+Manual / hardware checks performed: no camera or live microphone. Real-engine smoke without the app
+  (sessions/bench/live_follow_smoke.py): LiveFollow + mlx-whisper base in a separate process, fed
+  sessions/20260925-101345 take 1 (48 kHz) through tap() in real time in 1024-sample blocks:
+  stream ready in 1.4 s; sentences 1, 2, 3 followed in order; section 2 at 34.5 s (speaker began it
+  at 33.2 s: +1.3 s); sentences 4-6 followed; 71 words confirmed, median lag 0.74 s, p90 1.44 s,
+  0 dropped blocks.
+Evidence or artifact paths: tests above; sessions/bench/live_follow_smoke.py (gitignored).
+Unverified assumptions and remaining risks: frame rate with the follow running inside the real app
+  (the camera benchmark earlier measured the same pipeline at 30.0 fps, but not wired into
+  main.py); whether the voice section change feels timely in real rehearsal.
+  Open product decision: a backward flick gesture (asked on 2026-09-25, not answered); keys b/j/k
+  cover correction for now.
+Reason for any departure from this plan: step 1 (one controller for all state) was done at the
+  integration boundaries only: the drill target moved onto a typed event, and the voice/manual
+  section changes are owned by Takes; a full controller refactor would rewrite main.py's loop
+  without changing behaviour, so it is left for when the Phase 8 editing work needs it.
+Next action: Phase 7.
 ```

@@ -442,12 +442,14 @@ class GestureLog:
 class GestureEvent:
     # Grammar: "focus" | "commit" | "back". Modes: "count_in" | "drill" (a
     # count-in for one sentence) | "count_in_cancel" | "take_start" |
-    # "next_section" | "take_stop" | "to_prepare".
+    # "next_section" | "previous_section" | "take_stop" | "to_prepare".
     kind: str
     t: float
     level: str | None = None
     op: str | None = None
     value: float | None = None  # tone (-1 cold .. 1 warm) or length ratio
+    source: str | None = None  # a mode event from a key rather than a gesture: "key"
+    sentence: int | None = None  # "drill": the sentence it rehearses, set when the drill is decided
 
 
 @dataclass
@@ -886,6 +888,7 @@ class ModeMachine:
         if self.mode in ("prepare", "review"):
             events += self.grammar.step(track_events, t)
             if self.mode == "review" and any(e.kind == "commit" and e.level == "sentence" for e in events):
+                # The app fills in `sentence` (the focused one) before any handler clears the focus.
                 events.append(GestureEvent("drill", t, "sentence"))
                 self._enter("count_in", t)
                 self.drill = True
@@ -936,7 +939,9 @@ class ModeMachine:
             events.append(GestureEvent("count_in_cancel", t))
             self._enter(self._back_to, t)
         elif name == "next" and self.mode == "rehearse" and not self.drill:
-            events.append(GestureEvent("next_section", t))
+            events.append(GestureEvent("next_section", t, source="key"))
+        elif name == "previous" and self.mode == "rehearse" and not self.drill:
+            events.append(GestureEvent("previous_section", t, source="key"))
         elif name == "prepare" and self.mode == "review":
             events.append(GestureEvent("to_prepare", t))
             self._enter("prepare", t)

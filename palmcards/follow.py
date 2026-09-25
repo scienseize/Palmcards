@@ -20,11 +20,17 @@ earlier sentence), they are aligned again on their own.
     the section. Sections only ever move forward.
 
 Going off script matches nothing, so the follow stalls, which is correct.
+
+LiveFollow runs it during a take: microphone blocks in, events out.
 """
 
 from __future__ import annotations
 
+import threading
+from collections import deque
 from dataclasses import dataclass
+
+import numpy as np
 
 from palmcards.align import align
 from palmcards.asr import LiveWord
@@ -148,3 +154,142 @@ class Follower:
         self.sentence = self._first(self.section)
         self.tail = []
         return [FollowEvent("section", self.section, t, "flick"), FollowEvent("sentence", self.sentence, t, "flick")]
+
+
+class LiveFollow:
+    """Voice follow during a take, around a live stream (palmcards.asr).
+
+    tap(block, t_end) is for the audio callback: it appends to a bounded
+    deque and returns; it never waits and never fails the recording. A
+    feeder thread resamples what arrived to 16 kHz and feeds the stream; the
+    app polls on its own thread for FollowEvents, which move the display
+    only (the recorded transcript comes after the take, as always).
+
+    Anything that goes wrong (the model doesn't load, the reader dies) turns
+    the follow off for the rest of the take: `state` is "failed" and `error`
+    says why; recording and manual navigation carry on. One stream serves
+    the whole app run (loaded at the first count-in); reset() clears it
+    between takes.
+    """
+
+    def __init__(self, notes: Notes, make_stream, mic_rate: int, engine: str = "", model: str = ""):
+        self.notes = notes
+        self._make_stream = make_stream
+        self.mic_rate = mic_rate
+        self.engine, self.model = engine, model
+        self.stream = None
+        self.state = "off"  # off | starting | following | failed
+        self.error = ""
+        self.follower: Follower | None = None
+        self._blocks: deque = deque(maxlen=FOLLOW.tap_blocks)
+        self.dropped = 0  # blocks the feeder never saw (the deque overflowed)
+        self._feeder: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._lags: list[float] = []
+        self._words = 0
+
+    def prepare(self) -> None:
+        """Start loading the model (during the count-in)."""
+        # Resampling imports scipy.signal, slow the first time: do it now, off the frame loop.
+        threading.Thread(target=__import__, args=("scipy.signal",), name="live-warm", daemon=True).start()
+        if self.stream is None and self.state != "failed":
+            try:
+                self.stream = self._make_stream()
+                self.state = "starting"
+            except Exception as exc:  # no engine, no permission, bad settings
+                self._fail(f"{type(exc).__name__}: {exc}")
+
+    def _fail(self, why: str) -> None:
+        self.state, self.error = "failed", why
+
+    def start_take(self, section: int) -> None:
+        self.prepare()
+        self.follower = Follower(self.notes, section)
+        self._blocks.clear()
+        self._lags, self._words, self.dropped = [], 0, 0
+        if self.stream is None:
+            return
+        try:
+            self.stream.reset()
+        except Exception as exc:
+            self._fail(f"{type(exc).__name__}: {exc}")
+            return
+        self._stop.clear()
+        self._feeder = threading.Thread(target=self._feed, name="live-feed", daemon=True)
+        self._feeder.start()
+
+    def tap(self, block: np.ndarray, t_end: float) -> None:
+        """From the audio callback: never blocks."""
+        if len(self._blocks) == self._blocks.maxlen:
+            self.dropped += 1
+        self._blocks.append((t_end, block))
+
+    def _feed(self) -> None:
+        from palmcards.audio import resample
+
+        while not self._stop.wait(FOLLOW.feed_s):
+            chunk, t_end = [], None
+            while self._blocks:
+                t_end, block = self._blocks.popleft()
+                chunk.append(block)
+            if not chunk or self.state == "failed":
+                continue
+            try:
+                self.stream.feed(resample(np.concatenate(chunk), self.mic_rate), t_end)
+            except Exception as exc:
+                self._fail(f"{type(exc).__name__}: {exc}")
+
+    def poll(self) -> list[FollowEvent]:
+        """Where the voice moved the follow since the last poll."""
+        if self.stream is None or self.follower is None or self.state == "failed":
+            return []
+        try:
+            words = self.stream.poll()
+        except Exception as exc:
+            self._fail(f"{type(exc).__name__}: {exc}")
+            return []
+        if self.stream.state == "failed":
+            self._fail(self.stream.errors[-1] if self.stream.errors else "the live stream failed")
+            return []
+        if self.stream.state == "ready":
+            self.state = "following"
+        self._words += len(words)
+        self._lags += [w.confirmed_at - w.end for w in words if w.confirmed_at is not None]
+        try:
+            return self.follower.update(words)
+        except Exception as exc:  # the follow is display only: never let it take the app down
+            self._fail(f"{type(exc).__name__}: {exc}")
+            return []
+
+    def flick(self, t: float) -> list[FollowEvent]:
+        return self.follower.flick(t) if self.follower else []
+
+    def jump(self, section: int, sentence: int) -> None:
+        """A manual move (keys): the follow carries on from there."""
+        if self.follower is not None:
+            self.follower.section, self.follower.sentence, self.follower.tail = section, sentence, []
+
+    def stop_take(self) -> dict:
+        """Stop feeding; the take's live statistics, for session.json."""
+        self._stop.set()
+        if self._feeder is not None:
+            self._feeder.join(timeout=1.0)
+            self._feeder = None
+        lags = sorted(self._lags)
+        stats = {"engine": self.engine, "model": self.model, "state": self.state, "words": self._words,
+                 "dropped_blocks": self.dropped}
+        if lags:
+            stats["lag_median_s"] = round(lags[len(lags) // 2], 3)
+            stats["lag_p90_s"] = round(lags[min(len(lags) - 1, int(len(lags) * 0.9))], 3)
+        if self.error:
+            stats["error"] = self.error
+        self.follower = None
+        return stats
+
+    def close(self) -> None:
+        self._stop.set()
+        if self.stream is not None:
+            try:
+                self.stream.close()
+            except Exception:
+                pass

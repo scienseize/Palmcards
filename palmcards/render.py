@@ -138,6 +138,9 @@ class ViewState:
     panel_scroll: float = 0.0  # px into the focus panel's content (clamped when drawn)
     alert: str = ""  # persistent: recording or analysis trouble, until it is dealt with
     keys_help: bool = False  # the keyboard fallback, shown with `h`
+    # Rehearse: the next section shown faint under the current one, while its
+    # predecessor's last sentence is being said (hides the follow's lag).
+    preview_next: bool = False
 
 
 @dataclass
@@ -530,9 +533,18 @@ class TextOverlay:
             return (state.drill,)
         if state.app in ("count_in", "rehearse"):
             first = next((i for i, s in enumerate(self.sentences) if s.section == state.section), 0)
-            return tuple(self.unit("section", first))
+            unit = self.unit("section", first)
+            if state.preview_next and unit[-1] + 1 < len(self.sentences):
+                unit += self.unit("section", unit[-1] + 1)
+            return tuple(unit)
         if state.mode == "focus" and state.focus is not None and state.level in ("sentence", "paragraph"):
             return tuple(self.unit(state.level, state.focus.sentence))
+        return None
+
+    def _preview_from(self, state: ViewState, unit: tuple[int, ...] | None) -> int | None:
+        """First sentence of the previewed next section in the panel, if any."""
+        if unit and state.app in ("count_in", "rehearse") and state.preview_next:
+            return next((i for i in unit if self.sentences[i].section != state.section), None)
         return None
 
     def _panel_current(self, state: ViewState, unit: tuple[int, ...] | None) -> int | None:
@@ -542,14 +554,15 @@ class TextOverlay:
         return None
 
     def _focus_panel(self, unit: tuple[int, ...], detail: tuple[tuple[str, str], ...] = (),
-                     verdicts: tuple = (), current: int | None = None) -> Panel:
+                     verdicts: tuple = (), current: int | None = None, preview_from: int | None = None) -> Panel:
         """The unit's sentences enlarged, then the detail lines (Review's
         verdicts), faint context rows around them when there is room.
 
         Laid out whole: when it is taller than the viewport, draw() shows a
         scrolled part of it. With `current`, that sentence is orange and the
-        rest of the unit dimmed (Rehearse)."""
-        key = (unit, detail, verdicts, current)
+        rest of the unit dimmed (Rehearse); sentences from `preview_from` on
+        (the next section, previewed) are faint."""
+        key = (unit, detail, verdicts, current, preview_from)
         if self._panel_key == key:
             return self._panel
         sents = [self.sentences[i] for i in unit]
@@ -597,6 +610,8 @@ class TextOverlay:
             return y_
 
         def unit_colors(si):
+            if preview_from is not None and si >= preview_from:
+                return C.faint, C.faint_mark
             if current is None:
                 return C.focus_text, C.focus_mark
             return (C.orange, C.orange_mark) if si == current else (C.dim, C.dim_mark)
@@ -639,7 +654,8 @@ class TextOverlay:
         unit = self._panel_unit(state)
         if unit is None:
             return None
-        return self._focus_panel(unit, state.detail, state.mark_verdicts, self._panel_current(state, unit))
+        return self._focus_panel(unit, state.detail, state.mark_verdicts, self._panel_current(state, unit),
+                                 self._preview_from(state, unit))
 
     def panel_view_h(self, panel: Panel) -> int:
         return min(panel.height, self.max_panel_h)

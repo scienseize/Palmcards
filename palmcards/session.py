@@ -97,6 +97,7 @@ class TakeRecord:
     # analysed automatically.
     status: str = "saved"
     capture: dict | None = None  # clock, gaps, overflows: see Session.finish_take
+    live: dict | None = None  # voice follow during the take: engine, state, words, lag (display only)
 
     @property
     def silent(self) -> bool:
@@ -426,7 +427,8 @@ class Session:
         t_start = manifest["first_sample_t"]
         if t_start is None:  # no audio arrived: the moment recording was asked for
             t_start = manifest.get("requested_t", 0.0)
-        sections = [{"section": s, "t": round(max(0.0, t - t_start), 3)} for t, s in manifest["sections"]]
+        sections = [{"section": e[1], "t": round(max(0.0, e[0] - t_start), 3), "source": e[2] if len(e) > 2 else "start"}
+                    for e in manifest["sections"]]
         gaps = manifest["discontinuities"]
         capture = {
             "clock": manifest["clock"],
@@ -442,7 +444,7 @@ class Session:
             number=manifest["take"], wav=manifest["wav"], started=manifest["started"], t_start=round(t_start, 3),
             duration_s=round(manifest["samples"] / rate, 3), sample_rate=rate, peak=manifest["peak"],
             sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
-            status=status, capture=capture,
+            status=status, capture=capture, live=manifest.get("live"),
         )
         self.takes = [t for t in self.takes if t.number != take.number] + [take]
         self.takes.sort(key=lambda t: t.number)

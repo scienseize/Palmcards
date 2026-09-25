@@ -62,6 +62,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 ### Rehearse (locked except inside a command zone, top-right of the frame)
 - Closed fist raised and held 1 s: start take after 3-2-1 count-in
 - Flick inside zone: next section (a sideways swing of the hand, usually from the wrist). From milestone 6b the notes follow your voice on their own and the flick is the manual override.
+- Voice follow (6b, `palmcards/follow.py` `LiveFollow`): the microphone callback hands each block to the live stream through a bounded deque (never blocking); confirmed live words move the orange sentence and scroll the panel; while the last sentence of a section is being said, the next section shows faint underneath (display only). The recorded section changes only when the voice confirms the next section's opening (3 words), or by hand: a flick or `n` (next), `b` (previous, keys only; a backward flick gesture is an open design question), `j`/`k` (sentence; the voice carries on from there). A live stream that fails to load or dies turns the follow off (alert line) and never stops the recording. No follow in drills. `main.py --no-follow` turns it off.
 - Open palm inside zone held 1.5 s: stop take (goes to Review)
 - All other hand movement is logged as data (gesture amount, fidgeting, face touching), never treated as a command.
 
@@ -223,7 +224,8 @@ sessions/
 | `t_start` | app time of the first audio sample (from the device's timing where available) |
 | `duration_s`, `sample_rate` | length of the WAV and its rate |
 | `peak` | loudest absolute sample, 0..1; below 0.001 the take is treated as silent (usually missing Microphone permission) |
-| `sections` | section indices (0-based, as in `Notes.sections`) with the time into the take each one came up; the first is always `t = 0` |
+| `sections` | section indices (0-based, as in `Notes.sections`) with the time into the take each one came up and its `source`: `start` (the first, `t = 0`), `voice`, `flick` or `key` |
+| `live` | the voice follow during the take (display only, never the record): `engine`, `model`, `state` (`following` / `failed` ...), `words` confirmed, `lag_median_s` / `lag_p90_s` (confirmed after the word's end), `dropped_blocks`, `error` |
 | `transcript` | the take's transcript file; absent until transcription finishes |
 | `alignment` | the transcript matched to the notes (`palmcards/align.py`); word numbers index the transcript's `words` |
 | `verdicts`, `marks` | the take's verdicts file and its verdict counts; absent until judged |
@@ -261,7 +263,7 @@ sessions/
 
 Later milestones add their results to each take (metrics) rather than inventing new files.
 
-Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `key` (command, mode, acted), `hear` (sentence, word), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
+Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `key` (command, mode, acted), `hear` (sentence, word), `section` (section, source), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
 
 ## Code layout
 

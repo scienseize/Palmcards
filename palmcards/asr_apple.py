@@ -127,7 +127,7 @@ class AppleLive:
 
         self.clock = clock
         self.hints = list(hints)[:SPEECH.apple_max_hints]
-        self.ready = True
+        self.state = "ready"  # _recognizer() below raises if it can't be
         self.runs = 0  # partial results received
         self.skipped_silent = 0
         self.run_ms: list[float] = []  # no reads to time: recognition streams
@@ -202,12 +202,22 @@ class AppleLive:
             if final:  # the request is over (Apple ended it); carry on in a new one
                 self._request = None
 
-    def close(self) -> None:
+    @property
+    def ready(self) -> bool:
+        return self.state == "ready"
+
+    def reset(self) -> None:
+        """End the current request; the next feed starts a new one."""
         if self._request is not None:
             self._request.endAudio()
         if self._task is not None:
             self._task.cancel()
         self._request = self._task = None
+        self._generation += 1  # results of the old request are dropped
+
+    def close(self) -> None:
+        self.reset()
+        self.state = "closed"
 
 
 class AppleSpeech:

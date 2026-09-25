@@ -63,7 +63,16 @@ class LiveWord:
 
 
 class LiveStream(Protocol):
-    ready: bool  # the model is loaded
+    # "starting" (loading the model), "ready", "failed" (see errors) or "closed".
+    # A failed stream never recovers by itself; the take goes on without it.
+    state: str
+    errors: list[str]
+
+    @property
+    def ready(self) -> bool: ...
+
+    def reset(self) -> None:
+        """Forget the last take's audio and words (keeps the model loaded)."""
 
     def feed(self, samples: np.ndarray, t_end: float) -> None:
         """16 kHz mono float32 samples; t_end is the app time of the last one."""
@@ -178,7 +187,9 @@ class MlxWhisperLive:
             raise ValueError(f"where must be 'thread' or 'process', not {where!r}")
         self.model, self.language, self.clock, self.where = model, language, clock, where
         self.rate = SPEECH.rate
-        self.ready = False
+        self.state = "starting"
+        self._started_at = time.monotonic()
+        self._epoch = 0  # bumped by reset(): replies to older windows are dropped
         self.runs = 0  # windows read
         self.skipped_silent = 0  # windows too quiet to read
         self.run_ms: list[float] = []
@@ -205,10 +216,27 @@ class MlxWhisperLive:
         threading.Thread(target=self._collect, args=(results,), name="live-collect", daemon=True).start()
         self._send(-1, np.zeros(self.rate, np.float32), 0.0, False, None)  # loads the model
 
+    @property
+    def ready(self) -> bool:
+        return self.state == "ready"
+
+    def _fail(self, why: str) -> None:
+        if self.state not in ("failed", "closed"):
+            self.state = "failed"
+            self.errors.append(why)
+
+    def reset(self) -> None:
+        self._epoch += 1
+        self._window = np.zeros(0, np.float32)
+        self._fed = 0
+        self._since = self._step
+        self._agree = Agreement()
+        self._sent = {k: v for k, v in self._sent.items() if k == -1}  # keep only the warm-up
+
     def _send(self, n: int, audio: np.ndarray, start: float, cut: bool, prompt: str | None) -> None:
         self._busy = True
-        self._sent[n] = (start, cut)
-        self._inbox.put((n, audio, prompt))
+        self._sent[(self._epoch, n) if n >= 0 else n] = (start, cut)
+        self._inbox.put(((self._epoch, n) if n >= 0 else n, audio, prompt))
 
     def _collect(self, results) -> None:
         while (item := results.get()) is not None:
@@ -219,7 +247,7 @@ class MlxWhisperLive:
         self._window = np.concatenate([self._window, samples.astype(np.float32, copy=False)])[-self._size:]
         self._fed += len(samples)
         self._since += len(samples)
-        if self._since < self._step or self._busy or not self.ready:
+        if self._since < self._step or self._busy or self.state != "ready":
             return
         self._since = 0
         start = t_end - len(self._window) / self.rate
@@ -237,17 +265,32 @@ class MlxWhisperLive:
         self.runs += 1
         self._send(self.runs, window.copy(), start, cut, prompt)
 
+    def _check(self) -> None:
+        """Fail a reader that never became ready, or died."""
+        if self.state == "starting" and time.monotonic() - self._started_at > SPEECH.live_start_timeout_s:
+            self._fail(f"the live model did not load within {SPEECH.live_start_timeout_s:.0f} s")
+        alive = self._reader.is_alive()
+        if not alive and self.state in ("starting", "ready"):
+            self._fail("the live reader stopped")
+
     def poll(self) -> list[LiveWord]:
         out = []
         while True:
             try:
                 n, words, ms, error, arrived = self._done.get_nowait()
             except queue.Empty:
+                self._check()
                 return out
-            start, cut = self._sent.pop(n)
-            if n < 0:
-                self.ready = True
+            sent = self._sent.pop(n, None)
+            if n == -1:  # the warm-up: it loaded the model, or it didn't
+                if error:
+                    self._fail(f"the live model failed to load: {error}")
+                elif self.state == "starting":
+                    self.state = "ready"
                 continue
+            if sent is None or n[0] != self._epoch:  # a window from before reset()
+                continue
+            start, cut = sent
             if error:
                 self.errors.append(error)
                 continue
@@ -260,10 +303,14 @@ class MlxWhisperLive:
             out += self._agree.update(reading, arrived)
 
     def close(self) -> None:
+        if self.state == "closed":
+            return
+        self.state = "closed"
         self._inbox.put(None)
         self._reader.join(timeout=2.0)
         if isinstance(self._reader, mp.process.BaseProcess) and self._reader.is_alive():
             self._reader.terminate()
+            self._reader.join(timeout=1.0)
 
 
 def model_revision(repo: str) -> str | None:

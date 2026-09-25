@@ -74,8 +74,11 @@ class FakeRecorder:
     def _feed(self, writer):
         first = True
         while not self._stop.is_set():
-            writer.push(np.full(320, 0.2, np.float32), *((self.clock(), "adc") if first else ()))
+            block = np.full(320, 0.2, np.float32)
+            writer.push(block, *((self.clock(), "adc") if first else ()))
             first = False
+            if (tap := getattr(self, "tap", None)) is not None:
+                tap(block, writer.first_sample_t + writer.enqueued / self.rate)
             time.sleep(0.02)
 
     @property
@@ -93,6 +96,27 @@ class FakeRecorder:
 
     def close(self):
         self.closed += 1
+
+
+class FakeLive:
+    """A live stream that is ready at once and hears nothing."""
+    state, errors, where = "ready", [], "fake"
+
+    @property
+    def ready(self):
+        return True
+
+    def reset(self):
+        pass
+
+    def feed(self, samples, t_end):
+        pass
+
+    def poll(self):
+        return []
+
+    def close(self):
+        self.state = "closed"
 
 
 class FakeSupervisor:
@@ -142,7 +166,7 @@ TAKE = {2: ("count_in", "count_in"), 3: ("take_start", "rehearse")}
 
 class Rig:
     def __init__(self, tmp_path, monkeypatch, script=TAKE, camera=None, tracker=None, keys=None,
-                 tracker_factory=None):
+                 tracker_factory=None, live=None):
         self.tmp = tmp_path
         self.camera = camera or FakeCamera()
         self.tracker = tracker or FakeTracker()
@@ -175,6 +199,7 @@ class Rig:
         self.devices = main.Devices(
             camera=lambda: self.camera, tracker=tracker_factory or (lambda: self.tracker), recorder=recorder,
             log=lambda: GestureLog(tmp_path / "log.jsonl"), named_window=lambda *a: None, show=lambda *a: None,
+            live=live or (lambda language, clock, hints: FakeLive()),
             wait_key=wait_key, window_open=lambda name: True, destroy_windows=destroy)
         self.notes_path = tmp_path / "talk.md"
         self.notes_path.write_bytes(NOTES)

@@ -123,6 +123,7 @@ class AudioRecorder:
         self.level = 0.0  # last block's loudness, 0 (-60 dBFS or less) .. 1 (full scale)
         self.overflows = 0  # blocks the device reported as dropped during the take
         self.writer = None  # TakeWriter while recording
+        self.tap = None  # also gets each block while recording (the voice follow); must never block
         self._stream = None
 
     def open(self) -> None:
@@ -147,6 +148,9 @@ class AudioRecorder:
             writer.push(block)
         else:
             writer.push(block, *first_sample_time(self.clock(), time_info, frames, self.rate))
+        tap = self.tap
+        if tap is not None and writer.first_sample_t is not None:
+            tap(block, writer.first_sample_t + writer.enqueued / self.rate)
 
     def start(self, writer) -> None:
         self.overflows = 0

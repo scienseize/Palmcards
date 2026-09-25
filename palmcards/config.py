@@ -131,6 +131,7 @@ class Speech:
     live_window_s: float = 4.0
     live_step_s: float = 0.3
     live_where: str = "process"  # where windows are read: "process" or "thread"
+    live_start_timeout_s: float = 60.0  # the live model must load within this (first run: a download)
     live_anchor_pad_s: float = 0.05  # a window starts this long before the last confirmed word
     # Confirmed words before the window given as Whisper's prompt; 0 = none.
     # Off: in the stage 1 benchmark a prompt sent Whisper into loops
@@ -233,11 +234,14 @@ class Follow:
     # The notes following the voice during a take (palmcards.follow). Live
     # words are matched against the current section plus the opening of the
     # next only, so a stray match can't jump far.
+    enabled: bool = True  # main.py --no-follow turns it off
     tail_words: int = 12  # newest live words aligned each time
     ahead_words: int = 8  # the next section's opening: whole sentences up to at least this many words
     forward_words: int = 3  # note words matched in a row to move on (next sentence or next section)
     back_words: int = 5  # ... to move back to an earlier sentence in the section
     run_gap: int = 1  # note words missing, or odd words heard, between two matches in a row
+    tap_blocks: int = 256  # microphone blocks waiting for the feeder (~5 s at 48 kHz, 1024-frame blocks)
+    feed_s: float = 0.1  # the feeder hands the live stream what arrived this often
 
 
 @dataclass(frozen=True)

@@ -94,10 +94,16 @@ class Replay:
         """App time: the take's own clock, running from its first sample."""
         return self.t_start + (time.perf_counter() - self._t0 if self._t0 is not None else 0.0)
 
-    def wait_ready(self) -> float:
+    def wait_ready(self, timeout: float = SPEECH.live_start_timeout_s) -> float:
+        """Seconds the model took to load; RuntimeError if it failed, or the
+        reader died or never answered (the stream fails itself on its own
+        start deadline; `timeout` is a backstop)."""
         t = time.perf_counter()
         while not self.stream.ready:
             self.stream.poll()
+            if self.stream.state in ("failed", "closed") or time.perf_counter() - t > timeout + 5:
+                raise RuntimeError("the live stream did not start: "
+                                   + ("; ".join(self.stream.errors) or f"no answer in {timeout:.0f} s"))
             time.sleep(0.01)
         return time.perf_counter() - t
 
@@ -184,13 +190,15 @@ def score(notes: Notes, post: list[dict], live: list[LiveWord], t_start: float) 
     moved = {c["section"] for c in changes}
     missed = [sec for sec in sorted(reached) if sec > 0 and sec not in moved]
 
-    # Sentence tracking over the speaking time.
+    # Sentence tracking while a sentence is being said: silences between
+    # sentences (and a long pause before a section) are not counted, as no
+    # follow can be right or wrong about a sentence nobody is saying.
     on = behind = ahead = 0
     if starts:
-        order = sorted(starts, key=starts.get)
         timeline = [e for e in events if e.kind == "sentence"]
-        for t in np.arange(min(starts.values()), max(ends.values()), SAMPLE_S):
-            truth = max((i for i in order if starts[i] <= t), key=starts.get, default=None)
+        spans = sorted((starts[i], ends[i], i) for i in starts)
+        for t in np.arange(spans[0][0], spans[-1][1], SAMPLE_S):
+            truth = next((i for a, b, i in spans if a <= t <= b), None)
             if truth is None:
                 continue
             ours = next((e.index for e in reversed(timeline) if e.t <= t), 0)
@@ -269,12 +277,22 @@ def frame_loop(notes: Notes, seconds: float, replay: Replay | None) -> dict:
     cv2.destroyWindow(window)
     cv2.waitKey(1)
     skip = 10  # the first frames include start-up
+    frame_ms = np.array(shown[skip:]) * 1000
     return {"seconds": round(sum(shown), 1), "frames": len(shown),
             "shown_fps": round((len(shown) - skip) / max(sum(shown[skip:]), 1e-6), 1),
+            "frame_ms": {f"p{q}": round(float(np.percentile(frame_ms, q)), 1) for q in (50, 90, 99)},
+            "peak_rss_mb": round(peak_rss_mb(), 1),
             "cam_fps": round(float(np.median(cam[skip:])), 1),
             "work_ms_median": round(float(np.median(work[skip:])), 1),
             "work_ms_p90": round(float(np.percentile(work[skip:], 90)), 1),
             "hands_ms_median": round(float(np.median(hands[skip:])), 1)}
+
+
+def peak_rss_mb() -> float:
+    """This process's peak memory (macOS reports bytes)."""
+    import resource
+
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
 
 
 # --- report --------------------------------------------------------------------
@@ -317,6 +335,10 @@ def report(r: dict) -> str:
             lines.append(f"  frames     {name:<7} live: shown {c['shown_fps']} fps, camera {c['cam_fps']} fps, "
                          f"work {c['work_ms_median']} ms (p90 {c['work_ms_p90']}), hands {c['hands_ms_median']} ms "
                          f"[{c['seconds']} s]")
+            if "frame_ms" in c:
+                f = c["frame_ms"]
+                lines.append(f"             frame time p50 {f['p50']} ms, p90 {f['p90']} ms, p99 {f['p99']} ms; "
+                             f"peak memory {c['peak_rss_mb']} MB")
     gate = [f"median lag < 1 s: {'yes' if lag['median'] is not None and lag['median'] < 1.0 else 'NO'}"]
     if "camera" in r:
         ok = r["camera"]["with"]["shown_fps"] >= 0.9 * r["camera"]["without"]["shown_fps"]
@@ -372,7 +394,12 @@ def main() -> int:
     audio = resample(audio, rate)
 
     replay = Replay(audio, take.t_start, notes, args.engine, args.model, args.where, session.language, args.hints)
-    load_s = replay.wait_ready()
+    try:
+        load_s = replay.wait_ready()
+    except RuntimeError as exc:
+        replay.stream.close()
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     result = {"session": str(args.session), "take": take.number, "duration_s": replay.duration,
               "model": replay.model + (" +hints" if args.hints else ""), "where": replay.stream.where, "step_s": args.step or SPEECH.live_step_s,
               "load_s": round(load_s, 2)}
