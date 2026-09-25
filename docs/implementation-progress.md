@@ -19,7 +19,7 @@ user runs them. They are never inferred from unit tests.
 | 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
-| 8 — Product completion | In progress | Slice 1: reopen a session in Review (board by sentence id, analysis resumed), sentence playback (open palm / a) | 347 passed | Slices: export, stress edits + revisions/undo, LLM interface, guidance/prefs, metrics |
+| 8 — Product completion | In progress | Slice 1: reopen + playback; slice 2: export (txt/md/docx, round-trip, never overwrites) | 354 passed | Slices: stress edits + revisions/undo, LLM interface, guidance/prefs, metrics |
 | End-to-end release gate | Pending | None | Not run | Run on target hardware |
 
 ## Log
@@ -527,4 +527,35 @@ Unverified assumptions and remaining risks: the open-palm hold in Review focus i
   need tuning.
 Reason for any departure from this plan: none.
 Next action: Phase 8 slice 2 (export).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 8 slice 2 (export)
+Status: verified for the pure logic (round-trip tests); no hardware involved
+Current HEAD / optional commit ID: 485eba9 -> slice 2 commit (see git log)
+Pre-existing changes preserved: yes.
+Files and behavior changed:
+  palmcards/export.py (new): write(notes, dest, fmt, imported_from) and the CLI
+    `python -m palmcards.export RUN [--revision ID] [--format txt|md|docx] [--out PATH]`. Always a
+    new file (default <session>/exports/<stem>-<revision>.<fmt>; refuses an existing file and the
+    imported original). marked(): a sentence whose raw markup still parses to the same words and
+    marks is written as it was; an edited one is rebuilt (pace, pauses, *stress*, ending).
+    Sections as headings (txt, md, docx), untitled breaks as two blank lines (txt) or two empty
+    paragraphs (docx); in md an untitled later section becomes "# Section N" and is reported; an
+    imported .docx's formatting is reported as not kept.
+  palmcards/session.py: add_revision() saves session.json when it adds a revision (a new revision
+    was not on record until some later save).
+  CLAUDE.md: milestone 9 note, code layout (playback.py, export.py).
+Migration / compatibility implications: none.
+Tests run and exact outcome: pytest (full) -> 354 passed. New tests/test_export.py (7): txt, md,
+  docx each re-import to the same sections, sentences, words, marks and paragraphs; unedited markup
+  kept ("**Very** forgiving heads. [fall]"), an edited stress rebuilt with its pause kept; untitled
+  sections round-trip in txt and are reported in md; never overwrites; the CLI exports a chosen
+  earlier revision and the current one (docx formatting reported), and refuses a second export to
+  the same name.
+Manual / hardware checks performed: none needed beyond tests.
+Unverified assumptions and remaining risks: rebuilt sentences normalise spacing around marks.
+Reason for any departure from this plan: none.
+Next action: Phase 8 slice 3 (stress edits with revisions and undo).
 ```

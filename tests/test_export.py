@@ -1,0 +1,95 @@
+"""Exported notes read back as the same sentences, words and marks, in every
+format; nothing is written over an existing file or the original."""
+
+from datetime import datetime
+
+import numpy as np
+import pytest
+
+from palmcards import export
+from palmcards.notes import Mark, MarkKind, load_notes, parse_text
+from palmcards.revisions import from_snapshot, to_snapshot
+from palmcards.session import Session
+
+TEXT = """# Opening
+
+Good evening, everyone. / Thank you for *being* here tonight.
+We started with one question: // what if practice felt easy? [rise]
+
+[slow] Most of us rehearse in our heads. **Very** forgiving heads. [fall]
+
+# The idea
+
+[fast] So we built a mirror that listens. /
+"""
+
+
+def same(a, b):
+    assert [sec.title for sec in a.sections] == [sec.title for sec in b.sections]
+    assert [(s.text, s.section, [w.text for w in s.words], s.marks) for s in a.sentences] == \
+        [(s.text, s.section, [w.text for w in s.words], s.marks) for s in b.sentences]
+    paragraphs = lambda n: [[s.index for s in n.sentences if s.paragraph == p] for p in sorted({s.paragraph for s in n.sentences})]
+    assert paragraphs(a) == paragraphs(b)
+
+
+@pytest.mark.parametrize("fmt", export.FORMATS)
+def test_every_format_reads_back_the_same(tmp_path, fmt):
+    notes = parse_text(TEXT, "md")
+    dest = tmp_path / f"out.{fmt}"
+    assert export.write(notes, dest, fmt) == []
+    same(load_notes(dest), notes)
+
+
+def test_an_unedited_sentence_keeps_its_markup_and_an_edited_one_is_rebuilt():
+    notes = parse_text(TEXT, "md")
+    assert export.marked(notes.sentences[4]) == "**Very** forgiving heads. [fall]"  # as written
+    s = notes.sentences[1]
+    s.marks = [m for m in s.marks if m.kind != MarkKind.STRESS] + [Mark(MarkKind.STRESS, 5)]  # stress moved
+    s.words[3].stressed, s.words[5].stressed = False, True
+    assert export.marked(s) == "/ Thank you for being here *tonight.*"  # its pause stays
+    assert parse_text(export.marked(s)).sentences[0].marks == [Mark(MarkKind.SHORT_PAUSE, 0), Mark(MarkKind.STRESS, 5)]
+
+
+def test_untitled_sections_round_trip_in_txt_and_are_reported_in_md(tmp_path):
+    notes = parse_text("First part here.\n\n\nSecond part here.\n", "txt")
+    assert len(notes.sections) == 2 and notes.sections[1].title == ""
+    export.write(notes, tmp_path / "a.txt", "txt")
+    same(load_notes(tmp_path / "a.txt"), notes)
+    lost = export.write(notes, tmp_path / "a.md", "md")
+    assert lost and "Section 2" in lost[0]
+    assert [s.title for s in load_notes(tmp_path / "a.md").sections] == ["", "Section 2"]
+
+
+def test_never_overwrites(tmp_path):
+    notes = parse_text(TEXT, "md")
+    original = tmp_path / "talk.md"
+    original.write_text(TEXT)
+    with pytest.raises(FileExistsError, match="already exists"):
+        export.write(notes, original, "md")
+    assert original.read_text() == TEXT
+
+
+def test_the_cli_exports_the_chosen_revision_to_the_session(tmp_path, capsys):
+    original = tmp_path / "talk.docx"
+    import docx
+
+    doc = docx.Document()
+    doc.add_heading("Opening", level=1)
+    doc.add_paragraph("Good evening, everyone. / Thank you for *being* here.")
+    doc.save(str(original))
+    session = Session.create(original, root=tmp_path / "sessions")
+    session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)])
+    first = session.current_revision
+    edited = from_snapshot(session.snapshot(first))
+    edited.sentences[0].marks.append(Mark(MarkKind.FALL))  # a later revision: an ending added
+    second = session.add_revision(edited)
+    session.release()
+    assert export.main([str(session.dir), "--revision", first, "--format", "md"]) == 0
+    out = capsys.readouterr().out
+    assert "docx are not kept" in out
+    path = session.dir / "exports" / f"talk-{first}.md"
+    assert load_notes(path).sentences[0].marks == []
+    assert export.main([str(session.dir)]) == 0  # current revision, the original's format
+    back = load_notes(session.dir / "exports" / f"talk-{second}.docx")
+    assert Mark(MarkKind.FALL) in back.sentences[0].marks  # the later revision's ending
+    assert original.exists() and export.main([str(session.dir)]) == 1  # the same file again: refused

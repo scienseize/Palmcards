@@ -295,6 +295,7 @@ class Session:
                 entry["note"] = note
             self.revisions.append(entry)
             self._snapshots[rid] = snap
+            self.save()  # the revision is on record as soon as it exists
         return rid
 
     @property

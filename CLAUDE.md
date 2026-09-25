@@ -299,7 +299,9 @@ palmcards/
 │   ├── revisions.py     # notes snapshots with stable sentence/word/mark ids
 │   ├── analysis.py      # supervised analysis worker: job records, generations, retries
 │   ├── paths.py         # where data lives ($PALMCARDS_DATA, sessions/, Application Support)
-│   └── data.py          # list / export / delete / prune recordings (python -m palmcards.data)
+│   ├── data.py          # list / export / delete / prune recordings (python -m palmcards.data)
+│   ├── playback.py      # Review: play a sentence of a take
+│   └── export.py        # a notes revision back out as .txt / .md / .docx (python -m palmcards.export)
 ├── models/              # MediaPipe .task files (gitignored; scripts/download_models.py, pinned + checksummed)
 ├── scripts/             # download_models, bench_live, profile_align, evaluate, cut_gesture_samples
 ├── docs/                # implementation-progress (ledger), evaluation, hardware-smoke-test; local/ (gitignored)
@@ -336,4 +338,4 @@ palmcards/
     - The live match is display only; the full transcription after the take stays the record. Each `sections` entry in `session.json` notes whether it came from the voice or a flick.
 7. **Metrics:** gaze, posture, fidgeting, filler rate.
 8. **Edit gestures + LLM:** Operate and Commit in Prepare: word options ring (LLM synonyms, stress node, hear-it node via macOS `say`) with L-hand preview, sentence tone dial, faded LLM-suggested delivery marks toggled by L-hand, two-L-hand length stretch; pinch + lift commits; glyph-scramble while the LLM works.
-9. **Export:** revised notes back to the original format.
+9. **Export:** revised notes back to the original format. Done as `python -m palmcards.export RUN [--revision ID] [--format txt|md|docx] [--out PATH]` (`palmcards/export.py`): always a new file (default: the session's `exports/`), unedited sentences keep their markup, edited ones are rebuilt from their marks; what a format can't hold is reported.
