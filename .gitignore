@@ -6,3 +6,11 @@ models/*.task
 models/*.part
 sessions/
 .DS_Store
+
+# Secrets: LLM API keys (milestone 8) and the like
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets*
