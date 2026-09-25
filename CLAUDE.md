@@ -129,6 +129,58 @@ Each mark gets a verdict: `hit`, `missed`, or `unclear` (not enough voiced audio
 
 Whisper tends to drop "um"/"uh": prime it with an initial prompt containing fillers.
 
+## Session files
+
+Everything is written under `sessions/` (gitignored). `palmcards/session.py` reads and writes the session folders; `GestureLog` in `gestures.py` writes the logs.
+
+```
+sessions/
+├── 20260925-101345-sample_notes/    # one folder per app run: <start time>-<notes file stem>
+│   ├── session.json                 # created with the first take; no takes, no folder
+│   ├── take-01.wav                  # 16-bit PCM mono at the mic's own rate (48 kHz on the MacBook Air)
+│   └── take-02.wav
+├── gesture-logs/
+│   ├── 20260925-101345.jsonl        # every pose and event, one JSON object per line
+│   └── 20260925-101345.trace.jsonl  # only with `main.py --trace`: raw landmarks for offline replay
+└── screens/                         # `s` key screenshots
+```
+
+**One clock.** `t` in the gesture log, `t` in the trace and `t_start` of a take are all seconds since the app started. A moment in a take's audio at `x` seconds is app time `t_start + x`, so audio, poses and events line up.
+
+`session.json`:
+
+```json
+{
+  "notes": "/abs/path/to/notes.md",
+  "gesture_log": "gesture-logs/20260925-101345.jsonl",
+  "takes": [
+    {
+      "number": 1,
+      "wav": "take-01.wav",
+      "started": "2026-09-25T10:14:34.435",
+      "t_start": 48.787,
+      "duration_s": 53.323,
+      "sample_rate": 48000,
+      "peak": 0.40456,
+      "sections": [{"section": 0, "t": 0.0}, {"section": 1, "t": 30.943}]
+    }
+  ]
+}
+```
+
+| Take field | Meaning |
+| --- | --- |
+| `number`, `wav` | 1-based take number and its WAV file name in the same folder |
+| `started` | wall-clock time recording began (after the count-in), ISO 8601 |
+| `t_start` | app time of the first audio sample |
+| `duration_s`, `sample_rate` | length of the WAV and its rate |
+| `peak` | loudest absolute sample, 0..1; below 0.001 the take is treated as silent (usually missing Microphone permission) |
+| `sections` | section indices (0-based, as in `Notes.sections`) with the time into the take each one came up; the first is always `t = 0` |
+
+Later milestones add their results to each take (transcript, alignment, verdicts, metrics) rather than inventing new files.
+
+Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill_stub`, `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `take_start`, `section`, `take_stop` (take, duration_s, wav), `mic_error`, `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
+
 ## Code layout
 
 ```
