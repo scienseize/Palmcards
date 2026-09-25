@@ -155,7 +155,8 @@ def _pace(tk: _Take, kind: str, si: int, base: float | None, base_note: str) -> 
         said = sum(i is not None for i in s["words"])
         return _v(kind, None, "unclear", f"only {said} word{'s' if said != 1 else ''} heard", threshold=need)
     if base is None:
-        return _v(kind, None, "unclear", "no unmarked sentence to compare with", threshold=need)
+        why = "no earlier full take to compare with" if base_note == DRILL else "no unmarked sentence to compare with"
+        return _v(kind, None, "unclear", why, threshold=need)
     wpm = _wpm(*rate)
     ratio = round(wpm / base, 3)
     where = f"{wpm:.0f} wpm, {ratio:.0%} of {base:.0f}{base_note}"
@@ -290,14 +291,21 @@ def _sentence_fillers(tk: _Take, alignment: dict) -> dict[int, list[str]]:
     return out
 
 
+DRILL = "drill"
+
+
 def verdicts(marks: list[list], alignment: dict, words: list[dict], prosody: Prosody | None = None,
-             baseline_wpm: float | None = None) -> dict:
-    """Verdicts for every mark of every sentence. See the module doc."""
+             baseline_wpm: float | None = None, drill: bool = False) -> dict:
+    """Verdicts for every mark of every sentence. See the module doc. A
+    drill's pace is judged only against `baseline_wpm` (the last full
+    take's); without one it is unclear."""
     tk = _Take(alignment, words, prosody)
     base = take_wpm(tk, marks)
     base_note = " wpm, the take's average"
     if baseline_wpm is not None:
         base, base_note = baseline_wpm, " wpm in the last full take"
+    elif drill:
+        base, base_note = None, DRILL
     fillers = _sentence_fillers(tk, alignment)
     out_sentences = []
     counts = dict.fromkeys(VERDICTS, 0)
@@ -318,7 +326,7 @@ def verdicts(marks: list[list], alignment: dict, words: list[dict], prosody: Pro
         rate = sentence_rate(s)
         out_sentences.append({"sentence": si, "status": s["status"], "wpm": _wpm(*rate) if rate else None,
                               "fillers": fillers.get(si, []), "marks": out})
-    return {"take_wpm": base, "baseline": "given" if baseline_wpm is not None else "take",
+    return {"take_wpm": base, "baseline": "given" if baseline_wpm is not None else "none" if drill else "take",
             "counts": counts, "thresholds": asdict(CUES), "sentences": out_sentences}
 
 

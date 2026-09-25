@@ -95,18 +95,25 @@ class FakeRecorder:
         self.closed += 1
 
 
-class FakeTranscriber:
+class FakeSupervisor:
     def __init__(self):
-        self.jobs, self.pending = [], []
+        self.jobs, self.pending, self.log = [], [], []
 
-    def submit(self, job):
+    def submit(self, session_dir, job):
         self.jobs.append(job)
+        return True
 
-    def poll(self, timeout=None):
+    def poll(self):
         return []
 
-    def close(self):
-        pass
+    def failed(self):
+        return []
+
+    def retry_failed(self):
+        return 0
+
+    def close(self, timeout=None):
+        return []
 
 
 def scripted(script):
@@ -159,12 +166,12 @@ class Rig:
         def destroy():
             self.destroyed += 1
 
-        def transcriber():
-            self.transcribers.append(FakeTranscriber())
+        def supervisor():
+            self.transcribers.append(FakeSupervisor())
             return self.transcribers[-1]
 
         monkeypatch.setattr(main, "ModeMachine", scripted(script))
-        monkeypatch.setattr(main, "Transcriber", transcriber)
+        monkeypatch.setattr(main, "Supervisor", supervisor)
         self.devices = main.Devices(
             camera=lambda: self.camera, tracker=tracker_factory or (lambda: self.tracker), recorder=recorder,
             log=lambda: GestureLog(tmp_path / "log.jsonl"), named_window=lambda *a: None, show=lambda *a: None,

@@ -146,6 +146,16 @@ class Speech:
 
 
 @dataclass(frozen=True)
+class Analysis:
+    # The background worker that transcribes and judges takes (palmcards.analysis).
+    max_queue: int = 20  # takes waiting or running; beyond this submit() refuses (the take stays unanalysed)
+    job_timeout_s: float = 900.0  # a job running longer gets its worker stopped (Whisper on a long take is slow)
+    max_attempts: int = 2  # runs of a job before a worker crash marks it failed
+    shutdown_s: float = 20.0  # closing the app waits this long for running analysis, then defers it
+    baseline_wait_s: float = 30.0  # a drill waits this long for its full take's analysis to be submitted
+
+
+@dataclass(frozen=True)
 class Align:
     # Score for pairing a note word with a transcript word of similarity s
     # (rapidfuzz ratio, 0..1): match_score - fuzzy_slope * (1 - s). Steep, so
@@ -242,6 +252,7 @@ OPS = Ops()
 REHEARSE = Rehearse()
 RECORDING = Recording()
 SPEECH = Speech()
+ANALYSIS = Analysis()
 ALIGN = Align()
 CUES = Cues()
 FOLLOW = Follow()

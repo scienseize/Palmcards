@@ -1,8 +1,8 @@
 """Whisper transcription of each take, and its alignment to the notes.
 
-After a take stops, its WAV goes to a worker process (`Transcriber`), so
-the camera loop never waits on Whisper; the worker keeps the model loaded
-between takes. For each take it:
+After a take stops, its analysis goes to a worker process run by
+palmcards.analysis.Supervisor, so the camera loop never waits on Whisper;
+the worker keeps the model loaded between takes. For each take it:
 
   1. resamples to 16 kHz and trims leading/trailing silence (`offset_s` is
      how much was cut from the front),
@@ -19,7 +19,9 @@ between takes. For each take it:
      take in session.json.
 
 A drill take (one sentence rehearsed on its own) is aligned against that
-sentence only, and its pace is judged against the last full take's.
+sentence only, and its pace is judged against the latest full take
+recorded before it (by take number); if that take has no verdicts, the
+drill's pace is unclear.
 
 Offline, for takes already recorded:
 
@@ -33,16 +35,17 @@ Offline, for takes already recorded:
       Takes from before notes snapshots have none: --rebind saves the notes
       file as it is now for them, marked unverified.
 
-`python -m palmcards.speech --serve` is the worker: one JSON job per line
-on stdin, one JSON result per line on stdout.
+`python -m palmcards.speech --serve` is the worker: one line per job on
+stdin, {"id", "input"} naming the job's input file (written by the
+supervisor), and one JSON result per line on stdout, carrying the job's id,
+take, notes revision and analysis configuration so the supervisor can check
+it answers the job it asked for.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import queue
-import subprocess
 import sys
 import threading
 import time
@@ -97,23 +100,35 @@ def words_on_clock(result: dict, t_start: float, offset_s: float) -> list[dict]:
 
 # --- jobs ----------------------------------------------------------------------
 
-def baseline_wpm(paths: list[str]) -> float | None:
-    """Pace of the first of these verdicts files that has one. The worker
-    reads them when it gets to the drill: takes are judged in order, so the
-    full take just before it is done by then even if it wasn't at submit."""
-    for path in map(Path, paths):
-        if path.exists() and (wpm := json.loads(path.read_text()).get("take_wpm")) is not None:
-            return wpm
-    return None
+def baseline_wpm(baseline: dict | None) -> float | None:
+    """A drill's baseline pace: exactly that full take's, from its verdicts,
+    or None if it has none (never another take's instead). The supervisor
+    runs the drill after that take's own analysis."""
+    if not baseline:
+        return None
+    path = Path(baseline["verdicts"])
+    return json.loads(path.read_text()).get("take_wpm") if path.exists() else None
+
+
+def baseline_take(session: Session, take: TakeRecord) -> TakeRecord | None:
+    """The full take a drill's pace is judged against: the latest saved full take before it."""
+    earlier = [t for t in session.takes if t.number < take.number and t.drill is None and t.status == "saved"]
+    return earlier[-1] if earlier else None
 
 
 def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = False) -> dict:
     """Everything the worker needs, as plain JSON (it never parses the notes)."""
+    from palmcards.analysis import analysis_config
+
+    base = baseline_take(session, take) if take.drill is not None else None
     sentences = [[w.norm for w in s.words] for s in notes.sentences]
     if take.drill is not None:  # only the drilled sentence can be matched
         sentences = [words if i == take.drill else [] for i, words in enumerate(sentences)]
     return {
         "take": take.number,
+        "revision": take.revision,
+        "config": analysis_config(),
+        "drill": take.drill,
         "wav": str(session.dir / take.wav),
         "transcript": str(session.dir / take.transcript_name),
         "prosody": str(session.dir / take.prosody_name),
@@ -125,9 +140,7 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
         "texts": [s.text for s in notes.sentences],
         "words": [[w.text for w in s.words] for s in notes.sentences],
         "marks": [[[m.kind, m.word] for m in s.marks] for s in notes.sentences],
-        # A drill's pace is judged against the latest full take's (newest first).
-        "baseline_from": [str(session.dir / t.verdicts_name) for t in reversed(session.takes[: take.number - 1])
-                          if t.drill is None] if take.drill is not None else [],
+        "baseline": {"take": base.number, "verdicts": str(session.dir / base.verdicts_name)} if base else None,
         "realign": realign,
     }
 
@@ -173,14 +186,14 @@ def run_job(job: dict) -> dict:
     alignment = align(job["sentences"], data["words"])
     thread.join()
     judged = cues.verdicts(job["marks"], alignment, data["words"], measured.get("prosody"),
-                           baseline_wpm(job["baseline_from"]) if job["baseline_from"] else None)
+                           baseline_wpm(job.get("baseline")), drill=job.get("drill") is not None)
     judged["take"] = job["take"]
     vpath = Path(job["verdicts"])
     tmp = vpath.with_suffix(".tmp")
     tmp.write_text(json.dumps(judged, indent=1) + "\n")
     tmp.replace(vpath)
     return {
-        "take": job["take"],
+        **_identity(job),
         "ok": True,
         "transcript": path.name,
         "alignment": alignment,
@@ -233,6 +246,12 @@ def report(alignment: dict, words: list[dict], texts: list[str], t_start: float)
 
 # --- worker process ------------------------------------------------------------
 
+def _identity(job: dict) -> dict:
+    """What a result must carry to be accepted as the answer to its job."""
+    return {"id": job.get("job"), "take": job.get("take"), "revision": job.get("revision"),
+            "config": job.get("config")}
+
+
 def serve() -> None:
     """Worker loop. Results go out on a private copy of stdout; anything a
     library prints lands on stderr, so it can't corrupt the protocol."""
@@ -242,81 +261,17 @@ def serve() -> None:
     for line in sys.stdin:
         if not line.strip():
             continue
-        job = json.loads(line)
+        job: dict = {}
         try:
+            message = json.loads(line)
+            job = json.loads(Path(message["input"]).read_text())
+            job["job"] = message["id"]
             result = run_job(job)
         except Exception as exc:
             traceback.print_exc()
-            result = {"take": job.get("take"), "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            result = {**_identity(job), "ok": False, "error": f"{type(exc).__name__}: {exc}"}
         out.write(json.dumps(result) + "\n")
         out.flush()
-
-
-class Transcriber:
-    """Runs the worker process and hands it jobs; used by the app.
-
-    submit() never blocks; poll() returns finished results. The worker is
-    started at the first job and keeps the Whisper model loaded after that.
-    """
-
-    def __init__(self):
-        self._proc: subprocess.Popen | None = None
-        self._results: queue.Queue = queue.Queue()
-        self.pending: list[int] = []  # take numbers, oldest first
-
-    def _start(self) -> subprocess.Popen:
-        proc = subprocess.Popen([sys.executable, "-m", "palmcards.speech", "--serve"], cwd=ROOT,
-                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
-        threading.Thread(target=self._read, args=(proc,), name="transcriber", daemon=True).start()
-        return proc
-
-    def _read(self, proc: subprocess.Popen) -> None:
-        for line in proc.stdout:
-            try:
-                self._results.put(json.loads(line))
-            except json.JSONDecodeError:
-                print(f"transcriber: unexpected output {line!r}", file=sys.stderr)
-        self._results.put({"exited": proc})
-
-    def submit(self, job: dict) -> None:
-        if self._proc is None or self._proc.poll() is not None:
-            self._proc = self._start()
-        self._proc.stdin.write(json.dumps(job) + "\n")
-        self._proc.stdin.flush()
-        self.pending.append(job["take"])
-
-    def poll(self, timeout: float | None = None) -> list[dict]:
-        """Finished results. With a timeout, wait that long for the first."""
-        out = []
-        try:
-            item = self._results.get(timeout=timeout) if timeout else self._results.get_nowait()
-            while True:
-                out.append(item)
-                item = self._results.get_nowait()
-        except queue.Empty:
-            pass
-        results = []
-        for item in out:
-            if "exited" in item:
-                if item["exited"] is self._proc:  # died: fail whatever it still had
-                    self._proc = None
-                    results += [{"take": n, "ok": False, "error": "transcriber exited"} for n in self.pending]
-                    self.pending = []
-                continue
-            if item.get("take") in self.pending:
-                self.pending.remove(item["take"])
-            results.append(item)
-        return results
-
-    def close(self) -> None:
-        proc, self._proc = self._proc, None
-        if proc is None:
-            return
-        try:
-            proc.stdin.close()
-            proc.wait(timeout=5)
-        except (OSError, subprocess.TimeoutExpired):
-            proc.kill()
 
 
 # --- offline CLI -----------------------------------------------------------------
@@ -345,9 +300,12 @@ def _cli(argv: list[str]) -> int:
 
 
 def _run_cli(args) -> int:
+    from palmcards.analysis import resolve_jobs, unfinished_jobs
     from palmcards.session import LegacyNotes
 
     session = Session.load(args.session)
+    if left := sorted({j.take for j in unfinished_jobs(session.dir)}):
+        print(f"analysis left unfinished by the app for take {', '.join(map(str, left))}; running it now")
     if args.rebind:
         rid = session.rebind_legacy()
         print(f"bound takes without notes to {session.notes} as revision {rid} (unverified)")
@@ -390,6 +348,7 @@ def _run_cli(args) -> int:
         result = run_job(make_job(session, take, notes, realign=realign))
         session.set_result(take.number, result["transcript"], result["alignment"], result["verdicts"],
                            result["marks"])
+        resolve_jobs(session.dir, take.number, "succeeded")  # any job the app left unfinished for it
         print(f"take {take.number} ({'re-aligned' if realign else 'transcribed'} in {result['seconds']:.1f} s)")
         print(result["report"])
     return status

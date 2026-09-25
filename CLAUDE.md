@@ -145,6 +145,8 @@ sessions/
 │   ├── take-01.wav                  # 16-bit PCM mono at the mic's own rate (48 kHz on the MacBook Air)
 │   ├── take-02.wav.part             # only while recording (or after a crash): the take so far, a valid WAV
 │   ├── take-02.recording.json       # only while recording: rate, first sample's app time, sections, gaps
+│   ├── jobs/                        # analysis job records (<id>.json: take, revision, config, state, attempts,
+│   │                                #   worker generation) and their inputs (<id>.input.json)
 │   ├── take-01.transcript.json      # Whisper's words, written after the take stops
 │   ├── take-01.prosody.npz          # pitch and loudness per 10 ms frame (cache; verdicts are recomputed from it)
 │   ├── take-01.verdicts.json        # a verdict per delivery mark
@@ -156,6 +158,8 @@ sessions/
 ```
 
 **Recording.** A take is written to disk while it is recorded: the audio callback hands blocks to a writer thread through a bounded queue (`RECORDING.queue_s`) and never waits; a full queue drops the block and records the gap. The writer rewrites the WAV header and fsyncs every `RECORDING.flush_s`. If the app dies mid-take, at most the queue's contents are lost (plus up to `flush_s` if the whole machine loses power); the next start salvages the rest as an `interrupted` take (`recover_all` in `session.py`). `main.run` owns every resource through one `ExitStack`: whatever fails (opening a model, the camera, drawing, Ctrl-C), everything opened is closed once, a take being recorded is kept, and the original error is raised.
+
+**Analysis.** `palmcards/analysis.py` runs each saved take's transcription and judging in a supervised worker process (`python -m palmcards.speech --serve`). Submitting never blocks the frame loop; the job's input is written once to `jobs/` and the worker gets a one-line reference. Job states `queued` / `running` / `succeeded` / `failed` are saved; every worker process is a generation, and when one exits its unfinished jobs are retried (`ANALYSIS.max_attempts`) or failed, even if another worker has started since. Results must match the job's take, notes revision and analysis-config hash. Failed analysis stays on the status line; `r` retries it. Closing waits at most `ANALYSIS.shutdown_s`, then stops the worker and leaves unfinished jobs queued on disk for `python -m palmcards.speech`. A drill's pace baseline is the latest saved full take before it, by take number; the drill's job waits for that take's.
 
 **One clock.** `t` in the gesture log, `t` in the trace, `t_start` of a take, and every word, filler and sentence time in transcripts and alignments are all seconds since the app started. A moment in a take's audio at `x` seconds is app time `t_start + x`, so audio, poses and events line up.
 
@@ -245,7 +249,7 @@ sessions/
 
 Later milestones add their results to each take (metrics) rather than inventing new files.
 
-Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
+Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
 
 ## Code layout
 

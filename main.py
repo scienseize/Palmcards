@@ -47,7 +47,7 @@ folder under sessions/, with its transcript, pitch and verdicts and
 session.json.
 
 Dev keys: space/j next sentence, k previous, d toggle landmarks and hand box,
-s save a screenshot to sessions/screens/, q/Esc quit.
+r retry failed analysis, s save a screenshot to sessions/screens/, q/Esc quit.
 """
 
 import argparse
@@ -66,7 +66,7 @@ import cv2
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import RECORDING, SPEECH
+from palmcards.config import ANALYSIS, RECORDING, SPEECH
 from palmcards.gestures import GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.render import (
@@ -76,7 +76,8 @@ from palmcards.render import (
 from palmcards.review import Board
 from palmcards.recording import TakeWriter
 from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
-from palmcards.speech import Transcriber, make_job
+from palmcards.analysis import Supervisor
+from palmcards.speech import make_job
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = Path(__file__).parent / "sessions" / "screens"
@@ -146,7 +147,9 @@ class Takes:
         self.notes, self.session, self.log = notes, session, log
         self.devices = devices or Devices()
         self.recorder: AudioRecorder | None = None
-        self.transcriber = Transcriber()
+        self.analysis = Supervisor()
+        self.deferred: list[int] = []  # takes the analysis queue had no room for yet
+        self._log_seen = 0
         self.t0 = time.perf_counter()  # the app clock's zero; main() sets it
         self.section = 0
         self.writer: TakeWriter | None = None  # the take being recorded
@@ -173,9 +176,12 @@ class Takes:
             return f"{self.board.take_label(view.focus.sentence)}  /  L-HAND: TAKES  /  PINCH + LIFT: DRILL"
         if self.finalizing:
             return f"TAKE {self.finalizing[0].number}: SAVING..."
-        if self.transcriber.pending:
+        if failed := self.analysis.failed():
+            return f"TAKE {failed[0]}: ANALYSIS FAILED (SEE TERMINAL)  /  R: RETRY"
+        if self.analysis.pending or self.deferred:
             dots = "." * (int(time.perf_counter() * 2) % 4)
-            return f"TAKE {self.transcriber.pending[0]}: TRANSCRIBING{dots:<3}"
+            take = (self.analysis.pending or self.deferred)[0]
+            return f"TAKE {take}: TRANSCRIBING{dots:<3}"
         if mode == "review" and self.last_saved:
             return f"{self.last_saved}  /  RAISE A FIST: NEW TAKE"
         return "RAISE A FIST: START A TAKE"
@@ -194,9 +200,9 @@ class Takes:
         """A take's transcript and alignment arrived. Returns a label note."""
         n = result["take"]
         if not result["ok"]:
-            print(f"take {n}: transcription failed: {result['error']}. Retry with: "
+            print(f"take {n}: analysis failed: {result.get('error')}. Press r to retry, or run: "
                   f"python -m palmcards.speech {self.session.dir} --take {n}", file=sys.stderr)
-            return "TRANSCRIPTION FAILED (SEE TERMINAL)"
+            return ""
         self.session.set_result(n, result["transcript"], result["alignment"], result["verdicts"], result["marks"])
         take = self.session.take(n)
         self.board.add(n, result["verdict_data"], take.drill)
@@ -319,13 +325,37 @@ class Takes:
             print(f"take {take.number} is {take.status}; analyse it anyway with: python -m palmcards.speech "
                   f"{self.session.dir} --take {take.number} --incomplete", file=sys.stderr)
             return ""
-        self.transcriber.submit(make_job(self.session, take, self.session.notes_for(take)))
+        self._submit(take.number)
         self.last_saved = f"TAKE {take.number} SAVED ({m}:{s:02d})"
         if take.silent:
             print("warning: the take is silent. On macOS, allow Microphone access for your terminal "
                   "app in System Settings > Privacy & Security > Microphone.", file=sys.stderr)
             return "TAKE IS SILENT: CHECK MICROPHONE ACCESS"
         return ""
+
+    def _submit(self, number: int) -> None:
+        take = self.session.take(number)
+        if self.analysis.submit(self.session.dir, make_job(self.session, take, self.session.notes_for(take))):
+            if number in self.deferred:
+                self.deferred.remove(number)
+        elif number not in self.deferred:
+            self.deferred.append(number)  # queue full: tried again every frame
+
+    def poll_analysis(self) -> str:
+        """Results in, deferred takes resubmitted, worker trouble to the terminal."""
+        note = ""
+        for result in self.analysis.poll():
+            note = self.on_transcribed(result) or note
+        for number in list(self.deferred):
+            self._submit(number)
+        for line in self.analysis.log[self._log_seen:]:
+            print(f"analysis: {line}", file=sys.stderr)
+        self._log_seen = len(self.analysis.log)
+        return note
+
+    def retry(self) -> str:
+        n = self.analysis.retry_failed()
+        return f"RETRYING ANALYSIS OF {n} TAKE{'S' if n != 1 else ''}" if n else "NOTHING TO RETRY"
 
     def close(self) -> None:
         """Finish any take (kept as "interrupted" when closing on an error), release
@@ -345,16 +375,23 @@ class Takes:
                 print(f"take {writer.number} is still being written; it will be recovered at the next start",
                       file=sys.stderr)
         self.finalizing = []
-        if self.transcriber.pending and not self.interrupted:
-            print(f"finishing transcription of take {', '.join(map(str, self.transcriber.pending))} "
-                  "(Ctrl-C to skip)")
+        # Bounded: wait a while for analysis already running, then leave it for later.
+        if self.analysis.pending and not self.interrupted:
+            print(f"finishing analysis of take {', '.join(map(str, self.analysis.pending))} "
+                  f"(up to {ANALYSIS.shutdown_s:.0f} s; Ctrl-C to leave it for later)")
+            deadline = time.monotonic() + ANALYSIS.shutdown_s
             try:
-                while self.transcriber.pending:
-                    for result in self.transcriber.poll(timeout=0.5):
-                        self.on_transcribed(result)
+                while self.analysis.pending and time.monotonic() < deadline:
+                    self.poll_analysis()
+                    time.sleep(0.1)
             except KeyboardInterrupt:
-                print(f"skipped; transcribe later with: python -m palmcards.speech {self.session.dir}")
-        self.transcriber.close()
+                pass
+        left = self.analysis.close(timeout=1.0)
+        self.poll_analysis()
+        if left or self.deferred:
+            takes = sorted(set(left) | set(self.deferred))
+            print(f"analysis of take {', '.join(map(str, takes))} left for later: python -m palmcards.speech "
+                  f"{self.session.dir}")
         self.session.release()
 
 
@@ -470,9 +507,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         else:
             events = []
         events += modes.tick(start - t0)
-        for done in takes.transcriber.poll():
-            if note := takes.on_transcribed(done):
-                view.note, note_until = note, start + NOTE_S
+        if note := takes.poll_analysis():
+            view.note, note_until = note, start + NOTE_S
         if note := takes.poll():
             view.note, note_until = note, start + NOTE_S
         takes.recording_problem()
@@ -548,6 +584,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 view.scroll = overlay.scroll_to(view.current)
         elif key == ord("d"):
             show_debug = not show_debug
+        elif key == ord("r"):
+            view.note, note_until = takes.retry(), time.perf_counter() + NOTE_S
         elif key == ord("s"):
             SCREENS_DIR.mkdir(parents=True, exist_ok=True)
             shot = SCREENS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.png"

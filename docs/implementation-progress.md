@@ -14,7 +14,7 @@ user runs them. They are never inferred from unit tests.
 | 0 — Current baseline | Verified | Ledger created; no source changes | 200 passed; all 8 findings reproduced on HEAD `c5a5dd2` (see log) | — |
 | 1 — Sessions and notes | Implemented, validation pending | Schema 2 + migration, notes snapshots/revisions with stable ids, exclusive session folders, flock writer lock, atomic WAVs, orphan report | 216 passed; F3/F7 regression tests; CLI rebind run on a temp copy of a real session | App run on hardware (first take writes the new layout); orphan *salvage* is Phase 2 |
 | 2 — Recording lifecycle | Implemented, validation pending | Takes streamed to disk (bounded queue, writer thread, fsynced valid WAV + manifest), saved/interrupted/failed states, startup salvage, device-clock first sample, ExitStack-owned resources with guarded cleanup | 235 passed; SIGKILL mid-recording salvaged; injected camera/draw/init/Ctrl-C/disk-full/queue-overflow failures | Hardware: real mic run, clock sync measurement |
-| 3 — Analysis supervision | Pending | None | Review reproductions only | Implement bounded transport/generations |
+| 3 — Analysis supervision | Implemented, validation pending | Supervisor thread owns jobs; non-blocking submit; persisted job records with generations; reconcile on exit; result identity checks; timeouts; bounded close; drill baseline by take identity; in-app retry (r) | 251 passed; F5/F6 regression tests; real worker answers a silent take | Real Whisper run in the app; long takes vs job_timeout_s |
 | 4 — Navigation and controls | Pending | None | Review renders only | Implement viewports and fallback controls |
 | 5 — Scoring/provenance | Pending | None | Review false-positive reproduction | Fix tail evidence and cache metadata |
 | 6 — Live following/state | Pending | Live-follow WIP since committed (`678bfd1`, `c5a5dd2`) | Headless + camera benchmark (user-run) | Integrate after foundations |
@@ -188,4 +188,62 @@ Reason for any departure from this plan: the plan suggests a separate controller
   ownership was centralised in run() + Takes with an ExitStack instead, a smaller change
   (the fuller state controller is Phase 6).
 Next action: Phase 3.
+```
+
+```text
+Date: 2026-09-25
+Phase / issue IDs: Phase 3 (F5 blocking submit, F6 orphaned pending jobs)
+Status: implemented, validation pending (real Whisper run in the app)
+Current HEAD / optional commit ID: c9fd649 -> Phase 3 commit (see git log)
+Pre-existing changes preserved: yes (clean tree at start).
+Files and behavior changed:
+  palmcards/analysis.py (new): Supervisor. submit() only checks admission (ANALYSIS.max_queue,
+    refuses at once when full) and puts a command on a queue. One supervisor thread owns all job
+    state: writes jobs/<id>.input.json once, keeps jobs/<id>.json (take, revision, config hash,
+    state queued/running/succeeded/failed, attempts, generation, timestamps, error), starts the
+    worker, and sends it {"id","input"} (a short line; one job in flight at a time). A reader
+    thread per worker generation forwards lines and its exit. On exit, every job still running on
+    that generation is retried (max_attempts) or failed, whatever worker is current. Results are
+    accepted only for the running job with the same take, revision and config; stale, duplicate,
+    malformed replies are logged and dropped. job_timeout_s kills a hung worker. Broken pipe on
+    handover kills the worker so its exit reconciles the job. Spawn failure retries then fails.
+    Supervisor-side failures reach the app as failed results. close(timeout): lets the running
+    job finish until the deadline, closes stdin, terminate, kill, reaps; unfinished jobs saved as
+    queued; unfinished_jobs() finds them later. retry_failed() requeues failed jobs. Drill jobs
+    wait for their baseline take's job (or its verdicts, at most baseline_wait_s).
+  palmcards/speech.py: worker protocol reads the input file named in each line and echoes
+    id/take/revision/config; make_job adds revision, config (analysis_config()), drill and
+    baseline = the latest *saved full* take before the drill (by number); baseline_wpm reads only
+    that take's verdicts; Transcriber removed. CLI reports and resolves jobs the app left
+    unfinished.
+  palmcards/cues.py: a drill with no baseline pace judges pace "unclear: no earlier full take to
+    compare with" (baseline "none"), never against itself.
+  main.py: Takes uses Supervisor; a full queue defers the take and resubmits each frame; failed
+    analysis shows on the status line until retried with the new r key; supervisor log lines go
+    to stderr; close() waits at most ANALYSIS.shutdown_s (Ctrl-C leaves it), then close(1 s) and
+    reports deferred takes.
+  palmcards/config.py: ANALYSIS (max_queue, job_timeout_s 900, max_attempts 2, shutdown_s 20,
+    baseline_wait_s 30).
+Migration / compatibility implications: verdicts of drills without a baseline now say
+  baseline "none" (was "take"). jobs/ appears in session folders. Offline CLI unchanged in use.
+Tests run and exact outcome: pytest (full) -> 251 passed in 16.78s; analysis, recording and
+  lifecycle tests run 3 times: 33 passed each time. New tests/test_analysis.py (14): 69 KB
+  submission to a worker that waits 1 s before reading returns in < 50 ms; worker dying before
+  reading / mid-job / after writing an artifact / after garbage output -> retried on generation 2,
+  each take answered exactly once; old worker exit with max_attempts=1 -> job 1 failed "exited",
+  job 2 succeeded, nothing pending (F6); wrong-take reply dropped then timed out; duplicate reply
+  dropped; hung worker killed after 0.5 s; full queue refuses in < 10 ms; close(0.5) returns in
+  < 4 s, workers reaped, both jobs on disk queued; worker that never reads -> failed after 2
+  attempts, no hang; drill submitted before its baseline runs after it; retry_failed reruns;
+  real `palmcards.speech --serve` answers a silent take with matching id/revision.
+  tests/test_speech.py: baseline by identity (latest full take, not an older one with verdicts;
+  interrupted takes excluded); drill without baseline -> pace unclear.
+Manual / hardware checks performed: none. Whisper inference in the supervised worker is only
+  exercised by the offline CLI so far, not by an app run.
+Evidence or artifact paths: tests above.
+Unverified assumptions and remaining risks: job_timeout_s (15 min) must exceed Whisper time for
+  the longest take; a first-run model download counts against it. Deferred jobs are resumed by the
+  CLI, not yet by reopening a session in the app (Phase 8 reopen).
+Reason for any departure from this plan: none.
+Next action: Phase 4.
 ```

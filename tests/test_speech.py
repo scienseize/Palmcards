@@ -111,9 +111,35 @@ def test_drill_job_matches_only_its_sentence_and_borrows_the_pace(tmp_path):
     job = make_job(session, drill, notes)
     assert job["sentences"] == [[], ["good", "evening", "to", "you", "all"]]
     assert job["marks"] == [[], [["slow", None]]]
-    assert job["baseline_from"] == [str(session.dir / "take-01.verdicts.json")]
-    assert make_job(session, full, notes)["baseline_from"] == []
+    assert job["baseline"] == {"take": 1, "verdicts": str(session.dir / "take-01.verdicts.json")}
+    assert job["drill"] == 1 and job["revision"] == drill.revision and job["config"]
+    assert make_job(session, full, notes)["baseline"] is None
     # Take 1 is judged after the drill was submitted, before the worker reaches it.
-    assert baseline_wpm(job["baseline_from"]) is None
+    assert baseline_wpm(job["baseline"]) is None
     (session.dir / full.verdicts_name).write_text(json.dumps({"take_wpm": 150.0}))
-    assert baseline_wpm(job["baseline_from"]) == 150.0
+    assert baseline_wpm(job["baseline"]) == 150.0
+
+
+def test_a_drill_borrows_the_latest_full_take_only_never_an_older_one(tmp_path):
+    text = "Hello there my friend. [slow] Good evening to you all."
+    (tmp_path / "notes.txt").write_text(text)
+    session = Session.create(tmp_path / "notes.txt", root=tmp_path / "sessions")
+    add = lambda **kw: session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)], **kw)
+    first, second = add(), add()
+    (session.dir / first.verdicts_name).write_text(json.dumps({"take_wpm": 150.0}))  # take 2 has none (failed)
+    job = make_job(session, add(drill=1), parse_text(text))
+    assert job["baseline"]["take"] == 2 and baseline_wpm(job["baseline"]) is None
+    second.status = "interrupted"  # an interrupted take is not a baseline
+    assert make_job(session, add(drill=1), parse_text(text))["baseline"]["take"] == 1
+
+
+def test_a_drill_without_a_baseline_has_an_unclear_pace(tmp_path):
+    from palmcards import cues
+
+    alignment = {"sentences": [{"sentence": 0, "status": "spoken", "coverage": 1.0, "start": 1.0, "end": 3.0,
+                                "words": [0, 1, 2, 3, 4], "misheard": []}],
+                 "fillers": [], "restarts": [], "extras": [], "unsure": []}
+    words = [{"text": w, "start": 1.0 + 0.4 * i, "end": 1.3 + 0.4 * i} for i, w in enumerate("a b c d e".split())]
+    v = cues.verdicts([[["slow", None]]], alignment, words, None, None, drill=True)
+    mark = v["sentences"][0]["marks"][0]
+    assert (mark["verdict"], mark["reason"], v["baseline"]) == ("unclear", "no earlier full take to compare with", "none")
