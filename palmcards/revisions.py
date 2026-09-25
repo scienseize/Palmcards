@@ -137,5 +137,12 @@ def from_snapshot(snap: dict) -> Notes:
     return Notes(sections=sections, warnings=list(snap.get("warnings", [])))
 
 
+def index_map(old: dict, new: dict) -> dict[int, int]:
+    """Sentence positions in `old` -> positions in `new`, for sentences with
+    the same id (unchanged since). Edited or removed sentences have no entry."""
+    pos = {s["id"]: i for i, s in enumerate(new["sentences"])}
+    return {i: pos[s["id"]] for i, s in enumerate(old["sentences"]) if s["id"] in pos}
+
+
 def sentence_ids(snap: dict) -> list[str]:
     return [s["id"] for s in snap["sentences"]]

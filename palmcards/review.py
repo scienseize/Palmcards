@@ -33,7 +33,18 @@ class Board:
         self.drills: dict[int, int] = {}  # take number -> drilled sentence
         self.picked: dict[int, int] = {}  # sentence -> take chosen with the dial
 
-    def add(self, number: int, verdicts: dict, drill: int | None = None) -> None:
+    def add(self, number: int, verdicts: dict, drill: int | None = None,
+            sentence_map: dict[int, int] | None = None) -> None:
+        """A judged take. `sentence_map` maps its sentences onto the notes shown
+        (a take recorded with an earlier notes revision); sentences edited
+        since have no place and are left out."""
+        if sentence_map is not None:
+            placed = {sentence_map[s["sentence"]]: s for s in verdicts["sentences"] if s["sentence"] in sentence_map}
+            verdicts = {**verdicts, "sentences": [
+                {**placed[i], "sentence": i} if i in placed else
+                {"sentence": i, "status": "skipped", "wpm": None, "fillers": [], "marks": []}
+                for i in range(len(self.notes.sentences))]}
+            drill = sentence_map.get(drill) if drill is not None else None
         self.takes[number] = verdicts
         if drill is not None:
             self.drills[number] = drill

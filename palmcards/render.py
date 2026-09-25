@@ -78,8 +78,9 @@ VERDICT_SYMBOL = {"hit": "✓", "missed": "✗", "unclear": "?", "skipped": "–
 KEYS_HELP = (
     "KEYS (WHEN GESTURES WON'T DO)",
     "T  START A TAKE      X  STOP / CANCEL",
-    "N  NEXT SECTION      P  BACK TO PREPARE",
+    "N B  NEXT / PREVIOUS SECTION",
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
+    "A  PLAY SENTENCE     P  BACK TO PREPARE",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
 )
 

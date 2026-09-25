@@ -71,8 +71,10 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 - Fold to focus: the sentence enlarged with its verdicts listed under it (each mark's verdict and reason, pace against the take, fillers; gaze comes with milestone 7)
 - L-hand turned like a knob (~20° per take, relative to where it starts, like the options ring): dial through the takes that said the focused sentence. Each sentence shows the latest take that said it until dialled; the pick stays after backing out, until a newer take says the sentence again.
 - Pinch + lift on a focused sentence: drill it. The count-in, then only that sentence on screen; no flick; open palm in the zone stops it. A drill take is aligned against that sentence only and its pace is judged against the last full take. Pinch + lift at word or paragraph level does nothing in Review.
+- Open palm held ~0.6 s on a focused sentence: play that sentence from the take it shows (key `a`)
 - Closed fist raised and held 1 s: new full take
 - Open palm inside the command zone held 1.5 s: back to Prepare, to edit before the next take (the zone is shown in Review with this hint)
+- `main.py --open RUN` reopens a saved session in Review: its current notes revision, every judged take on the board (takes from an earlier revision are placed by sentence id; edited sentences are left out), and takes whose analysis never finished are submitted again. New takes join the same session.
 
 ### Keyboard fallback (supplements the gestures; works with no hand tracked)
 `ModeMachine.command` runs the same transitions as the gestures, logged as `key` events. `t` start a take (count-in), `x` stop it or cancel the count-in, `n` next section, `p` back to Prepare from Review, `space`/`j` and `k` next/previous sentence (in Rehearse within the section; in a focused panel they scroll it), `r` retry failed analysis, `h` show the keys, `q` quit. No text editing.

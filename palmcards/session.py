@@ -341,6 +341,15 @@ class Session:
             raise SessionError(f"the notes file {self.notes} of {self.dir.name} is gone; nothing to fall back on")
         return notes_from_bytes(path.read_bytes(), path)
 
+    def sentence_map(self, take: TakeRecord) -> dict[int, int] | None:
+        """The take's sentence positions -> the current revision's, by sentence
+        id; None if the take has no revision (legacy)."""
+        if take.revision is None or self.current_revision is None:
+            return None
+        if take.revision == self.current_revision:
+            return {i: i for i in range(len(self.snapshot(take.revision)["sentences"]))}
+        return revisions.index_map(self.snapshot(take.revision), self.snapshot(self.current_revision))
+
     def rebind_legacy(self, path: str | Path | None = None) -> str:
         """Give takes without a revision the notes file at `path` (default: where
         the session says they came from), saved as a revision marked

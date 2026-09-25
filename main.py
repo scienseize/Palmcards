@@ -1,6 +1,7 @@
 """PalmCards entry point.
 
   python main.py [NOTES_FILE] [--lang xx] [--trace] [--no-follow]
+  python main.py --open RUN      reopen a saved session (a folder, or its name under sessions/) in Review
       NOTES_FILE: .txt, .md or .docx; defaults to the sample
       --lang: language spoken in the takes, for Whisper (default en)
       --trace: also record every hand result's landmarks, for offline replay
@@ -41,6 +42,8 @@ chip coloured by its verdict (green hit, red missed, grey unclear):
   L-hand turned (focused)  dial through the takes that said this sentence
   pinch + lift (focused)   drill the sentence: count-in, then just that
                            sentence; open palm in the zone to stop
+  open palm on a focused sentence, held ~0.6 s
+                           play that sentence from the take it shows (key: a)
   fist raised, held 1 s    new full take
   open palm held 1.5 s in the command zone
                            back to Prepare, to edit before the next take
@@ -55,7 +58,7 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   t start a take, x stop it (or cancel the count-in), n next section, b previous section,
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
-  r retry failed analysis, h keys, q/Esc quit.
+  a play the focused sentence (Review), r retry failed analysis, h keys, q/Esc quit.
 Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
 """
 
@@ -76,14 +79,16 @@ import cv2
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import ANALYSIS, FOLLOW, RECORDING, SPEECH
-from palmcards.gestures import GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
+from palmcards.gestures import OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.render import (
     HEAR_IT, Hit, OpsView, TextOverlay, ViewState,
     draw_fingertips, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
+from palmcards.playback import ClipPlayer, sentence_clip
 from palmcards.recording import TakeWriter
+from palmcards.revisions import from_snapshot
 from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
 from palmcards.style import TEXT
 from palmcards.tts import get_speaker
@@ -96,6 +101,7 @@ SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = SESSIONS_DIR / "screens"
 WINDOW = "PalmCards"
 NOTE_S = 1.5  # how long a commit message stays in the label
+PLAY_HOLD_S = 0.6  # open palm held on a focused sentence in Review: play it
 KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("b"): "previous",
                 ord("p"): "prepare"}  # ModeMachine.command
 
@@ -173,6 +179,7 @@ class Takes:
         self.devices = devices or Devices()
         self.follow_enabled = follow
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
+        self.player = None  # Review playback, made at the first play
         self._follow_reported = False
         self.recorder: AudioRecorder | None = None
         self.analysis = Supervisor()
@@ -208,6 +215,42 @@ class Takes:
         if mode == "review" and self.last_saved:
             return f"{self.last_saved}  /  RAISE A FIST: NEW TAKE"
         return "RAISE A FIST: START A TAKE"
+
+    def restore(self) -> bool:
+        """A reopened session: its judged takes onto the board (mapped onto the
+        current notes by sentence id), and takes whose analysis never finished
+        submitted again. Returns whether there is anything to review."""
+        from palmcards.analysis import resolve_jobs
+
+        for take in self.session.takes:
+            path = self.session.dir / take.verdicts if take.verdicts else None
+            if path is not None and path.exists():
+                self.board.add(take.number, json.loads(path.read_text()), take.drill,
+                               self.session.sentence_map(take))
+            elif take.status == "saved" and take.revision is not None:
+                resolve_jobs(self.session.dir, take.number, "failed", "superseded: submitted again on reopening")
+                self._submit(take.number)
+        return bool(self.board.takes)
+
+    def play_sentence(self, sentence: int) -> str:
+        """Play a sentence (current notes' index) from the take Review shows for it."""
+        n = self.board.shown(sentence)
+        if n is None:
+            return "NO TAKE TO PLAY"
+        take = self.session.take(n)
+        own = {cur: old for old, cur in (self.session.sentence_map(take) or {}).items()}.get(sentence)
+        clip = sentence_clip(self.session, take, own) if own is not None else None
+        if clip is None:
+            return f"TAKE {n}: SENTENCE NOT SAID"
+        try:
+            if self.player is None:
+                self.player = self.devices.player()
+            self.player.play(*clip)
+        except Exception as exc:  # no output device
+            print(f"could not play: {exc}", file=sys.stderr)
+            return "COULD NOT PLAY (SEE TERMINAL)"
+        self.log(time.perf_counter() - self.t0, "play", take=n, sentence=sentence)
+        return f"PLAYING TAKE {n}, SENTENCE {sentence + 1}"
 
     def alert_line(self, mode: str = "") -> str:
         """Persistent trouble (recording, analysis, voice follow), shown until it is dealt with."""
@@ -485,6 +528,8 @@ class Takes:
                 pass
         if self.follow is not None:
             self.follow.close()
+        if self.player is not None:
+            self.player.stop()
         left = self.analysis.close(timeout=1.0)
         self.poll_analysis()
         if left or self.deferred:
@@ -503,6 +548,7 @@ class Devices:
     recorder: Callable = AudioRecorder
     log: Callable = GestureLog.to_session_dir
     speaker: Callable = get_speaker
+    player: Callable = ClipPlayer
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
     named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
     show: Callable = cv2.imshow
@@ -529,7 +575,12 @@ def main() -> int:
     ap.add_argument("--lang", default=SPEECH.language, help="language of the takes, for Whisper")
     ap.add_argument("--trace", action="store_true", help="record hand landmarks for offline replay")
     ap.add_argument("--no-follow", action="store_true", help="don't follow the voice during takes")
+    ap.add_argument("--open", metavar="RUN", help="reopen a saved session in Review")
     args = ap.parse_args()
+    for line in recover_all():
+        print(f"recovered: {line}")
+    if args.open:
+        return reopen(args)
     path = args.notes
     try:
         source = path.read_bytes()  # parsed once and kept byte for byte in the session
@@ -539,8 +590,6 @@ def main() -> int:
         return 1
     for warning in notes.warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    for line in recover_all():
-        print(f"recovered: {line}")
     try:
         return run(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow)
     except CameraError as exc:
@@ -548,8 +597,37 @@ def main() -> int:
         return 1
 
 
+def reopen(args) -> int:
+    """main.py --open RUN: the session's current notes revision, its takes in Review."""
+    from palmcards.data import find
+    from palmcards.session import SessionBusy
+
+    try:
+        folder = Path(args.open) if (Path(args.open) / "session.json").exists() else find(SESSIONS_DIR, args.open)
+        session = Session.load(folder)
+        session.acquire()
+    except SessionBusy as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except SessionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if session.current_revision is None:
+        print(f"error: {folder.name} was recorded before PalmCards kept the notes; bind them first: "
+              f"python -m palmcards.speech {folder} --rebind", file=sys.stderr)
+        return 1
+    notes = from_snapshot(session.snapshot(session.current_revision))
+    try:
+        return run(session.notes, notes, b"", lang=session.language, trace=args.trace, follow=not args.no_follow,
+                   session=session)
+    except CameraError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
-        devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled) -> int:
+        devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled,
+        session: Session | None = None) -> int:
     """Open everything, run the frame loop, close everything.
 
     Every resource is registered for cleanup as soon as it exists, so a
@@ -568,24 +646,29 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
         trace_file = log.path.with_suffix(".trace.jsonl").open("w") if trace and log.path else None
         if trace_file:
             stack.callback(guarded(trace_file.close, "the trace"))
-        session = Session.create(path, root=sessions_root, gesture_log=log.path, language=lang, parsed=notes,
-                                 source=source)
+        if session is None:
+            session = Session.create(path, root=sessions_root, gesture_log=log.path, language=lang, parsed=notes,
+                                     source=source)
         takes = Takes(notes, session, log, devices, follow)
         stack.callback(guarded(takes.close, "the takes"))
+        review = takes.restore()
         stack.callback(guarded(devices.destroy_windows, "the window"))
         try:
-            frame_loop(camera, tracker, log, trace_file, takes, sentences, devices)
+            frame_loop(camera, tracker, log, trace_file, takes, sentences, devices, "review" if review else None)
         except BaseException:
             takes.interrupted = True
             raise
     return 0
 
 
-def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentences, devices: Devices) -> None:
+def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentences, devices: Devices,
+               start_mode: str | None = None) -> None:
     frame = camera.read()
     h, w = frame.shape[:2]
     overlay = TextOverlay(sentences, (w, h))
     modes = ModeMachine((w, h), log)
+    if start_mode:
+        modes.enter(start_mode, 0.0)
     grammar = modes.grammar
     view = ViewState()
     show_debug = False
@@ -597,6 +680,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     speaker = devices.speaker()
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
+    palm_since, played_for = None, None  # Review: an open palm held on a focused sentence plays it
 
     while True:
         frame = camera.read()
@@ -653,6 +737,18 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.mic = takes.recorder.level if takes.recorder else 0.0
             view.start_progress = 0.0
             view.mark_verdicts, view.detail = (), ()
+        focused = view.focus.sentence if view.app == "review" and view.mode == "focus" and view.level == "sentence" \
+            and view.focus is not None else None
+        palm = grammar.state.primary is not None and grammar.state.primary.stable == OPEN
+        if focused is None or not palm:
+            palm_since = None
+            if focused is None:
+                played_for = None
+        elif palm_since is None:
+            palm_since = start
+        elif start - palm_since >= PLAY_HOLD_S and played_for != focused:
+            view.note, note_until = takes.play_sentence(focused), start + NOTE_S
+            played_for = focused
         view.status = takes.status(modes.mode, view)
         view.alert = takes.alert_line(modes.mode)
         # A focused panel taller than the frame turns its own pages, so every
@@ -717,6 +813,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                     view.scroll = overlay.scroll_to(view.current)
         elif key == ord("h"):
             view.keys_help = not view.keys_help
+        elif key == ord("a") and view.app == "review":
+            sentence = view.focus.sentence if view.focus is not None else view.current
+            view.note, note_until = takes.play_sentence(sentence), time.perf_counter() + NOTE_S
         elif key == ord("d"):
             show_debug = not show_debug
         elif key == ord("r"):

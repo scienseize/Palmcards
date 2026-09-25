@@ -19,7 +19,7 @@ user runs them. They are never inferred from unit tests.
 | 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
-| 8 — Product completion | Pending | None | Planned milestones only | Implement features in small complete slices |
+| 8 — Product completion | In progress | Slice 1: reopen a session in Review (board by sentence id, analysis resumed), sentence playback (open palm / a) | 347 passed | Slices: export, stress edits + revisions/undo, LLM interface, guidance/prefs, metrics |
 | End-to-end release gate | Pending | None | Not run | Run on target hardware |
 
 ## Log
@@ -492,4 +492,39 @@ Reason for any departure from this plan: none. Alignment was optimised by compil
   fill (identical results) rather than coarse anchors/local alignment, which would have changed
   results; memory, not time, is now the limit.
 Next action: Phase 8.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 8 slice 1 (review playback and reopening)
+Status: implemented, validation pending (audio output and reopening on the target Mac)
+Current HEAD / optional commit ID: 81d7126 -> slice 1 commit (see git log)
+Pre-existing changes preserved: yes.
+Files and behavior changed:
+  main.py: --open RUN (a folder or a name under the data dir) loads the session, takes its lock
+    (refuses one open elsewhere, and one without saved notes, pointing to --rebind), and runs the
+    app on its current notes revision, starting in Review. Takes.restore() puts every judged take
+    on the board (mapped by sentence id) and resubmits saved takes without verdicts (closing their
+    stale job records). Review playback: an open palm held PLAY_HOLD_S (0.6 s) on a focused
+    sentence, or key a, plays that sentence from the take it shows (Devices.player); `play` log
+    entries; notes "NO TAKE TO PLAY" / "SENTENCE NOT SAID" / "COULD NOT PLAY".
+  palmcards/playback.py (new): sentence_clip (first to last matched word, padded 0.25 s) and
+    ClipPlayer (sounddevice.play, one clip at a time).
+  palmcards/revisions.py: index_map(old, new) by sentence id. palmcards/session.py:
+    Session.sentence_map(take). palmcards/review.py: Board.add(..., sentence_map) places a take's
+    sentences onto the current notes; edited/removed sentences are left out (skipped, no marks).
+  palmcards/render.py: key help lists a and b.
+  CLAUDE.md: Review playback, --open.
+Migration / compatibility implications: none.
+Tests run and exact outcome: pytest (full) -> 347 passed. New tests/test_reopen.py (4): mapping of
+  an earlier revision's take onto edited notes (edited sentence not claimed, moved one placed);
+  clip length and "not said"; reopening in Review, key a plays sentence 1 of take 1 (1.5 s clip),
+  the unfinished take 2 is submitted again, log has mode review and play, nothing lost; an old
+  session without notes is refused with the --rebind hint.
+Manual / hardware checks performed: none (sound output and the open-palm hold untested live).
+Unverified assumptions and remaining risks: the open-palm hold in Review focus is new gesture
+  meaning (open palm had none there); a hold might be triggered by a relaxed hand. PLAY_HOLD_S may
+  need tuning.
+Reason for any departure from this plan: none.
+Next action: Phase 8 slice 2 (export).
 ```
