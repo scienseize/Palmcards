@@ -2,7 +2,10 @@
 
 The audio callback hands each block to a TakeWriter through a bounded queue
 and never waits: when the queue is full the block is dropped and the gap is
-recorded, never hidden. A writer thread appends the blocks to
+recorded, never hidden. The writer fills a dropped stretch with silence, so
+a moment x seconds into the file is still x seconds into the take (the
+transcript, pitch and sections stay on the right clock); the gap list says
+where the silence is not the speaker's. A writer thread appends the blocks to
 take-NN.wav.part, a WAV whose header it rewrites every RECORDING.flush_s
 (so the file is a valid WAV even after a crash) before fsyncing. Beside it,
 take-NN.recording.json (the manifest) says what is being recorded: rate,
@@ -101,8 +104,8 @@ class TakeWriter:
         self.error: str | None = None
         self.first_sample_t: float | None = None
         self.clock_source: str | None = None
-        self.enqueued = 0  # samples accepted into the queue (their place in the file)
-        self.samples = 0  # samples written
+        self.enqueued = 0  # the stream so far: samples queued or dropped (a sample's place in the file)
+        self.samples = 0  # samples in the file, silence filling dropped stretches included
         self.peak = 0.0
         self.discontinuities: list[dict] = []  # {"at": sample in the file, "samples": n or None, "why": ...}
         self.sections: list[tuple[float, int]] = []  # (app time, section)
@@ -125,10 +128,10 @@ class TakeWriter:
         if self.state not in ("recording",):
             return
         try:
-            self._queue.put_nowait(block)
-            self.enqueued += len(block)
+            self._queue.put_nowait((self.enqueued, block))
         except queue.Full:
             self._gap(self.enqueued, len(block), "queue_full")
+        self.enqueued += len(block)
 
     def mark_overflow(self) -> None:
         """The device dropped input before we saw it (PortAudio input overflow)."""
@@ -137,8 +140,9 @@ class TakeWriter:
     def _gap(self, at: int, samples: int | None, why: str) -> None:
         with self._lock:
             last = self.discontinuities[-1] if self.discontinuities else None
-            if last and last["why"] == why and last["at"] == at and samples is not None and last["samples"] is not None:
-                last["samples"] += samples  # one gap, however many blocks
+            if last and last["why"] == why and samples is not None and last["samples"] is not None \
+                    and last["at"] + last["samples"] == at:
+                last["samples"] += samples  # one gap, however many blocks in a row
             else:
                 self.discontinuities.append({"at": at, "samples": samples, "why": why})
 
@@ -196,17 +200,19 @@ class TakeWriter:
             if item is STOP:
                 break
             if item is not None:
+                at, block = item
                 if self.error is None and f is not None:
                     try:
-                        pcm = (np.clip(item, -1.0, 1.0) * 32767).round().astype("<i2")
+                        self._fill_to(f, at)
+                        pcm = (np.clip(block, -1.0, 1.0) * 32767).round().astype("<i2")
                         f.write(pcm.tobytes())
-                        self.samples += len(item)
-                        self.peak = max(self.peak, float(np.abs(item).max()) if len(item) else 0.0)
+                        self.samples += len(block)
+                        self.peak = max(self.peak, float(np.abs(block).max()) if len(block) else 0.0)
                     except OSError as exc:
                         self._fail(exc)
-                        self._gap(self.samples, len(item), "write_error")
+                        self._gap(at, len(block), "write_error")
                 else:
-                    self._gap(self.samples, len(item), "write_error")
+                    self._gap(at, len(block), "write_error")
             if f is not None and self.error is None and time.monotonic() - last_flush >= RECORDING.flush_s:
                 try:
                     self._flush(f)
@@ -214,6 +220,13 @@ class TakeWriter:
                     self._fail(exc)
                 last_flush = time.monotonic()
         self._finish(f)
+
+    def _fill_to(self, f, at: int) -> None:
+        """Silence for samples dropped before stream position `at`."""
+        while self.samples < at:
+            n = min(at - self.samples, self.rate)
+            f.write(bytes(2 * n))
+            self.samples += n
 
     def _flush(self, f) -> None:
         """Header up to date, bytes on disk, manifest rewritten."""
@@ -234,6 +247,8 @@ class TakeWriter:
         try:
             if f is not None:
                 try:
+                    if self.error is None:
+                        self._fill_to(f, self.enqueued)  # dropped at the very end: the take keeps its length
                     self._flush(f)
                 except OSError as exc:
                     self._fail(exc)

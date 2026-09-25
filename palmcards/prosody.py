@@ -8,6 +8,14 @@ tuned) without running pyin again:
     f0       pitch in Hz, NaN where pyin found no voice
     rms_db   loudness, dBFS
 
+The cache records how it was made (`provenance`): the WAV's hash, the
+rate pyin ran at, every extraction setting, the extractor and librosa
+versions, and the time origin (t_start). A cache whose provenance doesn't
+match what would be made now is stale: it is made again, except when
+re-judging without re-measuring (speech --realign), which uses it and says
+it is stale. A cache from before provenance was kept is "unknown". The frame
+hop always comes from the cache itself, never from today's settings.
+
 Voiced frames much quieter than the take's speech (CUES.voiced_floor_db)
 are dropped when the file is used, not when it is made, so that threshold
 can be tuned without running pyin again. Pitch is compared in semitones
@@ -17,7 +25,10 @@ so the same thresholds work for any voice.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +36,26 @@ import numpy as np
 from palmcards.config import CUES
 
 EMPTY = np.zeros(0, np.float64)
+EXTRACTOR_VERSION = 1  # bump when analyse() changes what it measures
+
+
+def extraction(rate: int) -> dict:
+    """The settings that shape analyse()'s output at this rate."""
+    try:
+        librosa_version = version("librosa")
+    except PackageNotFoundError:
+        librosa_version = None
+    return {"extractor": EXTRACTOR_VERSION, "librosa": librosa_version, "rate": rate, "fmin_hz": CUES.fmin_hz,
+            "fmax_hz": CUES.fmax_hz, "frame_length": CUES.frame_length, "hop_s": CUES.hop_s,
+            "frame_hop_s": max(1, round(rate * CUES.hop_s)) / rate,  # the hop in whole samples, as used
+            "rms_frame_s": CUES.rms_frame_s}
+
+
+def provenance(wav: Path, rate: int, t_start: float) -> dict:
+    """What a cache made now from this WAV would record."""
+    wav = Path(wav)
+    digest = hashlib.sha256(wav.read_bytes()).hexdigest() if wav.exists() else None
+    return {"wav_sha256": digest, "t_start": t_start, **extraction(rate)}
 
 
 @dataclass
@@ -32,6 +63,7 @@ class Prosody:
     t: np.ndarray
     f0: np.ndarray  # as pyin gave it
     rms_db: np.ndarray
+    hop_s: float | None = None  # frame hop it was made with (None: work it out from t)
     voiced: np.ndarray = field(init=False)  # pyin found a pitch, and it's loud enough to be speech
     median: float = field(init=False)  # the take's median pitch in Hz, NaN if nothing was voiced
 
@@ -44,7 +76,13 @@ class Prosody:
 
     @property
     def hop(self) -> float:
-        return CUES.hop_s
+        """Seconds per frame, as the data was made: recorded with it, or read
+        off the frame times; never today's CUES.hop_s."""
+        if self.hop_s is not None:
+            return self.hop_s
+        if len(self.t) > 1:
+            return float(np.median(np.diff(self.t)))
+        return CUES.hop_s  # no frames: nothing is measured with it
 
     @property
     def st(self) -> np.ndarray:
@@ -76,15 +114,19 @@ def analyse(audio: np.ndarray, rate: int, t_start: float) -> Prosody:
     n = min(len(f0), len(rms))
     f0 = np.where(voiced[:n], f0[:n], np.nan).astype(np.float64)
     rms_db = 20 * np.log10(np.maximum(rms[:n].astype(np.float64), 1e-6))
-    return Prosody(t_start + np.arange(n) * hop / rate, f0, rms_db)
+    return Prosody(t_start + np.arange(n) * hop / rate, f0, rms_db, hop / rate)
 
 
-def save(p: Prosody, path: Path) -> None:
+def save(p: Prosody, path: Path, meta: dict | None = None) -> None:
     tmp = path.with_name(path.name + ".tmp.npz")
-    np.savez_compressed(tmp, t=p.t, f0=p.f0, rms_db=p.rms_db)
+    extra = {"provenance": np.array(json.dumps(meta))} if meta is not None else {}
+    np.savez_compressed(tmp, t=p.t, f0=p.f0, rms_db=p.rms_db, **extra)
     tmp.replace(path)
 
 
-def load(path: Path) -> Prosody:
+def load(path: Path) -> tuple[Prosody, dict | None]:
+    """The cached measurements, and how they were made (None: an old cache)."""
     with np.load(path) as d:
-        return Prosody(d["t"], d["f0"], d["rms_db"])
+        meta = json.loads(str(d["provenance"])) if "provenance" in d.files else None
+        hop = meta.get("frame_hop_s") if meta else None
+        return Prosody(d["t"], d["f0"], d["rms_db"], hop), meta

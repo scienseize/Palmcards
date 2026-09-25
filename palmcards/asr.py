@@ -50,6 +50,7 @@ class Transcription:
     offset_s: float  # silence trimmed from the front of the WAV, seconds
     segments: list[dict]  # Whisper-style; word times are into the trimmed audio
     model: str
+    revision: str | None = None  # the model's exact revision (Hugging Face snapshot), where known
 
 
 @dataclass(frozen=True)
@@ -265,6 +266,17 @@ class MlxWhisperLive:
             self._reader.terminate()
 
 
+def model_revision(repo: str) -> str | None:
+    """The commit of the model snapshot mlx-whisper loads from the local
+    Hugging Face cache, or None if it can't be told (never downloads)."""
+    try:
+        from huggingface_hub import snapshot_download
+
+        return Path(snapshot_download(repo, local_files_only=True)).name
+    except Exception:
+        return None
+
+
 class MlxWhisper:
     """Whisper on Apple silicon (mlx-whisper)."""
 
@@ -274,7 +286,7 @@ class MlxWhisper:
     def transcribe(self, wav: Path, language: str) -> Transcription:
         audio, offset_s = prepare_audio(wav)
         if not len(audio):
-            return Transcription("", offset_s, [], self.model)
+            return Transcription("", offset_s, [], self.model, model_revision(self.model))
         print(f"transcribing {wav.name} ({len(audio) / SPEECH.rate:.1f} s of sound)...", file=sys.stderr, flush=True)
         import mlx_whisper  # heavy; only the worker needs it
 
@@ -288,7 +300,8 @@ class MlxWhisper:
             hallucination_silence_threshold=SPEECH.hallucination_silence_s,
             verbose=None,
         )
-        return Transcription(result.get("text", "").strip(), offset_s, result.get("segments", []), self.model)
+        return Transcription(result.get("text", "").strip(), offset_s, result.get("segments", []), self.model,
+                             model_revision(self.model))
 
     def live(self, language: str, clock: Callable[[], float], where: str = SPEECH.live_where,
              hints: tuple[str, ...] = ()) -> MlxWhisperLive:

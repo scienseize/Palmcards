@@ -50,13 +50,14 @@ import sys
 import threading
 import time
 import traceback
+from dataclasses import asdict
 from pathlib import Path
 
 from palmcards import cues, prosody
-from palmcards.align import align, summary
+from palmcards.align import VERSION as ALIGN_VERSION, align, summary
 from palmcards.asr import Transcription, get_recognizer, initial_prompt  # noqa: F401 (initial_prompt: re-exported)
 from palmcards.audio import prepare_audio, resample, trim_silence  # noqa: F401 (re-exported)
-from palmcards.config import SPEECH
+from palmcards.config import ALIGN, CUES, SPEECH
 from palmcards.notes import Notes
 from palmcards.prosody import Prosody
 from palmcards.session import Session, TakeRecord, read_wav
@@ -66,17 +67,29 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # --- pitch and loudness --------------------------------------------------------
 
-def take_prosody(wav: Path, t_start: float, cache: Path, silent: bool) -> Prosody:
-    """The take's pitch and loudness, from the cache or measured (and cached)."""
+def take_prosody(wav: Path, t_start: float, cache: Path, silent: bool,
+                 reuse_stale: bool = False) -> tuple[Prosody, dict]:
+    """The take's pitch and loudness, and where they came from: the cache if
+    it was made from this WAV with today's extraction settings ("verified"),
+    else measured again and cached. With reuse_stale (re-judging only), a
+    mismatched or old cache is used as it is and reported "stale" or
+    "unknown"."""
+    expected = prosody.provenance(wav, SPEECH.rate, t_start)
     if cache.exists():
-        return prosody.load(cache)
+        p, meta = prosody.load(cache)
+        if meta == expected:
+            return p, {"status": "verified", **meta}
+        if reuse_stale:
+            status = "unknown" if meta is None else "stale"
+            changed = sorted(k for k in expected if meta is not None and meta.get(k) != expected[k])
+            return p, {"status": status, **(meta or {}), **({"changed": changed} if changed else {})}
     if silent:
-        p = Prosody(prosody.EMPTY, prosody.EMPTY, prosody.EMPTY)
+        p = Prosody(prosody.EMPTY, prosody.EMPTY, prosody.EMPTY, CUES.hop_s)
     else:
         audio, rate = read_wav(wav)
         p = prosody.analyse(resample(audio, rate), SPEECH.rate, t_start)
-    prosody.save(p, cache)
-    return p
+    prosody.save(p, cache, expected)
+    return p, {"status": "verified", **expected}
 
 
 # --- Whisper -----------------------------------------------------------------
@@ -110,6 +123,18 @@ def baseline_wpm(baseline: dict | None) -> float | None:
     return json.loads(path.read_text()).get("take_wpm") if path.exists() else None
 
 
+def capture_gaps(take: TakeRecord) -> list[list[float]]:
+    """Where the recording lost audio, as app-clock (start, end) intervals."""
+    from palmcards.cues import GAP_UNKNOWN_S
+
+    out = []
+    for g in (take.capture or {}).get("discontinuities", []):
+        start = take.t_start + g["at_s"]
+        length = g["samples"] / take.sample_rate if g["samples"] else GAP_UNKNOWN_S
+        out.append([round(start, 3), round(start + length, 3)])
+    return out
+
+
 def baseline_take(session: Session, take: TakeRecord) -> TakeRecord | None:
     """The full take a drill's pace is judged against: the latest saved full take before it."""
     earlier = [t for t in session.takes if t.number < take.number and t.drill is None and t.status == "saved"]
@@ -141,6 +166,7 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
         "words": [[w.text for w in s.words] for s in notes.sentences],
         "marks": [[[m.kind, m.word] for m in s.marks] for s in notes.sentences],
         "baseline": {"take": base.number, "verdicts": str(session.dir / base.verdicts_name)} if base else None,
+        "gaps": capture_gaps(take),
         "realign": realign,
     }
 
@@ -154,7 +180,9 @@ def run_job(job: dict) -> dict:
 
     def measure() -> None:
         try:
-            measured["prosody"] = take_prosody(Path(job["wav"]), job["t_start"], Path(job["prosody"]), job["silent"])
+            measured["prosody"], measured["provenance"] = take_prosody(
+                Path(job["wav"]), job["t_start"], Path(job["prosody"]), job["silent"],
+                reuse_stale=bool(job.get("realign")))
         except Exception:
             print(f"take {job['take']}: pitch and loudness failed; stress and intonation will be unclear",
                   file=sys.stderr)
@@ -167,13 +195,14 @@ def run_job(job: dict) -> dict:
     else:
         recognizer = get_recognizer()
         if job["silent"]:
-            tr = Transcription("", 0.0, [], recognizer.model)
+            tr = Transcription("", 0.0, [], recognizer.model, None)
         else:
             tr = recognizer.transcribe(Path(job["wav"]), job["language"])
         data = {
             "take": job["take"],
             "wav": Path(job["wav"]).name,
             "model": tr.model,
+            "asr": {"backend": SPEECH.backend, "model": tr.model, "revision": tr.revision},
             "language": job["language"],
             "t_start": job["t_start"],
             "offset_s": round(tr.offset_s, 3),
@@ -183,11 +212,25 @@ def run_job(job: dict) -> dict:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
         tmp.replace(path)
-    alignment = align(job["sentences"], data["words"])
+    language = job.get("language", "en")
+    calibrated = language in SPEECH.scoring_languages
+    fillers = ALIGN.fillers if calibrated else ()  # the filler list is English
+    alignment = align(job["sentences"], data["words"], fillers)
     thread.join()
     judged = cues.verdicts(job["marks"], alignment, data["words"], measured.get("prosody"),
-                           baseline_wpm(job.get("baseline")), drill=job.get("drill") is not None)
+                           baseline_wpm(job.get("baseline")), drill=job.get("drill") is not None,
+                           gaps=job.get("gaps", []), language=language, calibrated=calibrated)
     judged["take"] = job["take"]
+    # What produced these verdicts, so they can be checked or reproduced later.
+    judged["provenance"] = {
+        "notes_revision": job.get("revision"),
+        "analysis_config": job.get("config"),
+        "asr": data.get("asr", {"model": data.get("model"), "revision": None}),
+        "align": {"version": ALIGN_VERSION, "settings": asdict(ALIGN), "fillers": list(fillers)},
+        "scoring": {"version": cues.VERSION},
+        "prosody": measured.get("provenance", {"status": "failed"}),
+        "gaps": job.get("gaps", []),
+    }
     vpath = Path(job["verdicts"])
     tmp = vpath.with_suffix(".tmp")
     tmp.write_text(json.dumps(judged, indent=1) + "\n")

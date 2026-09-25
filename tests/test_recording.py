@@ -138,11 +138,24 @@ def test_a_full_queue_drops_blocks_without_blocking_and_records_the_gap(tmp_path
     assert gaps and all(g["why"] == "queue_full" for g in gaps)
     dropped = sum(g["samples"] for g in gaps)
     files[0].release.set()
+    time.sleep(0.2)  # the writer catches up; later audio lands after the gap
+    later = 5
+    for k in range(pushed, pushed + later):
+        w.push(ramp(BLOCK, k * BLOCK))
     w.stop()
     assert w.wait(10) and w.state == "saved"
-    assert w.samples + dropped == pushed * BLOCK  # every sample is either in the file or in a recorded gap
+    # The file keeps the take's timeline: the dropped stretch is silence, later audio is where it was said.
+    audio, _ = read_wav(session.dir / w.wav)
+    assert len(audio) == (pushed + later) * BLOCK == w.samples
+    for g in gaps:  # every dropped stretch is silence, in its place
+        assert not audio[g["at"]:g["at"] + g["samples"]].any()
+    kept = np.ones(len(audio), bool)
+    for g in gaps:
+        kept[g["at"]:g["at"] + g["samples"]] = False
+    assert np.allclose(audio[kept], ramp((pushed + later) * BLOCK)[kept], atol=1 / 32767)  # the rest where it was said
     take = session.finish_take(w.manifest())
     assert take.capture["dropped_samples"] == dropped and take.capture["discontinuities"][0]["why"] == "queue_full"
+    assert take.duration_s == round((pushed + later) * BLOCK / RATE, 3)
 
 
 class FullDisk:

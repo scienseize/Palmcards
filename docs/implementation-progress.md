@@ -16,7 +16,7 @@ user runs them. They are never inferred from unit tests.
 | 2 — Recording lifecycle | Implemented, validation pending | Takes streamed to disk (bounded queue, writer thread, fsynced valid WAV + manifest), saved/interrupted/failed states, startup salvage, device-clock first sample, ExitStack-owned resources with guarded cleanup | 235 passed; SIGKILL mid-recording salvaged; injected camera/draw/init/Ctrl-C/disk-full/queue-overflow failures | Hardware: real mic run, clock sync measurement |
 | 3 — Analysis supervision | Implemented, validation pending | Supervisor thread owns jobs; non-blocking submit; persisted job records with generations; reconcile on exit; result identity checks; timeouts; bounded close; drill baseline by take identity; in-app retry (r) | 251 passed; F5/F6 regression tests; real worker answers a silent take | Real Whisper run in the app; long takes vs job_timeout_s |
 | 4 — Navigation and controls | Implemented, validation pending | Panel viewport + scroll, Rehearse current sentence nav, long-word splitting, keyboard fallback (ModeMachine.command), persistent alert line, truthful Prepare ops (hear it via TTS; tone/length preview only), verdict symbols + separate counts, label backing | 266 passed; reachability at 640x480/1280x720/1920x1080; synthetic dark/light/busy renders inspected | Real camera scenes; gesture-based panel scrolling not added (keys + auto-paging instead) |
-| 5 — Scoring/provenance | Pending | None | Review false-positive reproduction | Fix tail evidence and cache metadata |
+| 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
 | 6 — Live following/state | Pending | Live-follow WIP since committed (`678bfd1`, `c5a5dd2`) | Headless + camera benchmark (user-run) | Integrate after foundations |
 | 7 — Setup/evaluation | Pending | None | No real-speaker validation | Lock environment and establish evaluation |
 | 8 — Product completion | Pending | None | Planned milestones only | Implement features in small complete slices |
@@ -306,4 +306,64 @@ Unverified assumptions and remaining risks: gestures still cannot scroll a focus
 Reason for any departure from this plan: none of substance; reachability without keys comes from
   auto-paging rather than a new gesture, to keep the gesture grammar and its regression fixtures.
 Next action: Phase 5.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 5 (F4 ending judged on a partial sentence; cache provenance; timeline gaps; language)
+Status: implemented, validation pending (agreement with human judgments not measured)
+Current HEAD / optional commit ID: 7f8ff0c -> Phase 5 commit (see git log)
+Pre-existing changes preserved: yes (clean tree at start; real sessions only read; re-judging ran on
+  temporary copies).
+Files and behavior changed:
+  palmcards/cues.py (VERSION 2): [rise]/[fall] need the sentence's last note word aligned (a joined or
+    approximate match counts) and heard at CUES.tail_min_probability (0.3) or better, else unclear.
+    Marks already had their own evidence rules (pause: both neighbours; pace: 4+ words; stress: its
+    word); now each also checks `gaps` (app-clock intervals of lost audio) over what it measures and
+    is unclear if any audio was lost there. For languages not calibrated, stress/ending hit/missed
+    become unclear with the measurement kept in the reason; pause/pace judged as usual. Verdicts
+    record version and language {code, calibrated}.
+  palmcards/recording.py: dropped queue blocks are written as silence at their stream position (and
+    at the end on finish), so file time = take time; gaps merge only when contiguous; write-error
+    gaps use stream positions.
+  palmcards/prosody.py: provenance(wav, rate, t_start) (WAV sha256, time origin, extractor and
+    librosa versions, fmin/fmax/frame_length/hop_s/frame_hop_s/rms_frame_s) saved in the cache;
+    load() returns it; Prosody.hop comes from the cache (frame_hop_s) or the frame times, never from
+    today's CUES.hop_s.
+  palmcards/speech.py: take_prosody() reuses a cache only if its provenance matches ("verified"),
+    else measures again; with --realign (reuse_stale) it reuses and reports "stale" (with the
+    changed keys) or "unknown" (old cache). make_job adds gaps from the take's capture record
+    (unknown-length overflows count as 0.05 s). run_job: fillers only for scoring languages,
+    verdicts carry provenance {notes_revision, analysis_config, asr, align {version, settings,
+    fillers}, scoring {version}, prosody, gaps}; transcript carries asr {backend, model, revision}.
+  palmcards/asr.py: model_revision() (local HF snapshot commit, never downloads); Transcription.revision.
+  palmcards/align.py: VERSION; align(..., fillers) for the take's language.
+  palmcards/config.py: CUES.tail_min_probability, SPEECH.scoring_languages ("en",).
+  CLAUDE.md: delivery-mark evidence rules, languages, cache and verdict provenance.
+Migration / compatibility implications: old prosody caches are "unknown": a full analysis measures
+  again; --realign keeps them and says so. Verdict files gain version/language/provenance. Takes
+  recorded before this change keep their (shorter) WAVs if the queue ever dropped audio; new takes
+  keep the timeline.
+Tests run and exact outcome: pytest (full) -> 280 passed in 22.4-22.6 s, three consecutive runs.
+  New tests/test_evidence.py (14): the review's reproduction ("we need to act" with rising pitch
+  against "...before the opportunity disappears. [rise]") -> unclear, not hit; same for [fall];
+  middle skipped but ending said -> judged (hit); misheard last word -> judged; last word split in
+  two -> judged; last word at confidence 0.2 -> unclear; lost audio in a pause / stressed word /
+  ending -> unclear, elsewhere -> no effect; capture gaps to app clock; uncalibrated language ->
+  stress/ending unclear with measurement, pauses still judged; cache reused for same settings,
+  reused after threshold-only changes (pyin call count unchanged), re-measured after an extraction
+  change or a different WAV; --realign with a changed hop uses the cache's 0.01 s hop and reports
+  stale; old cache -> unknown, hop read off frames; verdicts and transcript carry provenance.
+  tests/test_recording.py: gap-filled timeline (each dropped stretch silent, the rest in place,
+  duration = stream length).
+Manual / hardware checks performed: offline re-judge (--realign --rebind) of temporary copies of
+  sessions 20260925-131002 (3 takes) and 20260925-101345 (2 takes): all counts identical except
+  131002 take 3 (a drill of the last sentence), whose [fall] went from missed to unclear "the end of
+  the sentence wasn't heard" -- the F4 case on real data. Old caches reported "unknown".
+Evidence or artifact paths: tests above; command in this session (temporary copies, deleted).
+Unverified assumptions and remaining risks: tail_min_probability (0.3) is a starting value, not
+  tuned against human judgments. Stress/intonation calibration beyond English is not attempted.
+Reason for any departure from this plan: filling dropped audio with silence (a recording change)
+  was added because gaps otherwise shifted every later timestamp, which the gap rules depend on.
+Next action: Phase 6.
 ```

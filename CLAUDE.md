@@ -132,9 +132,9 @@ Temporal rules:
 | `//` | long pause | gap >= 0.7 s |
 | `*word*` | stress | word's peak (90th percentile, window padded 0.05 s) >= +3 dB louder or +2 semitones higher than the other words: a line fitted through their peaks over time (pitch and loudness drift down through a sentence) with 4+ other words, else their median |
 | `[slow]` / `[fast]` | pace | sentence WPM < 85% / > 115% of the take average (spoken sentences without a pace mark); fewer than 4 aligned words = unclear |
-| `[rise]` / `[fall]` | ending intonation | Theil-Sen slope of pitch over the last 0.5 s of voiced sound in the sentence, at least 3 semitones/s up or down |
+| `[rise]` / `[fall]` | ending intonation | Theil-Sen slope of pitch over the last 0.5 s of voiced sound in the sentence, at least 3 semitones/s up or down; judged only if the sentence's last word was heard (confidence >= 0.3), else unclear |
 
-Each mark gets a verdict: `hit`, `missed`, or `unclear` (not enough voiced audio to judge). "Unclear" is a valid answer; never invent a verdict. A sentence that was not spoken is `skipped`, not `missed`.
+Each mark gets a verdict: `hit`, `missed`, or `unclear` (not enough evidence to judge). "Unclear" is a valid answer; never invent a verdict. A sentence that was not spoken is `skipped`, not `missed`. Each mark needs its own evidence, so a partly said sentence is still judged where it can be: a pause needs the words on both sides, pace 4+ aligned words, stress its word, an ending the last word. Audio the recording lost (take `capture` gaps) inside what a mark measures makes it unclear. Stress and intonation thresholds are calibrated for the languages in `SPEECH.scoring_languages` (English); elsewhere those marks are unclear (the measurement is kept in the reason), fillers are not detected, and pauses and pace are judged as usual.
 
 Pitch is librosa `pyin` (65 to 400 Hz, 10 ms hop) on the take at 16 kHz, in semitones from the speaker's median for the take. Voiced frames 18 dB below the take's loud speech are ignored (breath, hum and creak that pyin tracks at the bottom of its range). All thresholds are `CUES` in `config.py`.
 
@@ -239,14 +239,17 @@ sessions/
 | `extras` | ad-libs: unmatched non-filler words, grouped, with the sentence they fall in or after |
 | `unsure` | words Whisper gave a probability below 0.1 (usually hallucinations in noise), left out of the alignment |
 
-`take-01.transcript.json`: `{"take", "wav", "model", "language", "t_start", "offset_s", "text", "words": [{"text", "start", "end", "probability"}]}`. `offset_s` is the leading silence trimmed before Whisper ran; word times are already on the app clock (`t_start + offset_s + Whisper's time`).
+`take-01.transcript.json`: `{"take", "wav", "model", "asr": {"backend", "model", "revision"}, "language", "t_start", "offset_s", "text", "words": [{"text", "start", "end", "probability"}]}` (`revision`: the model's Hugging Face snapshot commit, where known). `offset_s` is the leading silence trimmed before Whisper ran; word times are already on the app clock (`t_start + offset_s + Whisper's time`).
 
-`take-01.prosody.npz`: arrays `t` (frame centres, app clock), `f0` (Hz, NaN where pyin found no voice), `rms_db` (dBFS). Made once per take in the transcription worker, alongside Whisper; the loudness gate and semitones are applied when it is read, so tuning `CUES` never re-runs pyin.
+`take-01.prosody.npz`: arrays `t` (frame centres, app clock), `f0` (Hz, NaN where pyin found no voice), `rms_db` (dBFS), and `provenance` (JSON: WAV sha256, t_start, rate, extractor and librosa versions, every extraction setting, the actual frame hop). Made once per take in the transcription worker, alongside Whisper; the loudness gate and semitones are applied when it is read, so tuning verdict thresholds never re-runs pyin. A cache made differently (another WAV, other extraction settings) is measured again; `--realign` reuses it, reporting it `stale` (or `unknown` for a cache from before provenance). The hop always comes from the cache, never from today's `CUES`.
 
 `take-01.verdicts.json` (`palmcards/cues.py`):
 
 ```json
-{"take": 1, "take_wpm": 193.0, "baseline": "take",
+{"take": 1, "take_wpm": 193.0, "baseline": "take", "version": 2, "language": {"code": "en", "calibrated": true},
+ "provenance": {"notes_revision": "r1a2…", "analysis_config": "3f9a…", "asr": {"backend": "mlx-whisper", "model": "…", "revision": "…"},
+                "align": {"version": 1, "settings": {"…": "…"}, "fillers": ["um", "…"]}, "scoring": {"version": 2},
+                "prosody": {"status": "verified", "…": "…"}, "gaps": [[50.1, 50.2]]},
  "counts": {"hit": 6, "missed": 4, "unclear": 0, "skipped": 0},
  "thresholds": {"short_pause_s": 0.3, "...": "every CUES value used"},
  "sentences": [{"sentence": 2, "status": "spoken", "wpm": 171.2, "fillers": ["um"],
@@ -254,7 +257,7 @@ sessions/
                            "reason": "0.90 s pause"}]}]}
 ```
 
-`marks` follow `Sentence.marks` order; `word` is as in `Mark.word`. `value`/`threshold` are seconds (pauses), a ratio to `take_wpm` (pace), `{"loud_db", "pitch_st"}` (stress) or semitones per second (ending). `baseline` is `given` for a drill, whose `take_wpm` is the last full take's. A filler counts toward the sentence it falls in, or the next one said after it.
+`marks` follow `Sentence.marks` order; `word` is as in `Mark.word`. `value`/`threshold` are seconds (pauses), a ratio to `take_wpm` (pace), `{"loud_db", "pitch_st"}` (stress) or semitones per second (ending). `baseline` is `given` for a drill, whose `take_wpm` is the last full take's (`none` if that take has no verdicts: the drill's pace is unclear). `provenance` records what produced the verdicts, so they can be checked or reproduced. A filler counts toward the sentence it falls in, or the next one said after it.
 
 Later milestones add their results to each take (metrics) rather than inventing new files.
 

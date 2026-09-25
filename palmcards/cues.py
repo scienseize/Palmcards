@@ -28,7 +28,20 @@ one-line reason for the Review screen:
                  (evaluated at the word), else their median
   [rise] [fall]  slope of a line (Theil-Sen, robust to pitch-tracking
                  octave jumps) through the pitch of the last ~0.5 s of
-                 voiced sound in the sentence
+                 voiced sound in the sentence, only if the sentence's last
+                 word was heard (and not at a very low confidence): the
+                 middle of a sentence cut short says nothing about its end
+
+Each mark is judged on its own evidence, so a partly said sentence can
+still be judged for the marks whose words were said: a pause needs the
+words on both sides, pace enough aligned words, stress its word, an ending
+the last word. Where the recording lost audio (`gaps`, app-clock
+intervals) inside what a mark measures, the mark is unclear.
+
+Stress and intonation thresholds were set for English. For a language not
+in `calibrated` use, those marks are unclear rather than judged by
+English standards; pauses and pace compare the speaker with themselves
+and are judged in any language.
 
 Thresholds are CUES in palmcards/config.py; the result records the values
 used, so verdicts saved earlier stay readable after tuning.
@@ -44,7 +57,9 @@ from palmcards.config import CUES
 from palmcards.notes import MarkKind, normalize
 from palmcards.prosody import Prosody
 
+VERSION = 2  # 2: endings need their last word; gaps make marks unclear; uncalibrated languages
 VERDICTS = ("hit", "missed", "unclear", "skipped")
+GAP_UNKNOWN_S = 0.05  # a device overflow of unknown length counts as this long
 PAUSES = (MarkKind.SHORT_PAUSE, MarkKind.LONG_PAUSE)
 PACES = (MarkKind.SLOW, MarkKind.FAST)
 ENDINGS = (MarkKind.RISE, MarkKind.FALL)
@@ -58,8 +73,10 @@ def _v(kind: str, word: int | None, verdict: str, reason: str, value=None, thres
 class _Take:
     """A take's alignment, transcript and prosody, indexed for the checks."""
 
-    def __init__(self, alignment: dict, words: list[dict], prosody: Prosody | None):
+    def __init__(self, alignment: dict, words: list[dict], prosody: Prosody | None,
+                 gaps: list[tuple[float, float]] = ()):
         self.sentences = alignment["sentences"]
+        self.gaps = [tuple(g) for g in gaps]
         self.words = words
         unsure = set(alignment.get("unsure", []))
         # Transcript words that take part: not punctuation, not noise.
@@ -79,6 +96,10 @@ class _Take:
         if not 0 <= wi < len(idx) or idx[wi] is None:
             return None
         return idx[wi], self._joined[si].get(wi, idx[wi])
+
+    def lost(self, t0: float, t1: float) -> float:
+        """Seconds of audio the recording lost between t0 and t1 (app clock)."""
+        return sum(max(0.0, min(t1, b) - max(t0, a)) for a, b in self.gaps if b > t0 and a < t1)
 
     def next_word_start(self, after: int) -> float | None:
         """Start of the first real transcript word after transcript word `after`."""
@@ -116,6 +137,8 @@ def _pause(tk: _Take, kind: str, si: int, wi: int) -> dict:
     between = [i for i in tk.real if tp < i < tn]
     last = between[-1] if between else tp
     gap = round(max(0.0, tk.words[tn]["start"] - tk.words[last]["end"]), 3)
+    if lost := tk.lost(tk.words[last]["end"], tk.words[tn]["start"]):
+        return _v(kind, wi, "unclear", f"the recording lost {lost:.2f} s of audio here", gap, need)
     if fill := [i for i in between if i in tk.fillers]:
         return _v(kind, wi, "missed", f'filled with "{tk.words[fill[0]]["text"].strip(",.")}"', gap, need)
     after_what = ""
@@ -154,6 +177,8 @@ def _pace(tk: _Take, kind: str, si: int, base: float | None, base_note: str) -> 
     if rate is None:
         said = sum(i is not None for i in s["words"])
         return _v(kind, None, "unclear", f"only {said} word{'s' if said != 1 else ''} heard", threshold=need)
+    if lost := tk.lost(s["start"], s["end"]):
+        return _v(kind, None, "unclear", f"the recording lost {lost:.2f} s of audio in this sentence", threshold=need)
     if base is None:
         why = "no earlier full take to compare with" if base_note == DRILL else "no unmarked sentence to compare with"
         return _v(kind, None, "unclear", why, threshold=need)
@@ -219,6 +244,8 @@ def _stress(tk: _Take, si: int, wi: int, stressed: set[int]) -> dict:
     if mine is None:
         return _v(kind, wi, "unclear", "the word wasn't heard", threshold=need)
     loud, pitch, length, mid = mine
+    if lost := tk.lost(mid - length / 2 - CUES.stress_pad_s, mid + length / 2 + CUES.stress_pad_s):
+        return _v(kind, wi, "unclear", f"the recording lost {lost:.2f} s of audio in the word", threshold=need)
     if length < CUES.stress_min_s:
         return _v(kind, wi, "unclear", f"too short to measure ({length:.2f} s)", threshold=need)
     others = [p for k in range(len(s["words"])) if k != wi and k not in stressed
@@ -248,6 +275,12 @@ def _ending(tk: _Take, kind: str, si: int) -> dict:
         return _v(kind, None, "skipped", "sentence not said")
     if tk.prosody is None:
         return _v(kind, None, "unclear", "no pitch data for this take", threshold=need)
+    if s["words"][-1] is None:  # cut short: whatever the pitch did, it wasn't the ending
+        return _v(kind, None, "unclear", "the end of the sentence wasn't heard", threshold=need)
+    tail = tk.span(si, len(s["words"]) - 1)[1]
+    if (prob := tk.words[tail].get("probability", 1.0)) < CUES.tail_min_probability:
+        return _v(kind, None, "unclear", f"the last word was heard unclearly (confidence {prob:.2f})",
+                  threshold=need)
     last_word = max(i for i in s["words"] if i is not None)
     last_word = max([last_word] + [j for wi, j in s.get("joined", [])])
     t1 = s["end"] + CUES.ending_pad_s
@@ -261,6 +294,8 @@ def _ending(tk: _Take, kind: str, si: int) -> dict:
     t, st = t[voiced], st[voiced]
     keep = t >= t[-1] - CUES.ending_window_s
     t, st = t[keep], st[keep]
+    if lost := tk.lost(t[0], t1):
+        return _v(kind, None, "unclear", f"the recording lost {lost:.2f} s of audio at the end", threshold=need)
     if len(t) * tk.prosody.hop < CUES.ending_min_voiced_s:
         return _v(kind, None, "unclear", f"too little voiced sound at the end ({len(t) * tk.prosody.hop:.2f} s)",
                   threshold=need)
@@ -295,11 +330,14 @@ DRILL = "drill"
 
 
 def verdicts(marks: list[list], alignment: dict, words: list[dict], prosody: Prosody | None = None,
-             baseline_wpm: float | None = None, drill: bool = False) -> dict:
+             baseline_wpm: float | None = None, drill: bool = False, gaps: list = (),
+             language: str = "en", calibrated: bool = True) -> dict:
     """Verdicts for every mark of every sentence. See the module doc. A
     drill's pace is judged only against `baseline_wpm` (the last full
-    take's); without one it is unclear."""
-    tk = _Take(alignment, words, prosody)
+    take's); without one it is unclear. `gaps` are (start, end) app times
+    the recording lost; `calibrated` says whether stress and intonation
+    thresholds apply to `language`."""
+    tk = _Take(alignment, words, prosody, gaps)
     base = take_wpm(tk, marks)
     base_note = " wpm, the take's average"
     if baseline_wpm is not None:
@@ -321,13 +359,17 @@ def verdicts(marks: list[list], alignment: dict, words: list[dict], prosody: Pro
                 v = _stress(tk, si, wi, stressed)
             else:
                 v = _ending(tk, kind, si)
+            if not calibrated and kind not in PAUSES + PACES and v["verdict"] in ("hit", "missed"):
+                v = _v(kind, v["word"], "unclear", f"stress and intonation are calibrated for English, not "
+                       f"{language!r} (measured: {v['reason']})", v["value"], v["threshold"])
             counts[v["verdict"]] += 1
             out.append(v)
         rate = sentence_rate(s)
         out_sentences.append({"sentence": si, "status": s["status"], "wpm": _wpm(*rate) if rate else None,
                               "fillers": fillers.get(si, []), "marks": out})
     return {"take_wpm": base, "baseline": "given" if baseline_wpm is not None else "none" if drill else "take",
-            "counts": counts, "thresholds": asdict(CUES), "sentences": out_sentences}
+            "counts": counts, "thresholds": asdict(CUES), "version": VERSION,
+            "language": {"code": language, "calibrated": calibrated}, "sentences": out_sentences}
 
 
 def summary(v: dict) -> str:

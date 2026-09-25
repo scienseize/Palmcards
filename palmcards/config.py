@@ -136,6 +136,9 @@ class Speech:
     # Off: in the stage 1 benchmark a prompt sent Whisper into loops
     # ("very, very, very, ...") and carried misheard words forward.
     live_prompt_words: int = 0
+    # Delivery-mark scoring is calibrated for these languages (stress and
+    # intonation thresholds, filler words); others get pauses and pace only.
+    scoring_languages: tuple[str, ...] = ("en",)
     # Apple's recogniser (backend "apple") wants a locale, not a language code.
     apple_locales: tuple[tuple[str, str], ...] = (("en", "en-US"),)
     apple_max_hints: int = 100  # contextual strings (note sentences) given to Apple's recogniser
@@ -222,6 +225,7 @@ class Cues:
     ending_pad_s: float = 0.15  # looked at past the last word's end
     ending_min_voiced_s: float = 0.15  # less voiced sound: unclear
     ending_slope_st_s: float = 3.0  # semitones per second, up for rise, down for fall
+    tail_min_probability: float = 0.3  # an ending is judged only if its last word was heard at least this surely
 
 
 @dataclass(frozen=True)

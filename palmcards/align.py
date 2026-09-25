@@ -46,6 +46,7 @@ from rapidfuzz.process import cdist
 from palmcards.config import ALIGN
 from palmcards.notes import normalize
 
+VERSION = 1  # bump when align() changes what it produces
 NEG = float("-inf")
 EPS = 1e-9  # scores this close count as a tie
 M, X, Y = 0, 1, 2  # DP states: pair, note word skipped, transcript word extra
@@ -338,10 +339,11 @@ class _Alignment:
                 return
 
 
-def align(sentences: list[list[str]], words: list[dict]) -> dict:
-    """Align note sentences (normalised words) to transcript words. See module doc."""
+def align(sentences: list[list[str]], words: list[dict], fillers: tuple[str, ...] | None = None) -> dict:
+    """Align note sentences (normalised words) to transcript words. See module doc.
+    `fillers`: the filler words of the take's language (default ALIGN.fillers, English)."""
     cfg = ALIGN
-    fillers = set(cfg.fillers)
+    fillers = set(cfg.fillers if fillers is None else fillers)
     flat = [(si, wi, w) for si, sent in enumerate(sentences) for wi, w in enumerate(sent)]
     notes = [w for _, _, w in flat]
     # Transcript words that normalise to nothing ("-", "...") take no part,
