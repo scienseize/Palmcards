@@ -14,3 +14,6 @@ sessions/
 *.key
 *.pem
 secrets*
+
+# Local-only reference material (third-party frames, not ours to publish)
+docs/local/

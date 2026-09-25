@@ -37,7 +37,7 @@ MediaPipe `.task` model files live in `models/` and are downloaded by a setup sc
 
 Mirroring: flip the frame once at capture; do all hit-testing in the flipped coordinate space.
 
-The gesture grammar is adapted from Kat's "Gestural editing/writing" demo. Frame-by-frame reference: `docs/kat-gesture-reference.jpg`.
+The gesture grammar is adapted from Kat's "Gestural editing/writing" demo (@poetengineer__). A frame-by-frame reference sheet of the demo is kept locally at `docs/local/kat-gesture-reference.jpg`; it is gitignored and not published, since the frames are Kat's.
 
 ### The grammar (applies in Prepare and Review)
 
