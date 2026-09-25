@@ -22,7 +22,8 @@ way, so the garbage would be confirmed.
 Live words are display only. The transcript of record is made after the
 take (palmcards.speech).
 
-mlx-whisper (Apple silicon) is the only engine so far.
+Engines: mlx-whisper (Whisper on Apple silicon), and Apple's on-device
+recogniser (palmcards.asr_apple, SFSpeechRecognizer).
 """
 
 from __future__ import annotations
@@ -77,7 +78,9 @@ class Recognizer(Protocol):
 
     def transcribe(self, wav: Path, language: str) -> Transcription: ...
 
-    def live(self, language: str, clock: Callable[[], float], where: str = "thread") -> LiveStream: ...
+    def live(self, language: str, clock: Callable[[], float], where: str = SPEECH.live_where,
+             hints: tuple[str, ...] = ()) -> LiveStream:
+        """hints: phrases the speaker is likely to say (the notes), for engines that take them."""
 
 
 def initial_prompt(language: str) -> str | None:
@@ -287,11 +290,18 @@ class MlxWhisper:
         )
         return Transcription(result.get("text", "").strip(), offset_s, result.get("segments", []), self.model)
 
-    def live(self, language: str, clock: Callable[[], float], where: str = "thread") -> MlxWhisperLive:
-        return MlxWhisperLive(self.live_model, language, clock, where)
+    def live(self, language: str, clock: Callable[[], float], where: str = SPEECH.live_where,
+             hints: tuple[str, ...] = ()) -> MlxWhisperLive:
+        return MlxWhisperLive(self.live_model, language, clock, where)  # hints: no (a prompt made it loop)
 
 
-BACKENDS: dict[str, Callable[[], Recognizer]] = {"mlx-whisper": MlxWhisper}
+def _apple() -> Recognizer:
+    from palmcards.asr_apple import AppleSpeech  # pyobjc; only loaded when picked
+
+    return AppleSpeech()
+
+
+BACKENDS: dict[str, Callable[[], Recognizer]] = {"mlx-whisper": MlxWhisper, "apple": _apple}
 
 
 def get_recognizer(backend: str | None = None) -> Recognizer:

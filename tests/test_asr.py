@@ -1,5 +1,6 @@
 import json
 import time
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -107,6 +108,8 @@ def test_live_stream_reads_windows_and_confirms(monkeypatch):
                 for t, s in said if w0 <= s and s + 0.3 <= w1]
 
     monkeypatch.setattr(asr, "_read_window", fake_read)
+    monkeypatch.setattr(asr, "SPEECH", replace(asr.SPEECH, live_step_s=0.5))  # the steps below assume 0.5 s
+    SPEECH = asr.SPEECH
     clock = [0.0]
     live = MlxWhisper().live("en", lambda: clock[0], where="thread")
     try:

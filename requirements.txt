@@ -30,3 +30,9 @@ librosa
 
 # Tests
 pytest
+
+# Milestone 6b: Apple's on-device speech recogniser, an alternative engine for
+# following the voice live (config SPEECH.backend = "apple"; needs Speech
+# Recognition permission for the terminal app)
+pyobjc-framework-Speech
+pyobjc-framework-AVFoundation

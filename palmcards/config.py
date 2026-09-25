@@ -95,7 +95,7 @@ class Rehearse:
 
 @dataclass(frozen=True)
 class Speech:
-    backend: str = "mlx-whisper"  # palmcards.asr BACKENDS
+    backend: str = "mlx-whisper"  # palmcards.asr BACKENDS: "mlx-whisper" or "apple"
     model: str = "mlx-community/whisper-large-v3-turbo"  # or "mlx-community/whisper-small-mlx"
     language: str = "en"  # default for `main.py --lang`
     rate: int = 16000  # Whisper's input rate
@@ -115,15 +115,21 @@ class Speech:
     # Live recognition during a take (milestone 6b): a small model re-reads
     # the recent audio every step, from the last confirmed word but at most
     # live_window_s back; a word is confirmed once two consecutive readings
-    # agree on it (palmcards.asr).
+    # agree on it (palmcards.asr). Chosen by scripts/bench_live.py: base
+    # every 0.3 s gave a median lag of 0.63-0.75 s on good takes (every 0.5 s:
+    # over 1 s), in a separate process the frame rate held at 30 fps.
     live_model: str = "mlx-community/whisper-base-mlx"
     live_window_s: float = 4.0
-    live_step_s: float = 0.5
+    live_step_s: float = 0.3
+    live_where: str = "process"  # where windows are read: "process" or "thread"
     live_anchor_pad_s: float = 0.05  # a window starts this long before the last confirmed word
     # Confirmed words before the window given as Whisper's prompt; 0 = none.
     # Off: in the stage 1 benchmark a prompt sent Whisper into loops
     # ("very, very, very, ...") and carried misheard words forward.
     live_prompt_words: int = 0
+    # Apple's recogniser (backend "apple") wants a locale, not a language code.
+    apple_locales: tuple[tuple[str, str], ...] = (("en", "en-US"),)
+    apple_max_hints: int = 100  # contextual strings (note sentences) given to Apple's recogniser
     live_min_rms_db: float = -45.0  # quieter windows (dBFS) are not read
     live_edge_s: float = 0.2  # words starting this close to a full window's start may be cut off
     live_overlap_s: float = 0.1  # word edges move this much between readings

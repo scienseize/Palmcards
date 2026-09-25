@@ -24,7 +24,7 @@ Full design note: https://claude.ai/artifact/2mB94zAhFAKUNK7GnCsqSc
 | Gaze | MediaPipe Face Landmarker (head pose + iris) |
 | Posture | MediaPipe Pose Landmarker (lower frame rate than hands) |
 | Audio capture | sounddevice, buffered per take, saved as WAV |
-| Transcription | mlx-whisper (or whisper.cpp), after each take, with word timestamps; language set per session. Behind one interface (`palmcards/asr.py`, engine picked by `SPEECH.backend`), which also has the live stream for 6b |
+| Transcription | mlx-whisper (or whisper.cpp), after each take, with word timestamps; language set per session. Behind one interface (`palmcards/asr.py`, engine picked by `SPEECH.backend`), which also has the live stream for 6b: Whisper base re-read every 0.3 s by default, Apple's on-device recogniser (`palmcards/asr_apple.py`, pyobjc) as the alternative |
 | Prosody | librosa: `pyin` for pitch, RMS for loudness |
 | Notes parsing | python-docx, markdown-it-py |
 | Script alignment | rapidfuzz (fuzzy match transcript words to note words) |
@@ -244,6 +244,7 @@ palmcards/
 │   ├── fonts/           # DejaVuSansMono.ttf and its licence
 │   ├── speech.py        # whisper transcription and judging (worker process, offline CLI)
 │   ├── asr.py           # speech recognition interface: transcribe(wav), live stream of confirmed words; mlx-whisper
+│   ├── asr_apple.py     # the same interface on Apple's on-device recogniser (SFSpeechRecognizer)
 │   ├── audio.py         # 16 kHz resampling, silence trimming
 │   ├── tts.py           # text to speech interface; macOS say
 │   ├── prosody.py       # pitch (pyin) and loudness per take, cached

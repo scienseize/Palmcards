@@ -1,7 +1,8 @@
 """Live-follow benchmark (milestone 6b, stage 1): is live recognition fast enough?
 
-  python scripts/bench_live.py SESSION_DIR [--take N] [--model REPO] [--where thread|process]
-                               [--step S] [--camera SECONDS] [--json OUT] [--words]
+  python scripts/bench_live.py SESSION_DIR [--take N] [--engine mlx-whisper|apple]
+                               [--model REPO] [--where thread|process]
+                               [--step S] [--hints] [--camera SECONDS] [--json OUT] [--words]
   python scripts/bench_live.py --rescore RESULT.json [...]
 
 Replays a recorded take's WAV through the live pipeline in real time, with
@@ -51,27 +52,32 @@ from palmcards.session import Session, read_wav  # noqa: E402
 BLOCK_S = 0.1  # audio is fed in blocks this long, as the app's feeder will
 GRACE_S = 2.0  # keep listening this long after the audio ends
 SAMPLE_S = 0.1  # sentence tracking is scored at this interval
-MATCH_S = 0.5  # a live word starting this close to a post-take word ...
-MATCH_SIM = 0.8  # ... and this alike (rapidfuzz ratio) is the same word
+# A live word is a post-take word if it is this alike (rapidfuzz ratio) and
+# was confirmed between MATCH_EARLY_S before the word started and
+# MATCH_LATE_S after it ended.
+MATCH_SIM = 0.8
+MATCH_EARLY_S = 0.5  # word edges are approximate
+MATCH_LATE_S = 4.0
 
 
 class Replay:
     """Feeds a take's audio to a live stream at wall-clock pace, and the
     confirmed words to a follower. Call tick() often; it returns False when done."""
 
-    def __init__(self, audio: np.ndarray, t_start: float, notes: Notes, model: str | None, where: str,
-                 language: str):
+    def __init__(self, audio: np.ndarray, t_start: float, notes: Notes, engine: str, model: str | None, where: str,
+                 language: str, hints: bool = False):
         self.audio, self.t_start = audio, t_start
         self.follower = Follower(notes)
         self.words: list[LiveWord] = []
         self.events: list[FollowEvent] = []
         self._t0: float | None = None
         self._pos = 0
-        recognizer = get_recognizer()
+        recognizer = get_recognizer(engine)
         if model:
             recognizer.live_model = model
         self.model = recognizer.live_model
-        self.stream = recognizer.live(language, self.clock, where=where)
+        self.hints = tuple(s.text for s in notes.sentences) if hints else ()
+        self.stream = recognizer.live(language, self.clock, where=where, hints=self.hints)
 
     def clock(self) -> float:
         """App time: the take's own clock, running from its first sample."""
@@ -131,23 +137,25 @@ def score(notes: Notes, post: list[dict], live: list[LiveWord], t_start: float) 
     events = follow(notes, live)
     post_al = align(sents, post)
 
-    # Lag, per note word said in the take and confirmed live. Both are on the
-    # app clock, so a live word is the same word if it sounds alike and starts
-    # close by. (Aligning all the live words to the notes at once fails on a
-    # noisy run: leaving everything unmatched can score better than the gaps.)
-    lags, said, used = [], 0, set()
+    # Lag, per note word said in the take and confirmed live. A live word is
+    # the same word if it sounds alike and was confirmed soon after the word
+    # was said, in order. (Not by the live word's own times: Apple's live
+    # words have none. Nor by aligning all the live words to the notes at
+    # once: on a noisy run leaving everything unmatched can score better.)
+    lags, said, last = [], 0, -1
     for ps in post_al["sentences"]:
         for pw in ps["words"]:
             if pw is None:
                 continue
             said += 1
-            target, t = normalize(post[pw]["text"]), post[pw]["start"]
-            near = [i for i, w in enumerate(live) if i not in used and abs(w.start - t) <= MATCH_S
-                    and fuzz.ratio(normalize(w.text), target) >= 100 * MATCH_SIM]
-            if near:
-                i = min(near, key=lambda i: abs(live[i].start - t))
-                used.add(i)
-                lags.append(live[i].confirmed_at - post[pw]["end"])
+            word = post[pw]
+            target = normalize(word["text"])
+            i = next((i for i in range(last + 1, len(live))
+                      if word["start"] - MATCH_EARLY_S <= live[i].confirmed_at <= word["end"] + MATCH_LATE_S
+                      and fuzz.ratio(normalize(live[i].text), target) >= 100 * MATCH_SIM), None)
+            if i is not None:
+                last = i
+                lags.append(live[i].confirmed_at - word["end"])
 
     # When the speaker reached each section and sentence (post-take transcript).
     starts = {s["sentence"]: s["start"] for s in post_al["sentences"] if s["status"] != "skipped"}
@@ -264,15 +272,20 @@ def report(r: dict) -> str:
     s = r["score"]
     lag = s["lag_s"]
     said, conf = s["note_words_said"], s["note_words_confirmed"]
+    reads = r["reads"]
+    if r["where"] == "apple":
+        how = "streaming on-device"
+        cost = f"{reads['runs']} partial results; {len(reads['errors'])} errors {reads['errors'][:3]}"
+    else:
+        how = f"reader in a {r['where']}, a read every {r['step_s']} s, model loaded in {r['load_s']:.1f} s"
+        cost = (f"{reads['runs']} windows, median {reads['ms_median']} ms, p90 {reads['ms_p90']} ms; "
+                f"{reads['skipped_silent']} skipped as silent; {len(reads['errors'])} errors")
     lines = [
-        f"take {r['take']} of {r['session']} ({r['duration_s']:.1f} s), live model {r['model']}, "
-        f"reader in a {r['where']}, a read every {r['step_s']} s, model loaded in {r['load_s']:.1f} s",
+        f"take {r['take']} of {r['session']} ({r['duration_s']:.1f} s), live model {r['model']}, {how}",
         f"  words      {conf} of {said} note words said were confirmed live ({conf / max(said, 1):.0%})",
         f"  lag        median {lag['median']} s, p90 {lag['p90']} s, max {lag['max']} s "
         f"(confirmed minus the word's end)",
-        f"  reads      {r['reads']['runs']} windows, median {r['reads']['ms_median']} ms, "
-        f"p90 {r['reads']['ms_p90']} ms; {r['reads']['skipped_silent']} skipped as silent; "
-        f"{len(r['reads']['errors'])} errors",
+        f"  reads      {cost}",
     ]
     for c in s["sections"]["changes"]:
         when = f"{c['delay_s']:+.2f} s after the speaker got there" if c["verdict"] == "late" else \
@@ -305,9 +318,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("session", type=Path, nargs="?", help="a folder under sessions/")
     ap.add_argument("--take", type=int, default=1, help="take number (default 1)")
+    ap.add_argument("--engine", choices=("mlx-whisper", "apple"), default=SPEECH.backend, help="speech engine")
     ap.add_argument("--model", help=f"live Whisper model (default {SPEECH.live_model})")
-    ap.add_argument("--where", choices=("thread", "process"), default="process", help="where windows are read")
+    ap.add_argument("--where", choices=("thread", "process"), default=SPEECH.live_where,
+                    help="where Whisper reads windows")
     ap.add_argument("--step", type=float, help=f"seconds between window reads (default {SPEECH.live_step_s})")
+    ap.add_argument("--hints", action="store_true", help="give the engine the notes as phrases to expect (Apple)")
     ap.add_argument("--camera", type=float, metavar="SECONDS", help="also measure the frame rate, S s without live")
     ap.add_argument("--json", type=Path, help="save the results here")
     ap.add_argument("--words", action="store_true", help="print the live and post-take words")
@@ -344,10 +360,10 @@ def main() -> int:
     audio, rate = read_wav(session.dir / take.wav)
     audio = resample(audio, rate)
 
-    replay = Replay(audio, take.t_start, notes, args.model, args.where, session.language)
+    replay = Replay(audio, take.t_start, notes, args.engine, args.model, args.where, session.language, args.hints)
     load_s = replay.wait_ready()
     result = {"session": str(args.session), "take": take.number, "duration_s": replay.duration,
-              "model": replay.model, "where": args.where, "step_s": args.step or SPEECH.live_step_s,
+              "model": replay.model + (" +hints" if args.hints else ""), "where": replay.stream.where, "step_s": args.step or SPEECH.live_step_s,
               "load_s": round(load_s, 2)}
     try:
         if args.camera:
