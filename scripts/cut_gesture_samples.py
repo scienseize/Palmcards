@@ -47,18 +47,16 @@ SEGMENTS = [
      "Open palm held in the zone goes from Review back to Prepare.", None),
     ("rehearse-three-flicks", "20260925-101345", (129.0, 142.1), "rehearse",
      "Three flicks in a row, each one next section.", None),
-    # Recorded before a held fist started takes (milestone 4): fists held
-    # between or inside other gestures now start one by mistake.
-    ("known-slow-pinch-starts-take", "20260925-024808", (50.6, 58.3), "prepare",
+    # Recorded before a held fist started takes (milestone 4). Fists formed
+    # mid-gesture here used to start takes by mistake; only a fist raised
+    # into view as a fist counts now.
+    ("slow-pinch-is-not-a-take", "20260925-024808", (50.6, 58.3), "prepare",
      "Closing into a pinch: thumb on the index tip but the index barely reaching (1.03 palms), "
-     "so it reads as FIST for 1.8 s before PINCH.",
-     "A slow pinch reads as a fist long enough to start a take before the word focus."),
-    ("known-fist-between-gestures", "20260925-024808", (184.3, 193.9), "prepare",
-     "After a pinch the hand turns over (tilt ~145 deg) and rests closed for about a second.",
-     "A closed hand resting between gestures starts a take; nothing was meant to happen."),
-    ("known-flat-fold-starts-take", "20260925-024808", (213.7, 229.7), "prepare",
-     "Flat hand browsing paragraphs curls into a fist for 2.5 s before folding to focus and stretching.",
-     "A flat hand curling closed starts a take before the paragraph focus and stretch."),
+     "so it reads as FIST for 1.8 s before PINCH. Word focus, then back; no take.", None),
+    ("resting-fist-is-not-a-take", "20260925-024808", (184.3, 193.9), "prepare",
+     "After a pinch the hand turns over (tilt ~145 deg) and rests closed for about a second. Nothing happens.", None),
+    ("curling-flat-hand-is-not-a-take", "20260925-024808", (213.7, 229.7), "prepare",
+     "Flat hand browsing paragraphs curls into a fist for 2.5 s, then folds to focus and stretches; no take.", None),
 ]
 
 

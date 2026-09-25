@@ -1,11 +1,11 @@
 {
- "name": "known-fist-between-gestures",
- "description": "After a pinch the hand turns over (tilt ~145 deg) and rests closed for about a second.",
+ "name": "resting-fist-is-not-a-take",
+ "description": "After a pinch the hand turns over (tilt ~145 deg) and rests closed for about a second. Nothing happens.",
  "source": "20260925-024808.trace.jsonl",
  "window": [184.3, 193.9],
  "frame_size": [1280, 720],
  "start_mode": "prepare",
- "known_issue": "A closed hand resting between gestures starts a take; nothing was meant to happen.",
+ "known_issue": null,
  "expected": [],
  "frames": [
   {"t":0.014,"hands":[{"label":"Right","points":[436,728,448,677,478,644,514,637,540,644,506,630,565,603,567,615,555,631,531,662,600,648,592,660,573,670,547,694,611,683,600,691,582,697,553,724,603,716,597,720,583,726]}]},

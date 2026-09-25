@@ -19,14 +19,15 @@ the right of the frame; it steers the highlight in the text on the left.
   two L-hands (paragraph)  length stretch
   pinch + lift             commit (logged only, no text changes yet)
   drop the hand for 1 s    back out
-  closed fist held 1 s     start a take after a 3-2-1 count-in
+  fist raised into view, held 1 s
+                           start a take after a 3-2-1 count-in
 
 Rehearse listens only to the command zone, top right:
   flick sideways           next section
   open palm held 1.5 s     stop the take (or cancel the count-in), on to Review
 
 Review browses and focuses like Prepare, without the operations (verdicts
-come in milestone 6); a fist held 1 s starts a new take, an open palm held
+come in milestone 6); a fist raised and held 1 s starts a new take, an open palm held
 1.5 s in the command zone goes back to Prepare to edit before the next take.
 Each take is transcribed in the background as soon as it stops; the label
 shows TRANSCRIBING, then which sentences were spoken, and the terminal
@@ -138,8 +139,8 @@ class Takes:
             dots = "." * (int(time.perf_counter() * 2) % 4)
             return f"TAKE {self.transcriber.pending[0]}: TRANSCRIBING{dots:<3}"
         if mode == "review" and self.last_saved:
-            return f"{self.last_saved}  /  HOLD FIST: NEW TAKE"
-        return "HOLD FIST: START A TAKE"
+            return f"{self.last_saved}  /  RAISE A FIST: NEW TAKE"
+        return "RAISE A FIST: START A TAKE"
 
     def on_transcribed(self, result: dict) -> str:
         """A take's transcript and alignment arrived. Returns a label note."""

@@ -386,6 +386,40 @@ def test_fist_while_focused_does_not_start_a_take():
     assert "count_in" not in kinds(events) and m.mode == "prepare"
 
 
+def test_fist_formed_from_another_pose_does_not_start_a_take():
+    # Browsing, then closing the hand (a slow pinch, a hand resting closed):
+    # the fist wasn't raised as one, so it's not a request for a take.
+    for before in (one, flat, pinch):
+        m = ModeMachine((W, H))
+        events, t = run(m, hold(before, 0.5) + hold(fist, 2.5))
+        assert "count_in" not in kinds(events) and m.start_progress == 0.0, before.__name__
+
+
+def test_drop_the_hand_then_raise_a_fist_starts_a_take():
+    m = ModeMachine((W, H))
+    _, t = run(m, hold(one, 0.5) + hold(fist, 1.5))
+    assert m.mode == "prepare"
+    _, t = run(m, [None] * 12, t)  # 0.4 s out of view: a new hand
+    events, _ = run(m, hold(fist, 1.3), t)
+    assert kinds(events) == ["count_in"]
+
+
+def test_label_flip_is_not_a_new_hand():
+    # MediaPipe relabels Left/Right mid-move; the curled hand keeps its history.
+    m = ModeMachine((W, H))
+    frames = hold(one, 0.5, label="Left") + hold(fist, 0.3, label="Left") + hold(fist, 1.5, label="Right")
+    events, _ = run(m, frames)
+    assert "count_in" not in kinds(events)
+
+
+def test_a_fist_rising_through_none_still_counts():
+    m = ModeMachine((W, H))
+    v_sign = hand({8: (-70, -200), 12: (40, -200)})  # fingers spread: NONE
+    assert classify(features(v_sign)) == NONE
+    events, _ = run(m, [v_sign] * 8 + hold(fist, 1.3))
+    assert kinds(events) == ["count_in"]
+
+
 def rehearsing(m=None, t=0.0):
     m = m or ModeMachine((W, H))
     events, t = run(m, hold(fist, 1.3), t)

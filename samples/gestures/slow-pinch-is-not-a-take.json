@@ -1,11 +1,11 @@
 {
- "name": "known-slow-pinch-starts-take",
- "description": "Closing into a pinch: thumb on the index tip but the index barely reaching (1.03 palms), so it reads as FIST for 1.8 s before PINCH.",
+ "name": "slow-pinch-is-not-a-take",
+ "description": "Closing into a pinch: thumb on the index tip but the index barely reaching (1.03 palms), so it reads as FIST for 1.8 s before PINCH. Word focus, then back; no take.",
  "source": "20260925-024808.trace.jsonl",
  "window": [50.6, 58.3],
  "frame_size": [1280, 720],
  "start_mode": "prepare",
- "known_issue": "A slow pinch reads as a fist long enough to start a take before the word focus.",
+ "known_issue": null,
  "expected": [
   {"t": 4.78, "kind": "focus", "level": "word"},
   {"t": 7.551, "kind": "back", "level": "word"}

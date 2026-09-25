@@ -1,11 +1,11 @@
 {
- "name": "known-flat-fold-starts-take",
- "description": "Flat hand browsing paragraphs curls into a fist for 2.5 s before folding to focus and stretching.",
+ "name": "curling-flat-hand-is-not-a-take",
+ "description": "Flat hand browsing paragraphs curls into a fist for 2.5 s, then folds to focus and stretches; no take.",
  "source": "20260925-024808.trace.jsonl",
  "window": [213.7, 229.7],
  "frame_size": [1280, 720],
  "start_mode": "prepare",
- "known_issue": "A flat hand curling closed starts a take before the paragraph focus and stretch.",
+ "known_issue": null,
  "expected": [
   {"t": 5.429, "kind": "focus", "level": "paragraph"},
   {"t": 8.027, "kind": "op", "op": "stretch"},

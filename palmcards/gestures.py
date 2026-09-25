@@ -290,6 +290,9 @@ class HandTrack:
     def __init__(self):
         self.raw = NONE
         self.stable = NONE
+        # First stable pose other than NONE since the hand came into view: a
+        # take starts only from a fist raised as such, not one formed mid-gesture.
+        self.first_pose: str | None = None
         self.pinching = False
         self.pinch_start: float | None = None
         self.feat: Features | None = None
@@ -315,6 +318,8 @@ class HandTrack:
             self._cand, self._cand_since = self.raw, t
         if self._cand != self.stable and t - self._cand_since >= TIMING.stable_s - 1e-9:
             self.stable = self._cand
+            if self.first_pose is None and self.stable != NONE:
+                self.first_pose = self.stable
             events.append("pose")
 
         # FOLD: from TWO or FLAT, the extended fingertips converge on the
@@ -534,9 +539,16 @@ class Grammar:
         Returns the raw track events of each hand present this frame.
         """
         keyed = self._assign(hands)
+        present = {k for k, _ in keyed}
         track_events: dict[str, list[str]] = {}
         for key, hand in keyed:
-            track = self.tracks.setdefault(key, HandTrack())
+            if key not in self.tracks:
+                self.tracks[key] = track = HandTrack()
+                # MediaPipe flips a hand's label during fast moves: a "new" hand
+                # where one just vanished is the same hand, and keeps its history.
+                if (old := self._vanished_near(hand, present)) is not None:
+                    track.first_pose = old.first_pose
+            track = self.tracks[key]
             evs = track.update(hand, t, self.h)
             track_events[key] = evs
             for ev in evs:
@@ -544,7 +556,6 @@ class Grammar:
                     self.log(t, "pose", hand=key, pose=track.stable)
                 else:  # raw events; "pinch_lift" only becomes a commit when focused and armed
                     self.log(t, "pinch_lift" if ev == "commit" else ev, hand=key)
-        present = {k for k, _ in keyed}
         for key in [k for k, tr in self.tracks.items()
                     if k not in present and t - tr.last_seen > TIMING.browse_lost_s]:
             del self.tracks[key]
@@ -554,6 +565,16 @@ class Grammar:
         s.primary = self.tracks.get(self._primary_key) if self._primary_key in present else None
         s.secondary = next((self.tracks[k] for k, _ in keyed if k != self._primary_key), None)
         return track_events
+
+    def _vanished_near(self, hand: Hand, present: set[str]) -> HandTrack | None:
+        """A recently seen track, missing this frame, whose wrist was close to this hand's."""
+        for key, track in self.tracks.items():
+            if key in present or track.hand is None:
+                continue
+            gap = float(np.linalg.norm(track.hand.points[WRIST] - hand.points[WRIST]))
+            if gap < TIMING.handover_palms * hand.size:
+                return track
+        return None
 
     def _update_browse(self, t: float, primary_events: list[str], events: list[GestureEvent]) -> None:
         s, p = self.state, self.state.primary
@@ -876,8 +897,11 @@ class ModeMachine:
             self._enter(self._back_to, t)
 
     def _fist_held(self, t: float) -> bool:
+        """A fist raised into view as a fist, held. One formed from another pose
+        (a slow pinch, a flat hand curling, a hand resting closed between
+        gestures) doesn't count: those started takes by mistake."""
         p = self.grammar.state.primary
-        if p is None or p.stable != FIST or self.grammar.state.mode == "focus":
+        if p is None or p.stable != FIST or p.first_pose != FIST or self.grammar.state.mode == "focus":
             self._fist_since, self.start_progress = None, 0.0
             return False
         if self._fist_since is None:

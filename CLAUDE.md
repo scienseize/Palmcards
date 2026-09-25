@@ -57,10 +57,10 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 | Sentence | Two fingers together | Fold fingers to thumb | L-hand tilt = **tone dial** (tilt toward screen right = conversational/warm, left = formal/cold), dial is relative to the angle when the dial appears. Open palm: spread LLM-suggested delivery marks for this sentence, faded; L-hand points to toggle each | Pinch + lift |
 | Paragraph / section | Flat hand, fingers together | Fold fingers to thumb | Two L-hands: distance between index tips = **length** (apart = fuller, together = shorter), relative to the distance when both hands appear | Pinch + lift (either hand) |
 
-- Closed fist held 1 s from Prepare: start a take (enters Rehearse).
+- Closed fist raised into view and held 1 s from Prepare: start a take (enters Rehearse). The fist must be the hand's first pose since it came into view: a fist formed from another pose (a slow pinch, a flat hand curling, a hand resting closed between gestures) never starts a take. To start one while browsing, drop the hand and raise a fist.
 
 ### Rehearse (locked except inside a command zone, top-right of the frame)
-- Closed fist held 1 s: start take after 3-2-1 count-in
+- Closed fist raised and held 1 s: start take after 3-2-1 count-in
 - Flick inside zone: next section (a sideways swing of the hand, usually from the wrist). From milestone 6b the notes follow your voice on their own and the flick is the manual override.
 - Open palm inside zone held 1.5 s: stop take (goes to Review)
 - All other hand movement is logged as data (gesture amount, fidgeting, face touching), never treated as a command.
@@ -70,7 +70,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 - Fold to focus: full verdicts for that sentence (marks hit/missed/unclear, pace, fillers, gaze)
 - L-hand tilt: dial through takes (take 1, 2, 3...) for the focused sentence
 - Pinch + lift on a focused sentence: drill it (loop just that sentence as a mini take)
-- Closed fist held 1 s: new full take
+- Closed fist raised and held 1 s: new full take
 - Open palm inside the command zone held 1.5 s: back to Prepare, to edit before the next take (the zone is shown in Review with this hint)
 
 ### Gesture classification (rules on MediaPipe hand landmarks, no training needed)

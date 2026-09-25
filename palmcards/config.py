@@ -45,7 +45,10 @@ class Timing:
     # height counts as gone. Not the wrist: at chest height the wrist is
     # often at or below the bottom edge of a laptop camera's frame.
     drop_band: float = 0.9
-    browse_lost_s: float = 0.3  # hand gone this long while browsing = idle
+    browse_lost_s: float = 0.3  # hand gone this long while browsing = idle; its track is forgotten
+    # A hand appearing within this many palms of one that just vanished is the
+    # same hand under a flipped left/right label.
+    handover_palms: float = 1.5
 
 
 @dataclass(frozen=True)
