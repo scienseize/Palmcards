@@ -19,6 +19,11 @@ large 3-2-1 during the count-in. A drill shows just its one sentence.
 In Review each delivery mark is drawn as a chip coloured by its verdict in
 the take that sentence shows (green hit, red missed, grey unclear; a skipped
 mark stays faint text), and a focused sentence lists its verdicts under it.
+
+Also here, so that every visual is drawn in one module: the fingertip dots,
+the debug drawings (landmarks, hand box, zone outline, text readouts), the
+stats line, and the take player's caption and timeline strip. How all of it
+looks (colours, fonts, sizes, spacing, positions) is in palmcards/style.py.
 """
 
 from __future__ import annotations
@@ -28,46 +33,26 @@ import re
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from palmcards.config import REHEARSE
+from palmcards.config import CURSOR, REHEARSE
+from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
 from palmcards.notes import MarkKind, Sentence
+from palmcards.style import (
+    CHIPS, COLORS, COUNT_IN, DEBUG, DETAIL, GAUGE, HANDS, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
+)
 
-FONT_CANDIDATES = [
-    "/System/Library/Fonts/Menlo.ttc",
-    "/System/Library/Fonts/SFNSMono.ttf",
-    "/Library/Fonts/Courier New.ttf",
-]
+if TYPE_CHECKING:
+    from palmcards.gestures import CommandZone, GestureState, Hand, RelativeCursor
 
-ORANGE = (255, 140, 0, 255)
-ORANGE_MARK = (255, 140, 0, 150)
-DIM = (220, 220, 220, 110)
-DIM_MARK = (220, 220, 220, 60)
-FAINT = (220, 220, 220, 45)
-FAINT_MARK = (220, 220, 220, 25)
-FOCUS_TEXT = (245, 245, 245, 255)
-FOCUS_MARK = (245, 245, 245, 140)
-CHIP_FILL = (255, 140, 0, 235)
-CHIP_TEXT = (20, 20, 20, 255)
-DARK_FILL = (15, 15, 18, 215)
-NODE_TEXT = (240, 240, 240, 255)
-NODE_OUTLINE = (240, 240, 240, 200)
-BACKING = (10, 10, 12, 150)
-YELLOW_BGR = (0, 215, 255)
-COLD_BGR = (255, 150, 60)
-WARM_BGR = (0, 140, 255)
-ZONE_BGR = (170, 170, 170)
-REC_BGR = (60, 60, 230)
-VERDICT_FILL = {"hit": (95, 205, 115), "missed": (240, 90, 75), "unclear": (160, 160, 160)}  # RGB
-DETAIL_TEXT = (235, 235, 235, 235)
-DETAIL_SCALE = 0.7  # verdict lines under a focused sentence, relative to the text
-
+C = COLORS
+CLEAR = (0, 0, 0, 0)
 PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
-FOCUS_SCALES = (1.3, 1.15, 1.0)  # largest that fits the text box wins
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
 RING_PLACEHOLDERS = ("alt 1", "alt 2", "alt 3", "stress", "hear it")  # node 0 is the original word
 FOCUS_HINTS = {
@@ -78,7 +63,7 @@ FOCUS_HINTS = {
 
 
 def load_font(size: int) -> ImageFont.ImageFont:
-    for path in FONT_CANDIDATES:
+    for path in TEXT.fonts:
         if Path(path).exists():
             return ImageFont.truetype(path, size)
     return ImageFont.load_default(size)
@@ -205,13 +190,13 @@ class TextOverlay:
         self,
         sentences: list[Sentence],
         frame_size: tuple[int, int],
-        columns: int = 34,
-        visible_rows: int = 5,
+        columns: int = TEXT.columns,
+        visible_rows: int = TEXT.visible_rows,
     ):
         self.sentences = sentences
         self.visible_rows = visible_rows
         self.frame_w, self.frame_h = w, h = frame_size
-        self.font_size = max(18, h // 26)
+        self.font_size = max(TEXT.min_size, h // TEXT.rows_per_frame)
         self.font = load_font(self.font_size)
         self._fonts = {self.font_size: self.font}
         self.rows = layout(sentences, columns)
@@ -226,7 +211,7 @@ class TextOverlay:
                     self._word_pos[Hit(r.sentence, sp.word)] = (i, col, len(sp.text))
 
         ascent, descent = self.font.getmetrics()
-        self.line_h = int((ascent + descent) * 1.45)
+        self.line_h = int((ascent + descent) * TEXT.line_spacing)
         self.char_w = self.font.getlength("M")
         self.pad = self.line_h // 2
         self.blur = self.pad // 2
@@ -239,7 +224,7 @@ class TextOverlay:
         self.patch_h = self.box_h + 2 * self.margin
 
         # Float on the left third, vertically centered.
-        self.x = max(0, int(w * 0.05) - self.margin)
+        self.x = max(0, int(w * TEXT.left) - self.margin)
         self.y = max(0, (h - self.patch_h) // 2)
 
         self._backings: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -328,7 +313,7 @@ class TextOverlay:
             return None
         x0 = self.x + self.margin + self.pad + col * self.char_w
         y0 = self.y + self.margin + y
-        return x0, y0, x0 + length * self.char_w, y0 + self.line_h * 0.8
+        return x0, y0, x0 + length * self.char_w, y0 + self.line_h * TEXT.word_box_h
 
     # --- labels ------------------------------------------------------------
 
@@ -396,10 +381,10 @@ class TextOverlay:
 
     def _backing(self, box_h: int) -> tuple[np.ndarray, np.ndarray]:
         if box_h not in self._backings:
-            img = Image.new("RGBA", (self.patch_w, box_h + 2 * self.margin), (0, 0, 0, 0))
+            img = Image.new("RGBA", (self.patch_w, box_h + 2 * self.margin), CLEAR)
             m = self.margin
             ImageDraw.Draw(img).rounded_rectangle(
-                (m, m, m + self.box_w, m + box_h), radius=self.pad, fill=BACKING
+                (m, m, m + self.box_w, m + box_h), radius=self.pad, fill=C.backing
             )
             self._backings[box_h] = _premultiply(img.filter(ImageFilter.GaussianBlur(self.blur)))
         return self._backings[box_h]
@@ -422,31 +407,32 @@ class TextOverlay:
         """A word, punctuation, or a mark; a judged mark on a chip of its verdict's colour."""
         if sp.role != "mark":
             draw.text(xy, sp.text, font=font, fill=word_c)
-        elif verdict in VERDICT_FILL:
+        elif verdict in C.verdict:
             x0, y0, x1, y1 = draw.textbbox(xy, sp.text, font=font)
-            pad = max(2, font.size // 8)
-            alpha = max(70, min(235, word_c[3] * 2))  # as prominent as the words around it
+            pad = max(CHIPS.verdict_pad[0], font.size // CHIPS.verdict_pad[1])
+            lo, hi = CHIPS.verdict_alpha  # as prominent as the words around it
+            alpha = max(lo, min(hi, word_c[3] * CHIPS.verdict_alpha_gain))
             draw.rounded_rectangle((x0 - pad, y0 - pad, x1 + pad, y1 + pad), radius=pad + 1,
-                                   fill=(*VERDICT_FILL[verdict], alpha))
-            draw.text(xy, sp.text, font=font, fill=(20, 20, 20, alpha))
+                                   fill=(*C.verdict[verdict], alpha))
+            draw.text(xy, sp.text, font=font, fill=(*C.chip_text[:3], alpha))
         elif verdict == "skipped":
-            draw.text(xy, sp.text, font=font, fill=FAINT_MARK)
+            draw.text(xy, sp.text, font=font, fill=C.faint_mark)
         else:
             draw.text(xy, sp.text, font=font, fill=mark_c)
 
     def _render_band(self, style: tuple, start: int) -> tuple[np.ndarray, np.ndarray]:
         """Rows start..start+band_rows, with row `start` at y = pad."""
         band_h = self.band_rows * self.line_h + 2 * self.pad
-        text = Image.new("RGBA", (self.box_w, band_h), (0, 0, 0, 0))
+        text = Image.new("RGBA", (self.box_w, band_h), CLEAR)
         draw = ImageDraw.Draw(text)
         kind, which, verdicts = style
         for ri in range(start, min(len(self.rows), start + self.band_rows)):
             row = self.rows[ri]
             y = self.pad + (ri - start) * self.line_h
             if kind == "focus":  # word focus: its sentence dim, the rest fainter
-                word_c, mark_c = (DIM, DIM_MARK) if row.sentence == which else (FAINT, FAINT_MARK)
+                word_c, mark_c = (C.dim, C.dim_mark) if row.sentence == which else (C.faint, C.faint_mark)
             else:
-                word_c, mark_c = (ORANGE, ORANGE_MARK) if row.sentence in which else (DIM, DIM_MARK)
+                word_c, mark_c = (C.orange, C.orange_mark) if row.sentence in which else (C.dim, C.dim_mark)
             for col, sp in row.spans:
                 self._draw_span(draw, (self.pad + col * self.char_w, y), sp, self.font, word_c, mark_c,
                                 self._verdict(verdicts, row.sentence, sp))
@@ -492,15 +478,15 @@ class TextOverlay:
         if self._panel_key == key:
             return self._panel
         sents = [self.sentences[i] for i in unit]
-        dfont = self._get_font(round(self.font_size * DETAIL_SCALE))
-        dlh = round(self.line_h * DETAIL_SCALE)
+        dfont = self._get_font(round(self.font_size * DETAIL.scale))
+        dlh = round(self.line_h * DETAIL.scale)
         bullet = dlh // 2
-        dcols = max(10, int((self.box_w - 2 * self.pad - bullet * 2) / dfont.getlength("M")))
+        dcols = max(DETAIL.min_columns, int((self.box_w - 2 * self.pad - bullet * 2) / dfont.getlength("M")))
         dlines = [(verdict if k == 0 else "", piece) for verdict, line in detail
-                  for k, piece in enumerate(textwrap.wrap(line, dcols, subsequent_indent="  ") or [""])]
+                  for k, piece in enumerate(textwrap.wrap(line, dcols, subsequent_indent=DETAIL.indent) or [""])]
         detail_h = len(dlines) * dlh + (self.pad // 2 if dlines else 0)
         avail = self.box_h - 2 * self.pad - detail_h
-        for scale in FOCUS_SCALES:
+        for scale in TEXT.focus_scales:
             font = self._get_font(round(self.font_size * scale))
             lh = round(self.line_h * scale)
             cw = font.getlength("M")
@@ -508,7 +494,7 @@ class TextOverlay:
             if len(rows) * lh <= avail:
                 break
         big_h = len(rows) * lh
-        panel_h = max(self.box_h, min(big_h + detail_h + 2 * self.pad, int(self.frame_h * 0.9)))
+        panel_h = max(self.box_h, min(big_h + detail_h + 2 * self.pad, int(self.frame_h * TEXT.panel_max_h)))
         spare = panel_h - 2 * self.pad - big_h - detail_h
         first, last = self._first_row[unit[0]], self._last_row[unit[-1]]
         above = self.rows[max(0, first - int(spare / 2 // self.line_h)) : first]
@@ -516,7 +502,7 @@ class TextOverlay:
         content = (len(above) + len(below)) * self.line_h + big_h + detail_h
         y = self.pad + max(0, (panel_h - 2 * self.pad - content) // 2)
 
-        img = Image.new("RGBA", (self.box_w, panel_h), (0, 0, 0, 0))
+        img = Image.new("RGBA", (self.box_w, panel_h), CLEAR)
         draw = ImageDraw.Draw(img)
 
         def draw_rows(rows_, font_, lh_, cw_, word_c, mark_c, y_, sentence_of=lambda r: r.sentence):
@@ -527,19 +513,19 @@ class TextOverlay:
                 y_ += lh_
             return y_
 
-        y = draw_rows(above, self.font, self.line_h, self.char_w, FAINT, FAINT_MARK, y)
+        y = draw_rows(above, self.font, self.line_h, self.char_w, C.faint, C.faint_mark, y)
         # The enlarged rows were laid out afresh: their sentence numbers count from the unit's first.
-        y = draw_rows(rows, font, lh, cw, FOCUS_TEXT, FOCUS_MARK, y, lambda r: unit[r.sentence])
+        y = draw_rows(rows, font, lh, cw, C.focus_text, C.focus_mark, y, lambda r: unit[r.sentence])
         if dlines:
             y += self.pad // 2
             for verdict, piece in dlines:
-                if verdict in VERDICT_FILL:
-                    cy = y + dlh * 0.45
+                if verdict in C.verdict:
+                    cy = y + dlh * DETAIL.bullet_y
                     draw.ellipse((self.pad, cy - bullet / 3, self.pad + bullet * 2 / 3, cy + bullet / 3),
-                                 fill=(*VERDICT_FILL[verdict], 255))
-                draw.text((self.pad + bullet, y), piece, font=dfont, fill=DETAIL_TEXT)
+                                 fill=(*C.verdict[verdict], 255))
+                draw.text((self.pad + bullet, y), piece, font=dfont, fill=C.detail_text)
                 y += dlh
-        draw_rows(below, self.font, self.line_h, self.char_w, FAINT, FAINT_MARK, y)
+        draw_rows(below, self.font, self.line_h, self.char_w, C.faint, C.faint_mark, y)
         self._panel_key, self._panel = key, (panel_h, _premultiply(img))
         return self._panel
 
@@ -551,12 +537,13 @@ class TextOverlay:
                 self._chips.clear()
             font = self._get_font(size)
             ascent, descent = font.getmetrics()
-            px, py = max(4, size // 4), max(2, size // 8)
+            px, py = max(CHIPS.pad_x[0], size // CHIPS.pad_x[1]), max(CHIPS.pad_y[0], size // CHIPS.pad_y[1])
             w, h = int(font.getlength(text)) + 2 * px, ascent + descent + 2 * py
-            img = Image.new("RGBA", (w + 2, h + 2), (0, 0, 0, 0))
+            img = Image.new("RGBA", (w + 2, h + 2), CLEAR)
             draw = ImageDraw.Draw(img)
             if bg is not None or outline is not None:
-                draw.rounded_rectangle((1, 1, w, h), radius=max(3, size // 5), fill=bg, outline=outline)
+                radius = max(CHIPS.radius[0], size // CHIPS.radius[1])
+                draw.rounded_rectangle((1, 1, w, h), radius=radius, fill=bg, outline=outline)
             draw.text((1 + px, 1 + py), text, font=font, fill=fg)
             self._chips[key] = _premultiply(img)
         return self._chips[key]
@@ -572,11 +559,11 @@ class TextOverlay:
 
     def _draw_label(self, frame: np.ndarray, state: ViewState, top: int) -> None:
         first, second = self.label_lines(state)
-        big, small = round(self.font_size * 0.9), round(self.font_size * 0.7)
-        c1 = self._chip(first, big, ORANGE, None)
-        c2 = self._chip(second, small, ORANGE_MARK, None) if second else None
+        big, small = round(self.font_size * LABEL.first_scale), round(self.font_size * LABEL.second_scale)
+        c1 = self._chip(first, big, C.orange, None)
+        c2 = self._chip(second, small, C.orange_mark, None) if second else None
         h = c1[0].shape[0] + (c2[0].shape[0] if c2 else 0)
-        x, y = self.x + self.margin + self.pad // 2, max(4, top - h - self.pad // 2)
+        x, y = self.x + self.margin + self.pad // 2, max(LABEL.min_top, top - h - self.pad // 2)
         _blend(frame, x, y, *c1)
         if c2:
             _blend(frame, x, y + c1[0].shape[0], *c2)
@@ -584,12 +571,12 @@ class TextOverlay:
     def _draw_ring(self, frame: np.ndarray, state: ViewState, center: tuple[float, float]) -> None:
         labels = self.ring_labels(state)
         n = len(labels)
-        rx, ry = 4.4 * self.line_h, 2.6 * self.line_h
-        size = round(self.font_size * 0.85)
+        rx, ry = RING.rx * self.line_h, RING.ry * self.line_h
+        size = round(self.font_size * RING.node_scale)
         # Centre the ring on the word, shifted so every node stays on screen;
         # the connectors still start at the word.
-        widest = max(self._chip(label, size, NODE_TEXT, DARK_FILL, NODE_OUTLINE)[0].shape[1] for label in labels)
-        edge = rx + widest / 2 + 8
+        widest = max(self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)[0].shape[1] for label in labels)
+        edge = rx + widest / 2 + RING.edge_px
         rcx = min(max(center[0], edge), self.frame_w - edge)
         rcy = min(max(center[1], ry + self.line_h), self.frame_h - ry - self.line_h)
         cx, cy = center
@@ -598,44 +585,48 @@ class TextOverlay:
             nx, ny = rcx + rx * math.cos(a), rcy + ry * math.sin(a)
             # Curved connector: quadratic Bezier bowed to one side.
             mx, my = (cx + nx) / 2, (cy + ny) / 2
-            ctrl = (mx - (ny - cy) * 0.25, my + (nx - cx) * 0.25)
-            ts = np.linspace(0, 1, 16)[:, None]
+            ctrl = (mx - (ny - cy) * RING.bow, my + (nx - cx) * RING.bow)
+            ts = np.linspace(0, 1, RING.curve_points)[:, None]
             curve = (1 - ts) ** 2 * np.array(center) + 2 * (1 - ts) * ts * np.array(ctrl) + ts ** 2 * np.array((nx, ny))
-            cv2.polylines(frame, [curve.astype(np.int32)], False, YELLOW_BGR, 2 if i == state.ops.picked else 1, cv2.LINE_AA)
+            stroke = RING.picked_stroke if i == state.ops.picked else RING.stroke
+            cv2.polylines(frame, [curve.astype(np.int32)], False, bgr(C.yellow), stroke, cv2.LINE_AA)
             if i == state.ops.picked:
-                chip = self._chip(label, size, CHIP_TEXT, CHIP_FILL)
+                chip = self._chip(label, size, C.chip_text, C.chip_fill)
             else:
-                chip = self._chip(label, size, NODE_TEXT, DARK_FILL, NODE_OUTLINE)
+                chip = self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)
             self._blend_centered(frame, chip, nx, ny)
 
     def _draw_gauge(self, frame: np.ndarray, tone: float, top: int, bottom: int) -> None:
         """Vertical tone dial: cold (blue) at the top, warm (orange) at the bottom."""
         x = int(self.x + self.margin + self.box_w + self.pad)
         y0, y1 = top + self.pad, bottom - self.pad
-        for y in range(y0, y1, 2):
+        for y in range(y0, y1, GAUGE.step_px):
             k = (y - y0) / max(1, y1 - y0)
-            color = tuple(int(c * (1 - k) + w * k) for c, w in zip(COLD_BGR, WARM_BGR))
-            cv2.line(frame, (x, y), (x, y + 1), color, 4)
+            color = tuple(int(c * (1 - k) + w * k) for c, w in zip(bgr(C.cold), bgr(C.warm)))
+            cv2.line(frame, (x, y), (x, y + 1), color, GAUGE.width)
         ky = int(y0 + (tone + 1) / 2 * (y1 - y0))
-        cv2.circle(frame, (x, ky), 8, (20, 20, 20), -1, cv2.LINE_AA)
-        cv2.circle(frame, (x, ky), 8, (245, 245, 245), 2, cv2.LINE_AA)
+        cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_fill), -1, cv2.LINE_AA)
+        cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_outline), GAUGE.knob_outline, cv2.LINE_AA)
 
     def _draw_zone(self, frame: np.ndarray, state: ViewState) -> None:
         """Command zone: outline, recording clock and mic level, hints, flick and hold progress."""
         zx0, zy0, zx1, zy1 = REHEARSE.zone
         x0, y0 = int(zx0 * self.frame_w), int(zy0 * self.frame_h)
-        x1, y1 = int(zx1 * self.frame_w) - 2, int(zy1 * self.frame_h)
+        x1, y1 = int(zx1 * self.frame_w) - ZONE.inset_right, int(zy1 * self.frame_h)
         active = state.zone_active
-        cv2.rectangle(frame, (x0, y0 + 1), (x1, y1), YELLOW_BGR if active else ZONE_BGR, 2 if active else 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (x0, y0 + ZONE.inset_top), (x1, y1), bgr(C.yellow if active else C.zone),
+                      ZONE.active_stroke if active else ZONE.stroke, cv2.LINE_AA)
 
-        size = round(self.font_size * 0.6)
+        size = round(self.font_size * ZONE.hint_scale)
         cx, y = (x0 + x1) / 2, y0 + self.pad
         if state.app == "rehearse":
             m, s = divmod(int(state.rec_s), 60)
-            chip = self._chip(f"REC {m}:{s:02d}", round(self.font_size * 0.75), NODE_TEXT, DARK_FILL)
-            bx0, by0, _, by1 = self._blend_centered(frame, chip, cx + 10, y + chip[0].shape[0] / 2)
+            chip = self._chip(f"REC {m}:{s:02d}", round(self.font_size * ZONE.rec_scale), C.node_text, C.dark_fill)
+            bx0, by0, _, by1 = self._blend_centered(frame, chip, cx + ZONE.rec_dx, y + chip[0].shape[0] / 2)
             # The dot swells with the microphone level: a flat dot means no sound is arriving.
-            cv2.circle(frame, (bx0 - 14, (by0 + by1) // 2), 4 + round(8 * state.mic), REC_BGR, -1, cv2.LINE_AA)
+            r0, grow = ZONE.mic_r
+            cv2.circle(frame, (bx0 - ZONE.mic_dx, (by0 + by1) // 2), r0 + round(grow * state.mic), bgr(C.rec), -1,
+                       cv2.LINE_AA)
             y = by1 + self.pad // 2
             hints = ("HOLD OPEN PALM: STOP",) if state.drill is not None else \
                 ("FLICK SIDEWAYS: NEXT SECTION", "HOLD OPEN PALM: STOP")
@@ -644,19 +635,22 @@ class TextOverlay:
         else:
             hints = ("HOLD OPEN PALM: BACK TO PREPARE",)
         for text in hints:
-            chip = self._chip(text, size, NODE_TEXT if active else DIM, DARK_FILL)
-            y = self._blend_centered(frame, chip, cx, y + chip[0].shape[0] / 2)[3] + 4
+            chip = self._chip(text, size, C.node_text if active else C.dim, C.dark_fill)
+            y = self._blend_centered(frame, chip, cx, y + chip[0].shape[0] / 2)[3] + ZONE.hint_gap
 
         if state.app == "rehearse":
             # Flick meter: fills as the hand swings sideways, so a near miss shows.
-            my, half = y1 - 30, (x1 - x0) // 2 - 12
-            cv2.line(frame, (int(cx - half), my), (int(cx + half), my), ZONE_BGR, 1, cv2.LINE_AA)
+            my, half = y1 - ZONE.flick_dy, (x1 - x0) // 2 - ZONE.flick_inset
+            cv2.line(frame, (int(cx - half), my), (int(cx + half), my), bgr(C.zone), ZONE.flick_stroke, cv2.LINE_AA)
             if state.flick_progress > 0:
                 reach = int(half * state.flick_progress)
-                cv2.line(frame, (int(cx - reach), my), (int(cx + reach), my), YELLOW_BGR, 4, cv2.LINE_AA)
+                cv2.line(frame, (int(cx - reach), my), (int(cx + reach), my), bgr(C.yellow), ZONE.flick_fill,
+                         cv2.LINE_AA)
         if state.hold_progress > 0:
-            cv2.rectangle(frame, (x0 + 6, y1 - 12), (x0 + 6 + int((x1 - x0 - 12) * state.hold_progress), y1 - 6),
-                          YELLOW_BGR, -1, cv2.LINE_AA)
+            inset = ZONE.hold_inset
+            width = int((x1 - x0 - 2 * inset) * state.hold_progress)
+            cv2.rectangle(frame, (x0 + inset, y1 - ZONE.hold_top), (x0 + inset + width, y1 - ZONE.hold_bottom),
+                          bgr(C.yellow), -1, cv2.LINE_AA)
 
     def draw(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
         """Composite the overlay onto `frame` in place and return it."""
@@ -676,7 +670,8 @@ class TextOverlay:
         # Word chips are drawn over the cached band, so hovering never re-renders text.
         if state.mode == "browse" and state.level == "word" and state.hover and state.hover.word is not None:
             if (box := self.word_box(state.hover, state.scroll)) is not None:
-                chip = self._chip(self.word_text(state.hover), self.font_size, CHIP_TEXT, CHIP_FILL)
+                chip = self._chip(self.word_text(state.hover), round(self.font_size * CHIPS.hover_scale),
+                                  C.chip_text, C.chip_fill)
                 self._blend_centered(frame, chip, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
         if state.mode == "focus" and state.level == "word" and state.focus and state.focus.word is not None:
             if (box := self.word_box(state.focus, state.scroll)) is not None:
@@ -684,23 +679,120 @@ class TextOverlay:
                 if state.ops.kind == "ring":
                     self._draw_ring(frame, state, center)
                 text = self.ring_labels(state)[state.ops.picked] if state.ops.kind == "ring" else self.word_text(state.focus)
-                chip = self._chip(text, round(self.font_size * 1.3), ORANGE, DARK_FILL)
+                chip = self._chip(text, round(self.font_size * CHIPS.focus_scale), C.orange, C.dark_fill)
                 self._blend_centered(frame, chip, *center)
 
         if state.mode == "focus" and state.ops.kind == "tone":
             self._draw_gauge(frame, state.ops.tone, top, bottom)
         if state.mode == "focus" and state.ops.stretch_ends is not None:
             a, b = (tuple(int(v) for v in p) for p in state.ops.stretch_ends)
-            cv2.line(frame, a, b, (245, 245, 245), 2, cv2.LINE_AA)
+            cv2.line(frame, a, b, bgr(C.stretch_line), HANDS.stretch_stroke, cv2.LINE_AA)
         if state.app in ("count_in", "rehearse", "review"):
             self._draw_zone(frame, state)
         if state.app == "count_in" and state.count_in > 0:
             # In the clear space between the notes and the right edge, below the zone.
-            chip = self._chip(str(state.count_in), self.font_size * 5, ORANGE, None)
+            chip = self._chip(str(state.count_in), round(self.font_size * COUNT_IN.scale), C.orange, None)
             right = self.x + self.margin + self.box_w
-            self._blend_centered(frame, chip, (right + self.frame_w) / 2, self.frame_h * 0.65)
+            self._blend_centered(frame, chip, (right + self.frame_w) / 2, self.frame_h * COUNT_IN.y)
         self._draw_label(frame, state, top)
         return frame
+
+    # --- drawing: the take player ------------------------------------------
+
+    def draw_caption(self, frame: np.ndarray, words: list[tuple[str, str, bool]]) -> None:
+        """A row of word chips under the text, left to right, until the frame's
+        edge: (text, kind, being said now), kind as in PLAYER.caption."""
+        size = round(self.font_size * PLAYER.caption_scale)
+        x, y = self.x + self.margin, int(self.frame_h * PLAYER.caption_y)
+        for text, kind, current in words:
+            chip = self._chip(text, size, PLAYER.caption[kind], PLAYER.caption_current if current else None)
+            w = chip[0].shape[1]
+            if x + w > self.frame_w - PLAYER.caption_right:
+                break
+            self._blend_centered(frame, chip, x + w / 2, y)
+            x += w + PLAYER.caption_gap
+
+
+def draw_strip(frame: np.ndarray, spans: list[tuple[float, float, str]], sections: list[float],
+               fillers: list[float], restarts: list[float], t: float, duration: float) -> None:
+    """The take player's timeline along the bottom: sentence spans coloured by
+    status, section changes, filler and restart ticks, the playhead. Times
+    are seconds into the take."""
+    P = PLAYER
+    h, w = frame.shape[:2]
+    x0, x1 = P.strip_x, w - P.strip_x
+    y0, y1 = h - P.strip_top, h - P.strip_bottom
+
+    def x_at(tt: float) -> int:
+        return int(x0 + (x1 - x0) * min(max(tt / max(duration, 1e-6), 0.0), 1.0))
+
+    cv2.rectangle(frame, (x0, y0), (x1, y1), bgr(P.strip_frame), 1)
+    for start, end, status in spans:
+        cv2.rectangle(frame, (x_at(start), y0 + P.span_inset), (max(x_at(end), x_at(start) + 1), y1 - P.span_inset),
+                      bgr(P.status.get(status, P.status_other)), -1)
+    above, below = P.section_over
+    for tt in sections:
+        cv2.line(frame, (x_at(tt), y0 - above), (x_at(tt), y1 + below), bgr(P.section), 1)
+    for times, color in ((fillers, P.filler), (restarts, P.restart)):
+        for tt in times:
+            cv2.line(frame, (x_at(tt), y1), (x_at(tt), y1 + P.tick_h), bgr(color), P.tick_stroke)
+    cv2.line(frame, (x_at(t), y0 - P.playhead_over), (x_at(t), y1 + P.playhead_over), bgr(P.playhead),
+             P.playhead_stroke)
+
+
+# --- drawing: hands, debug and stats (OpenCV, straight onto the frame) ------
+
+def draw_fingertips(frame: np.ndarray, state: GestureState) -> None:
+    """Yellow dot on the active fingertip, small dots on the rest; cyan for a second hand."""
+    for track, color in ((state.secondary, C.cyan), (state.primary, C.yellow)):
+        if track is None or track.hand is None:
+            continue
+        for i in TIPS:
+            c = tuple(int(v) for v in track.hand.points[i])
+            cv2.circle(frame, c, HANDS.active_tip_r if i == INDEX_TIP else HANDS.tip_r, bgr(color), -1, cv2.LINE_AA)
+
+
+def draw_landmarks(frame: np.ndarray, hand: Hand) -> None:
+    """Debug: the hand's skeleton."""
+    pts = hand.points.astype(int)
+    for a, b in HAND_CONNECTIONS:
+        cv2.line(frame, tuple(pts[a]), tuple(pts[b]), bgr(C.landmark_line), HANDS.landmark_stroke, cv2.LINE_AA)
+    for p in pts:
+        cv2.circle(frame, tuple(p), HANDS.landmark_r, bgr(C.landmark_point), -1, cv2.LINE_AA)
+
+
+def draw_hand_box(frame: np.ndarray, cursor: RelativeCursor) -> None:
+    """Debug: the hand box, its scroll bands, and where the cursor sits in it."""
+    x0, y0, x1, y1 = (int(v) for v in cursor.box)
+    band = int((y1 - y0) * CURSOR.edge_band)
+    cv2.rectangle(frame, (x0, y0), (x1, y1), bgr(C.debug_box), HANDS.box_stroke, cv2.LINE_AA)
+    for y in (y0 + band, y1 - band):
+        cv2.line(frame, (x0, y), (x1, y), bgr(C.debug_band), HANDS.box_stroke, cv2.LINE_AA)
+    if cursor.uv is not None:
+        u, v = cursor.uv
+        cv2.circle(frame, (int(x0 + u * (x1 - x0)), int(y0 + v * (y1 - y0))), HANDS.cursor_r, bgr(C.debug_box),
+                   HANDS.box_stroke, cv2.LINE_AA)
+
+
+def draw_zone_outline(frame: np.ndarray, zone: CommandZone) -> None:
+    """Debug: the command zone as the gesture code sees it."""
+    x0, y0, x1, y1 = (int(v) for v in zone.box)
+    cv2.rectangle(frame, (x0, y0), (x1 - 1, y1), bgr(C.yellow if zone.active else C.debug_box), HANDS.box_stroke,
+                  cv2.LINE_AA)
+
+
+def draw_stats(frame: np.ndarray, text: str) -> None:
+    """Frame rate and latency, bottom right."""
+    h, w = frame.shape[:2]
+    cv2.putText(frame, text, (w - DEBUG.stats_from_right, h - DEBUG.stats_from_bottom), cv2.FONT_HERSHEY_SIMPLEX,
+                DEBUG.stats_scale, bgr(C.stats), DEBUG.stats_thickness, cv2.LINE_AA)
+
+
+def draw_debug_text(frame: np.ndarray, lines: list[str]) -> None:
+    """Lines of readout from the top left (python -m palmcards.gestures)."""
+    for i, text in enumerate(lines):
+        cv2.putText(frame, text, (DEBUG.text_x, DEBUG.text_y + DEBUG.text_dy * i), cv2.FONT_HERSHEY_SIMPLEX,
+                    DEBUG.text_scale, bgr(C.debug_text), DEBUG.text_thickness, cv2.LINE_AA)
 
 
 def _bar(progress: float, width: int = 10) -> str:

@@ -63,12 +63,12 @@ import cv2
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import SPEECH
-from palmcards.gestures import (
-    GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine,
-    draw_fingertips, draw_hand_box, draw_landmarks, draw_zone,
-)
+from palmcards.gestures import GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.notes import Notes, load_notes
-from palmcards.render import Hit, OpsView, TextOverlay, ViewState
+from palmcards.render import (
+    Hit, OpsView, TextOverlay, ViewState,
+    draw_fingertips, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
+)
 from palmcards.review import Board
 from palmcards.session import Session
 from palmcards.speech import Transcriber, make_job
@@ -374,7 +374,7 @@ def main() -> int:
             overlay.draw(frame, view)
             if show_debug:
                 if view.app != "prepare":
-                    draw_zone(frame, modes.zone)
+                    draw_zone_outline(frame, modes.zone)
                 else:
                     draw_hand_box(frame, grammar.cursor)
                 for track in (grammar.state.primary, grammar.state.secondary):
@@ -390,8 +390,7 @@ def main() -> int:
             # hands: tracker latency; work: our per-frame processing.
             stats = (f"cam {camera.fps:4.1f}  shown {fps:4.1f} fps  "
                      f"hands {tracker.latency_ms:4.1f} ms  work {work_ms:4.1f} ms")
-            cv2.putText(frame, stats, (w - 560, h - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
+            draw_stats(frame, stats)
 
             cv2.imshow(WINDOW, frame)
             key = cv2.waitKey(1) & 0xFF

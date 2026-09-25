@@ -239,7 +239,8 @@ palmcards/
 │   ├── notes.py         # file loading, sections/sentences/words, cue parsing
 │   ├── gestures.py      # landmarks -> gesture events, mode-aware state machine, command zone
 │   ├── config.py        # every gesture threshold in one place
-│   ├── render.py        # Pillow text overlay onto mirrored frame
+│   ├── render.py        # every visual: text overlay, chips, ring, gauge, zone, labels, fingertip dots, debug drawings, player caption/strip
+│   ├── style.py         # how it looks: colours (RGB/RGBA), fonts, sizes, spacing, positions
 │   ├── speech.py        # whisper transcription and judging (worker process, offline CLI)
 │   ├── prosody.py       # pitch (pyin) and loudness per take, cached
 │   ├── align.py         # transcript <-> notes alignment

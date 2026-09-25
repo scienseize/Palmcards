@@ -28,21 +28,13 @@ import cv2
 import numpy as np
 
 from palmcards.notes import load_notes
-from palmcards.render import Hit, TextOverlay, ViewState
+from palmcards.render import Hit, TextOverlay, ViewState, draw_strip as _draw_strip
 from palmcards.session import Session, read_wav
+from palmcards.style import PLAYER, bgr
 
 WINDOW = "PalmCards take player"
-SIZE = (1280, 720)
-BG = (28, 24, 24)
+SIZE = PLAYER.size
 SEEK_S = 5.0
-KIND_RGBA = {
-    "word": (240, 240, 240, 255),
-    "filler": (255, 215, 0, 255),
-    "restart": (255, 90, 90, 255),
-    "extra": (80, 220, 255, 255),
-    "unsure": (150, 150, 150, 200),
-}
-STATUS_BGR = {"spoken": (90, 190, 90), "partial": (0, 140, 255)}
 LEFT_KEYS = {2, 63234, 65361, ord(",")}  # arrow key codes differ by platform
 RIGHT_KEYS = {3, 63235, 65363, ord(".")}
 
@@ -157,44 +149,17 @@ def _clock(t: float) -> str:
 def draw_caption(frame: np.ndarray, overlay: TextOverlay, timeline: Timeline, current: int | None, t: float) -> None:
     """What Whisper heard up to now, coloured by what the aligner made of it."""
     shown = [i for i, s in enumerate(timeline.starts) if s <= t][-10:]
-    if not shown:
-        return
-    size = round(overlay.font_size * 0.8)
-    x, y = overlay.x + overlay.margin, int(SIZE[1] * 0.83)
-    for i in shown:
-        kind = timeline.kind.get(i, ("extra", None, None))[0]
-        fg = KIND_RGBA[kind]
-        bg = (60, 60, 60, 230) if i == current else None
-        chip = overlay._chip(timeline.words[i]["text"], size, fg, bg)
-        w = chip[0].shape[1]
-        if x + w > SIZE[0] - 20:
-            break
-        overlay._blend_centered(frame, chip, x + w / 2, y)
-        x += w + 4
+    overlay.draw_caption(frame, [(timeline.words[i]["text"], timeline.kind.get(i, ("extra", None, None))[0],
+                                  i == current) for i in shown])
 
 
 def draw_strip(frame: np.ndarray, timeline: Timeline, sections: list[dict], alignment: dict, t: float,
                duration: float) -> None:
-    x0, x1 = 40, SIZE[0] - 40
-    y0, y1 = SIZE[1] - 44, SIZE[1] - 24
-
-    def x_at(tt: float) -> int:
-        return int(x0 + (x1 - x0) * min(max(tt / max(duration, 1e-6), 0.0), 1.0))
-
-    cv2.rectangle(frame, (x0, y0), (x1, y1), (70, 70, 70), 1)
-    for start, end, si in timeline.spans:
-        status = timeline.sentences[si]["status"]
-        cv2.rectangle(frame, (x_at(start), y0 + 3), (max(x_at(end), x_at(start) + 1), y1 - 3),
-                      STATUS_BGR.get(status, (90, 90, 90)), -1)
-    for sec in sections[1:]:
-        cv2.line(frame, (x_at(sec["t"]), y0 - 8), (x_at(sec["t"]), y1 + 4), (200, 200, 200), 1)
-    for f in alignment["fillers"]:
-        cv2.line(frame, (x_at(f["t"] - timeline.t_start), y1), (x_at(f["t"] - timeline.t_start), y1 + 6),
-                 (0, 215, 255), 2)
-    for r in alignment["restarts"]:
-        tt = timeline.words[r["words"][0]]["start"] - timeline.t_start
-        cv2.line(frame, (x_at(tt), y1), (x_at(tt), y1 + 6), (90, 90, 255), 2)
-    cv2.line(frame, (x_at(t), y0 - 6), (x_at(t), y1 + 6), (255, 255, 255), 2)
+    """The whole take along the bottom, from the alignment; see render.draw_strip."""
+    spans = [(start, end, timeline.sentences[si]["status"]) for start, end, si in timeline.spans]
+    fillers = [f["t"] - timeline.t_start for f in alignment["fillers"]]
+    restarts = [timeline.words[r["words"][0]]["start"] - timeline.t_start for r in alignment["restarts"]]
+    _draw_strip(frame, spans, [sec["t"] for sec in sections[1:]], fillers, restarts, t, duration)
 
 
 def main(argv: list[str]) -> int:
@@ -255,7 +220,7 @@ def main(argv: list[str]) -> int:
             else:
                 view.status = "SPACE: PLAY/PAUSE  ARROWS: SEEK  N/P: SENTENCE  Q: QUIT"
 
-            frame = np.full((SIZE[1], SIZE[0], 3), BG, np.uint8)
+            frame = np.full((SIZE[1], SIZE[0], 3), bgr(PLAYER.background), np.uint8)
             overlay.draw(frame, view)
             draw_caption(frame, overlay, timeline, ti, t)
             draw_strip(frame, timeline, take.sections, take.alignment, t, playback.duration)

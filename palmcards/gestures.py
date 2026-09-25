@@ -955,48 +955,11 @@ class ModeMachine:
         self.log(t, "mode", mode=mode)
 
 
-# --- drawing -------------------------------------------------------------------
-
-YELLOW = (0, 215, 255)
-CYAN = (255, 230, 0)
-
-
-def draw_landmarks(frame: np.ndarray, hand: Hand) -> None:
-    pts = hand.points.astype(int)
-    for a, b in HAND_CONNECTIONS:
-        cv2.line(frame, tuple(pts[a]), tuple(pts[b]), (200, 200, 200), 2, cv2.LINE_AA)
-    for p in pts:
-        cv2.circle(frame, tuple(p), 3, (255, 255, 255), -1, cv2.LINE_AA)
-
-
-def draw_fingertips(frame: np.ndarray, state: GestureState) -> None:
-    """Yellow dot on the active fingertip, small dots on the rest; cyan for a second hand."""
-    for track, color in ((state.secondary, CYAN), (state.primary, YELLOW)):
-        if track is None or track.hand is None:
-            continue
-        for i in TIPS:
-            c = tuple(int(v) for v in track.hand.points[i])
-            cv2.circle(frame, c, 9 if i == INDEX_TIP else 4, color, -1, cv2.LINE_AA)
-
-
-def draw_hand_box(frame: np.ndarray, cursor: RelativeCursor) -> None:
-    x0, y0, x1, y1 = (int(v) for v in cursor.box)
-    band = int((y1 - y0) * CURSOR.edge_band)
-    cv2.rectangle(frame, (x0, y0), (x1, y1), (160, 160, 160), 1, cv2.LINE_AA)
-    for y in (y0 + band, y1 - band):
-        cv2.line(frame, (x0, y), (x1, y), (100, 100, 100), 1, cv2.LINE_AA)
-    if cursor.uv is not None:
-        u, v = cursor.uv
-        cv2.circle(frame, (int(x0 + u * (x1 - x0)), int(y0 + v * (y1 - y0))), 5, (160, 160, 160), 1, cv2.LINE_AA)
-
-
-def draw_zone(frame: np.ndarray, zone: CommandZone) -> None:
-    x0, y0, x1, y1 = (int(v) for v in zone.box)
-    cv2.rectangle(frame, (x0, y0), (x1 - 1, y1), YELLOW if zone.active else (160, 160, 160), 1, cv2.LINE_AA)
-
+# --- debug view (drawing is in palmcards.render) ----------------------------------
 
 def _debug_view() -> None:
     from palmcards.capture import Camera
+    from palmcards.render import draw_debug_text, draw_fingertips, draw_hand_box, draw_landmarks, draw_zone_outline
 
     tracker = HandTracker()
     log = GestureLog.to_session_dir()
@@ -1013,7 +976,7 @@ def _debug_view() -> None:
             modes.tick(time.perf_counter() - t0)
             s = modes.state
             if modes.mode != "prepare":
-                draw_zone(frame, modes.zone)
+                draw_zone_outline(frame, modes.zone)
             else:
                 draw_hand_box(frame, modes.grammar.cursor)
             for track in (s.primary, s.secondary):
@@ -1039,9 +1002,7 @@ def _debug_view() -> None:
                 ]
             if s.primary is None:
                 lines.append("no hand")
-            for i, text in enumerate(lines + [""] + log.tail(8)):
-                cv2.putText(frame, text, (20, 32 + 26 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                            (255, 255, 255), 2, cv2.LINE_AA)
+            draw_debug_text(frame, lines + [""] + log.tail(8))
             cv2.imshow("PalmCards gestures (q to quit)", frame)
             if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                 break
