@@ -919,6 +919,30 @@ class ModeMachine:
             return [GestureEvent("take_start", t)]
         return []
 
+    def command(self, name: str, t: float) -> list[GestureEvent]:
+        """The transitions the gestures make, for the keyboard fallback (usable
+        when hand tracking isn't): "start" a take, "stop" it (or cancel the
+        count-in), "next" section, back to "prepare" from Review. Anything
+        else, or a command the mode doesn't take, does nothing."""
+        before = self.mode
+        events: list[GestureEvent] = []
+        if name == "start" and self.mode in ("prepare", "review"):
+            events.append(GestureEvent("count_in", t))
+            self._enter("count_in", t)
+        elif name == "stop" and self.mode == "rehearse":
+            events.append(GestureEvent("take_stop", t))
+            self._enter("review", t)
+        elif name == "stop" and self.mode == "count_in":
+            events.append(GestureEvent("count_in_cancel", t))
+            self._enter(self._back_to, t)
+        elif name == "next" and self.mode == "rehearse" and not self.drill:
+            events.append(GestureEvent("next_section", t))
+        elif name == "prepare" and self.mode == "review":
+            events.append(GestureEvent("to_prepare", t))
+            self._enter("prepare", t)
+        self.log(t, "key", command=name, mode=before, acted=bool(events))
+        return events
+
     def enter(self, mode: str, t: float) -> None:
         """Jump straight into a mode, e.g. to replay a recording made in Rehearse."""
         self._enter(mode, t)

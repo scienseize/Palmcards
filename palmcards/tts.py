@@ -20,6 +20,9 @@ from palmcards.config import VOICE
 class Speaker(Protocol):
     def say(self, text: str, voice: str | None = None, rate_wpm: int | None = None) -> None: ...
 
+    def say_words(self, words: list[str], stressed: set[int] = frozenset()) -> None:
+        """Speak words, emphasising the ones at `stressed` where the engine can."""
+
     def stop(self) -> None: ...
 
     @property
@@ -45,6 +48,10 @@ class MacSay:
         self.stop()
         self._proc = subprocess.Popen(self.argv(text, voice, rate_wpm),
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def say_words(self, words: list[str], stressed: set[int] = frozenset()) -> None:
+        """`say` emphasises a word after its [[emph +]] command."""
+        self.say(" ".join(f"[[emph +]] {w}" if i in stressed else w for i, w in enumerate(words)))
 
     def stop(self) -> None:
         proc, self._proc = self._proc, None

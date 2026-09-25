@@ -271,7 +271,7 @@ def test_counts_summary_and_labels():
     text = "Good evening everyone. / Thank you for *being* here. [slow] Go now please."
     v = judge(text, speak("Good evening everyone. <0.4> Thank you for being here."))
     assert v["counts"] == {"hit": 1, "missed": 0, "unclear": 1, "skipped": 1}  # no prosody: stress unclear
-    assert summary(v) == "1/2 marks hit, 1 unclear, 1 skipped"
+    assert summary(v) == "1 hit, 1 unclear, 1 skipped (3 marks)"
     texts = ["Thank", "you", "for", "being", "here."]
     assert mark_label("short_pause", 0, texts) == '/ before "Thank"'
     assert mark_label("long_pause", 5, texts) == "// at the end"

@@ -15,7 +15,7 @@ user runs them. They are never inferred from unit tests.
 | 1 — Sessions and notes | Implemented, validation pending | Schema 2 + migration, notes snapshots/revisions with stable ids, exclusive session folders, flock writer lock, atomic WAVs, orphan report | 216 passed; F3/F7 regression tests; CLI rebind run on a temp copy of a real session | App run on hardware (first take writes the new layout); orphan *salvage* is Phase 2 |
 | 2 — Recording lifecycle | Implemented, validation pending | Takes streamed to disk (bounded queue, writer thread, fsynced valid WAV + manifest), saved/interrupted/failed states, startup salvage, device-clock first sample, ExitStack-owned resources with guarded cleanup | 235 passed; SIGKILL mid-recording salvaged; injected camera/draw/init/Ctrl-C/disk-full/queue-overflow failures | Hardware: real mic run, clock sync measurement |
 | 3 — Analysis supervision | Implemented, validation pending | Supervisor thread owns jobs; non-blocking submit; persisted job records with generations; reconcile on exit; result identity checks; timeouts; bounded close; drill baseline by take identity; in-app retry (r) | 251 passed; F5/F6 regression tests; real worker answers a silent take | Real Whisper run in the app; long takes vs job_timeout_s |
-| 4 — Navigation and controls | Pending | None | Review renders only | Implement viewports and fallback controls |
+| 4 — Navigation and controls | Implemented, validation pending | Panel viewport + scroll, Rehearse current sentence nav, long-word splitting, keyboard fallback (ModeMachine.command), persistent alert line, truthful Prepare ops (hear it via TTS; tone/length preview only), verdict symbols + separate counts, label backing | 266 passed; reachability at 640x480/1280x720/1920x1080; synthetic dark/light/busy renders inspected | Real camera scenes; gesture-based panel scrolling not added (keys + auto-paging instead) |
 | 5 — Scoring/provenance | Pending | None | Review false-positive reproduction | Fix tail evidence and cache metadata |
 | 6 — Live following/state | Pending | Live-follow WIP since committed (`678bfd1`, `c5a5dd2`) | Headless + camera benchmark (user-run) | Integrate after foundations |
 | 7 — Setup/evaluation | Pending | None | No real-speaker validation | Lock environment and establish evaluation |
@@ -246,4 +246,64 @@ Unverified assumptions and remaining risks: job_timeout_s (15 min) must exceed W
   CLI, not yet by reopening a session in the app (Phase 8 reopen).
 Reason for any departure from this plan: none.
 Next action: Phase 4.
+```
+
+```text
+Date: 2026-09-25
+Phase / issue IDs: Phase 4 (F2 clipped long sections; stub controls; verdict colour-only; fallback controls)
+Status: implemented, validation pending (real camera scenes, hands-on use)
+Current HEAD / optional commit ID: a506859 -> Phase 4 commit (see git log)
+Pre-existing changes preserved: yes (clean tree at start).
+Files and behavior changed:
+  palmcards/render.py: the focus panel is laid out whole (Panel: height, image, each sentence's
+    rows) and drawn through a viewport (max_panel_h: below the label's reserved height, above the
+    alert line, at most TEXT.panel_max_h); ViewState.panel_scroll (px) with clamp, panel_scroll_to
+    (keeps a sentence whole in view), scrollbar and "▲ MORE"/"▼ MORE" markers. Text size never goes
+    below normal to fit. Rehearse: the current sentence orange, the rest of the section dimmed.
+    layout() splits units wider than a row into row-wide pieces that keep word/mark identity
+    (hit-testing finds the word from any piece). Verdict chips carry a badge symbol (✓ ✗ ? –,
+    only on a stress mark's closing *), detail lines start with the symbol. Persistent alert chip
+    under the text; keys help (h) and an "H: KEYS" hint. The label chips get a translucent backing.
+    Ring nodes: original word + "hear it" only; tone/stretch labels say "PREVIEW ONLY, NOT
+    AVAILABLE YET"; focus hints updated.
+  palmcards/gestures.py: ModeMachine.command(name, t) -> the gesture transitions for start, stop
+    (or cancel count-in), next section, back to prepare; logs `key` events with acted flag.
+  main.py: keys t/x/n/p queue ModeMachine commands handled with the next frame's events;
+    j/k/space move the current sentence within the section in Rehearse (panel follows), scroll a
+    focused panel (pausing auto-paging for TEXT.page_pause_s), or browse as before; h toggles key
+    help. Overflowing focused panels in Prepare/Review page every TEXT.page_s. view.alert comes
+    from Takes.alert_line() (recording trouble, failed analysis with the r hint), separate from the
+    status line. Count-in and next section set the current sentence and reset the panel scroll.
+    Commits: "hear it" speaks the sentence with the word (and its stress marks) emphasised through
+    Devices.speaker (tts.get_speaker) and logs `hear`; tone/length log commit_stub and say "NOT
+    AVAILABLE YET: NOTHING CHANGED"; keeping the word says "NO CHANGE". Nothing says COMMITTED.
+  palmcards/tts.py: Speaker.say_words(words, stressed); MacSay uses `say` [[emph +]] markup.
+  palmcards/review.py, palmcards/cues.py: summaries give separate counts ("4 HIT, 3 MISSED,
+    2 UNCLEAR"; terminal "1 hit, 1 unclear, 1 skipped (3 marks)").
+  palmcards/style.py: alert/label fills, scrollbar colours, symbol scale, page timing.
+  CLAUDE.md: keyboard fallback, what the screen promises, new log kinds.
+Migration / compatibility implications: none for data. Terminal/label summary wording changed.
+Tests run and exact outcome: pytest (full) -> 266 passed in 19.77s. New/changed:
+  tests/test_render.py: 20-sentence section reachable sentence by sentence at 640x480, 1280x720,
+    1920x1080 (viewport within frame, below label; last sentence at max scroll); rehearse current
+    colouring; 30 wrapped verdict lines reach the last (clamped max scroll); 68-letter word split
+    into >= 3 pieces within 20 columns and hit from its last piece; symbol drawn in detail lines;
+    alert and keys help drawn; ring offers only word + hear it; tone label says preview only.
+  tests/test_gestures.py: key commands (start/cancel/start/next/stop/prepare, refused when the mode
+    doesn't take them, none in a drill), `key` log entries.
+  tests/test_controls.py: hear it speaks with the word and existing stress stressed; keep = no
+    change; tone/stretch commits never claim a change; the keyboard alone (t, n, x, q) records a
+    saved take with two sections through the real ModeMachine while tracking returns nothing.
+  tests/test_review.py, tests/test_cues.py, tests/test_tts.py: summaries, say markup.
+Manual / hardware checks performed: synthetic renders (not camera) at 1280x720 and 640x480 on
+  dark, light and busy backgrounds: sessions/renders/phase4/*.png (24 + 2). Inspected rehearse
+  (busy), focused Review with 14 verdict lines (light), Review chips (busy, light): after the fixes
+  the label and badges are legible on all three. No live camera check.
+Evidence or artifact paths: sessions/renders/phase4/ (gitignored); tests above.
+Unverified assumptions and remaining risks: gestures still cannot scroll a focused panel
+  (auto-paging + keys cover reachability; a gesture would change the grammar and its fixtures).
+  Contrast over real camera scenes, and readability at arm's length, need a hands-on check.
+Reason for any departure from this plan: none of substance; reachability without keys comes from
+  auto-paging rather than a new gesture, to keep the gesture grammar and its regression fixtures.
+Next action: Phase 5.
 ```

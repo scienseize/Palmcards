@@ -45,3 +45,10 @@ def test_get_speaker_follows_config():
     with pytest.raises(ValueError, match="unknown voice backend"):
         get_speaker("nope")
     assert "say" in tts.BACKENDS
+
+
+def test_say_words_stresses_with_say_markup(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", FakeProc)
+    speaker = MacSay()
+    speaker.say_words(["Thank", "you", "for", "being", "here."], {3})
+    assert speaker._proc.argv[-1] == "Thank you for [[emph +]] being here."

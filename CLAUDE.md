@@ -73,6 +73,15 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 - Closed fist raised and held 1 s: new full take
 - Open palm inside the command zone held 1.5 s: back to Prepare, to edit before the next take (the zone is shown in Review with this hint)
 
+### Keyboard fallback (supplements the gestures; works with no hand tracked)
+`ModeMachine.command` runs the same transitions as the gestures, logged as `key` events. `t` start a take (count-in), `x` stop it or cancel the count-in, `n` next section, `p` back to Prepare from Review, `space`/`j` and `k` next/previous sentence (in Rehearse within the section; in a focused panel they scroll it), `r` retry failed analysis, `h` show the keys, `q` quit. No text editing.
+
+### What the screen promises
+- Prepare offers only what works: the options ring holds the original word and **hear it** (speaks the sentence with the word stressed, via `palmcards/tts.py`); tone and length preview their controls and say "not available yet"; a commit never claims a change it didn't make (milestone 8 adds the edits).
+- The focus panel is a viewport over the whole unit: never under the label, never off the frame; long sections and long verdict lists scroll (scrollbar, more-above/below markers). In Rehearse the current sentence is orange and kept in view. A focused Review panel too tall for the frame pages itself every few seconds.
+- Verdicts carry a symbol as well as a colour (✓ hit, ✗ missed, ? unclear, – skipped), and counts are given separately ("4 HIT, 3 MISSED, 2 UNCLEAR"): unclear is too little evidence, not a miss.
+- Recording and analysis trouble stays on a persistent alert line under the text until dealt with; gesture hints stay in the label.
+
 ### Gesture classification (rules on MediaPipe hand landmarks, no training needed)
 
 Landmark ids: 0 wrist, 4 thumb tip, 5/9/13/17 MCPs, 6/10/14/18 PIPs, 8/12/16/20 tips.
@@ -249,7 +258,7 @@ sessions/
 
 Later milestones add their results to each take (metrics) rather than inventing new files.
 
-Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
+Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `key` (command, mode, acted), `hear` (sentence, word), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
 
 ## Code layout
 

@@ -49,6 +49,12 @@ class Colors:
     verdict: dict[str, RGB] = field(default_factory=lambda: {
         "hit": (95, 205, 115), "missed": (240, 90, 75), "unclear": (160, 160, 160)})
     detail_text: RGBA = (235, 235, 235, 235)  # verdict lines under a focused sentence
+    # Persistent alert line (recording or analysis trouble) and the panel's scrollbar.
+    alert_fill: RGBA = (170, 40, 30, 230)
+    label_fill: RGBA = (10, 10, 12, 190)  # behind the state label and small hints, for busy scenes
+    alert_text: RGBA = (255, 255, 255, 255)
+    scroll_track: RGB = (90, 90, 90)
+    scroll_thumb: RGB = (235, 235, 235)
     # Accents drawn with OpenCV.
     yellow: RGB = (255, 215, 0)  # active fingertip, ring connectors, active zone, progress
     cyan: RGB = (0, 230, 255)  # second hand's fingertips
@@ -83,6 +89,10 @@ class Text:
     focus_scales: tuple[float, ...] = (1.3, 1.15, 1.0)  # focus panel: largest that fits the box wins
     panel_max_h: float = 0.9  # a tall focus panel grows up to this share of the frame
     word_box_h: float = 0.8  # lines: a word's box, whose middle its chip is centred on
+    # A focused panel too tall for the frame turns its pages by itself, so its
+    # last lines are reachable without keys; a key pauses that for a while.
+    page_s: float = 5.0
+    page_pause_s: float = 12.0
 
 
 @dataclass(frozen=True)
@@ -98,6 +108,7 @@ class Chips:
     verdict_pad: tuple[int, int] = (2, 8)
     verdict_alpha_gain: float = 2
     verdict_alpha: tuple[int, int] = (70, 235)
+    symbol_scale: float = 0.7  # x text: verdict symbols (✓ ✗ ? –) and the panel's more markers
 
 
 @dataclass(frozen=True)

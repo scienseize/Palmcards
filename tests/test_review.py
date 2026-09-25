@@ -47,7 +47,7 @@ def test_mark_verdicts_and_detail_lines():
     assert lines[0] == ("missed", '/ before "Thank"  MISSED  no pause, 0.10 s (needs 0.30)')
     assert lines[1][1].startswith("Pace ") and lines[-1] == ("", "No fillers.")
     assert b.detail(2)[-1] == ("", "Fillers: um")  # before the sentence: its hesitation
-    assert b.summary(1) == "0/2 MARKS HIT"
+    assert b.summary(1) == "0 HIT, 2 MISSED"
 
 
 def test_a_sentence_not_said_in_any_take():

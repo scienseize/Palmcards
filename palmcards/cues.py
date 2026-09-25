@@ -331,14 +331,15 @@ def verdicts(marks: list[list], alignment: dict, words: list[dict], prosody: Pro
 
 
 def summary(v: dict) -> str:
-    """One line: "5/8 marks hit, 2 missed, 1 unclear"."""
+    """One line: "5 hit, 2 missed, 1 unclear (8 marks)". Each count on its
+    own: unclear means too little evidence, not a poor delivery, so it is
+    never folded into a hit rate."""
     c = v["counts"]
-    judged = sum(c.values()) - c["skipped"]
-    if not sum(c.values()):
+    total = sum(c.values())
+    if not total:
         return "no delivery marks"
-    parts = [f"{c['hit']}/{judged} marks hit"]
-    parts += [f"{c[k]} {k}" for k in ("missed", "unclear", "skipped") if c[k]]
-    return ", ".join(parts)
+    parts = [f"{c['hit']} hit"] + [f"{c[k]} {k}" for k in ("missed", "unclear", "skipped") if c[k]]
+    return f"{', '.join(parts)} ({total} mark{'s' if total != 1 else ''})"
 
 
 # --- labels --------------------------------------------------------------------------

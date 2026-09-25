@@ -14,10 +14,11 @@ the right of the frame; it steers the highlight in the text on the left.
   top or bottom of the box scroll
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
                            focus
-  open palm (word)         options ring (placeholders); turn an L-hand like a knob to pick
-  L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
-  two L-hands (paragraph)  length stretch
-  pinch + lift             commit (logged only, no text changes yet)
+  open palm (word)         options ring: the word, and "hear it"; turn an L-hand like a knob to pick
+  L-hand tilt (sentence)   tone dial, warm to the right, cold to the left (preview only)
+  two L-hands (paragraph)  length stretch (preview only)
+  pinch + lift             commit: "hear it" speaks the sentence with the word stressed;
+                           tone and length say they are not available yet (milestone 8)
   drop the hand for 1 s    back out
   fist raised into view, held 1 s
                            start a take after a 3-2-1 count-in
@@ -41,13 +42,18 @@ chip coloured by its verdict (green hit, red missed, grey unclear):
   open palm held 1.5 s in the command zone
                            back to Prepare, to edit before the next take
 
-Prepare's operations are stubs until milestone 8. Poses and events are
+Word alternatives, tone and length edits come with milestone 8; until then
+they preview and say so, and never report a change. Poses and events are
 logged to sessions/gesture-logs/; each take is saved as a WAV in its session
 folder under sessions/, with its transcript, pitch and verdicts and
 session.json.
 
-Dev keys: space/j next sentence, k previous, d toggle landmarks and hand box,
-r retry failed analysis, s save a screenshot to sessions/screens/, q/Esc quit.
+Keys, the fallback when gestures won't do (h shows them in the app):
+  t start a take, x stop it (or cancel the count-in), n next section,
+  p back to Prepare from Review, space/j next sentence, k previous (in
+  Rehearse within the section; in a focused panel they scroll it),
+  r retry failed analysis, h keys, q/Esc quit.
+Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
 """
 
 import argparse
@@ -70,12 +76,14 @@ from palmcards.config import ANALYSIS, RECORDING, SPEECH
 from palmcards.gestures import GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.render import (
-    Hit, OpsView, TextOverlay, ViewState,
+    HEAR_IT, Hit, OpsView, TextOverlay, ViewState,
     draw_fingertips, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
 from palmcards.recording import TakeWriter
 from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
+from palmcards.style import TEXT
+from palmcards.tts import get_speaker
 from palmcards.analysis import Supervisor
 from palmcards.speech import make_job
 
@@ -83,6 +91,7 @@ SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = Path(__file__).parent / "sessions" / "screens"
 WINDOW = "PalmCards"
 NOTE_S = 1.5  # how long a commit message stays in the label
+KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("p"): "prepare"}  # ModeMachine.command
 
 
 def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
@@ -104,29 +113,38 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
         ops.picked = gs.knob % len(overlay.ring_labels(view))
 
 
-def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog) -> float | None:
-    """Grammar events. Returns the time a label note should expire, if one was set."""
+def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog,
+                speaker=None) -> float | None:
+    """Grammar events. Returns the time a label note should expire, if one was set.
+    A commit only ever reports what really happened."""
     if ev.kind == "focus":
         if view.hover is None:  # focused before the cursor ever touched the text
             view.hover = Hit(view.current, 0 if ev.level == "word" else None)
         view.focus = view.hover
         view.ops = OpsView()
+        view.panel_scroll = 0.0
         return None
     if ev.kind == "commit" and view.app == "review":
         if ev.level != "sentence":  # a sentence commit is a drill, which the mode events start
             view.note = "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
     elif ev.kind == "commit":
-        if ev.op == "ring":
-            what = overlay.ring_labels(view)[view.ops.picked]
-        elif ev.op == "tone":
-            what = f"tone {ev.value:+.2f}"
-        elif ev.op == "stretch":
-            what = f"length x{ev.value:.2f}"
+        sentence = view.focus.sentence if view.focus else None
+        if ev.op == "ring" and overlay.ring_labels(view)[view.ops.picked] == HEAR_IT and view.focus is not None:
+            s = overlay.sentences[view.focus.sentence]
+            stressed = {m.word for m in s.marks if m.kind == "stress"} | {view.focus.word}
+            try:
+                (speaker or get_speaker()).say_words([w.text for w in s.words], stressed)
+                view.note = f'SPEAKING, STRESSING "{overlay.word_text(view.focus).upper()}"'
+            except OSError as exc:
+                view.note = "COULD NOT SPEAK (SEE TERMINAL)"
+                print(f"text to speech failed: {exc}", file=sys.stderr)
+            log(ev.t, "hear", sentence=sentence, word=view.focus.word)
+        elif ev.op in ("tone", "stretch"):
+            what = "TONE" if ev.op == "tone" else "LENGTH"
+            log(ev.t, "commit_stub", level=ev.level, sentence=sentence, op=ev.op, value=ev.value)
+            view.note = f"{what} EDITS ARE NOT AVAILABLE YET: NOTHING CHANGED"
         else:
-            what = "no change"
-        log(ev.t, "commit_stub", level=ev.level, sentence=view.focus.sentence if view.focus else None,
-            result=what)
-        view.note = f"COMMITTED (STUB): {what.upper()}"
+            view.note = "NO CHANGE"
     view.focus = None
     view.ops = OpsView()
     return time.perf_counter() + NOTE_S if ev.kind == "commit" and view.note else None
@@ -165,8 +183,6 @@ class Takes:
 
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown."""
-        if self.alert:
-            return self.alert
         if mode in ("count_in", "rehearse") and self.drill is not None:
             return f"SENTENCE {self.drill + 1}"
         if mode in ("count_in", "rehearse"):
@@ -176,8 +192,6 @@ class Takes:
             return f"{self.board.take_label(view.focus.sentence)}  /  L-HAND: TAKES  /  PINCH + LIFT: DRILL"
         if self.finalizing:
             return f"TAKE {self.finalizing[0].number}: SAVING..."
-        if failed := self.analysis.failed():
-            return f"TAKE {failed[0]}: ANALYSIS FAILED (SEE TERMINAL)  /  R: RETRY"
         if self.analysis.pending or self.deferred:
             dots = "." * (int(time.perf_counter() * 2) % 4)
             take = (self.analysis.pending or self.deferred)[0]
@@ -185,6 +199,14 @@ class Takes:
         if mode == "review" and self.last_saved:
             return f"{self.last_saved}  /  RAISE A FIST: NEW TAKE"
         return "RAISE A FIST: START A TAKE"
+
+    def alert_line(self) -> str:
+        """Persistent trouble (recording, analysis), shown until it is dealt with."""
+        if self.alert:
+            return self.alert
+        if failed := self.analysis.failed():
+            return f"TAKE {failed[0]}: ANALYSIS FAILED (SEE TERMINAL)  /  R: RETRY"
+        return ""
 
     def sync_review(self, grammar: Grammar, view: ViewState) -> None:
         """Review: turn the take dial, and show the chosen takes' verdicts."""
@@ -236,6 +258,8 @@ class Takes:
                 self.drill = None
                 return "MICROPHONE UNAVAILABLE"
             self.section = 0 if self.drill is None else self.notes.sentences[self.drill].section
+            view.current = self.drill if self.drill is not None else self.first_of(self.section)
+            view.panel_scroll = 0.0
             view.hover = view.focus = None
             view.mode, view.level, view.ops = "idle", None, OpsView()
             return ""
@@ -267,6 +291,7 @@ class Takes:
             if self.section + 1 >= len(self.notes.sections):
                 return "LAST SECTION"
             self.section += 1
+            view.current, view.panel_scroll = self.first_of(self.section), 0.0
             if self.writer is not None:
                 self.writer.mark_section(ev.t, self.section)
             self.log(ev.t, "section", section=self.section)
@@ -283,6 +308,12 @@ class Takes:
             view.scroll = overlay.scroll_to(view.current)
             return ""
         return ""
+
+    def first_of(self, section: int) -> int:
+        return next(i for i, s in enumerate(self.notes.sentences) if s.section == section)
+
+    def section_sentences(self) -> list[int]:
+        return [i for i, s in enumerate(self.notes.sentences) if s.section == self.section]
 
     def _stop_recording(self) -> "TakeWriter | None":
         """Stop the microphone; the take finishes writing in the background."""
@@ -403,6 +434,7 @@ class Devices:
     tracker: Callable = HandTracker
     recorder: Callable = AudioRecorder
     log: Callable = GestureLog.to_session_dir
+    speaker: Callable = get_speaker
     named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
     show: Callable = cv2.imshow
     wait_key: Callable = lambda: cv2.waitKey(1) & 0xFF
@@ -492,6 +524,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     t0 = prev_start = last
     takes.t0 = t0
     devices.named_window(WINDOW, w, h)
+    speaker = devices.speaker()
+    queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
+    page_t, page_pause_until = last, 0.0
 
     while True:
         frame = camera.read()
@@ -507,6 +542,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         else:
             events = []
         events += modes.tick(start - t0)
+        events, queued = queued + events, []
         if note := takes.poll_analysis():
             view.note, note_until = note, start + NOTE_S
         if note := takes.poll():
@@ -518,7 +554,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "focus":
                 takes.dial_seen = 0
             if ev.kind in ("focus", "commit", "back"):
-                until = apply_event(ev, view, overlay, log)
+                until = apply_event(ev, view, overlay, log, speaker)
             elif note := takes.handle(ev, modes, view, overlay):
                 view.note, until = note, start + NOTE_S
             else:
@@ -545,6 +581,16 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.start_progress = 0.0
             view.mark_verdicts, view.detail = (), ()
         view.status = takes.status(modes.mode, view)
+        view.alert = takes.alert_line()
+        # A focused panel taller than the frame turns its own pages, so every
+        # verdict line is reachable without keys; a key pauses it.
+        if view.app in ("prepare", "review") and view.mode == "focus" and (most := overlay.panel_max_scroll(view)):
+            if start >= page_pause_until and start - page_t >= TEXT.page_s:
+                page = overlay.panel_view_h(overlay.panel(view)) - overlay.line_h
+                view.panel_scroll = 0.0 if view.panel_scroll >= most else min(most, view.panel_scroll + page)
+                page_t = start
+        elif view.app in ("prepare", "review"):
+            view.panel_scroll, page_t = 0.0, start
         # Edge scrolling advances every displayed frame so it stays smooth.
         if view.app in ("prepare", "review") and view.mode == "browse" and grammar.state.scroll_rate:
             view.scroll = overlay.clamp_scroll(view.scroll + grammar.state.scroll_rate * (start - prev_start))
@@ -577,11 +623,25 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         key = devices.wait_key()
         if key in (ord("q"), 27):
             break
-        if key in (ord(" "), ord("j"), ord("k")) and view.app in ("prepare", "review"):
+        now_t = time.perf_counter() - t0
+        if key in KEY_COMMANDS:
+            queued += modes.command(KEY_COMMANDS[key], now_t)
+        elif key in (ord(" "), ord("j"), ord("k")):
             step = -1 if key == ord("k") else 1
-            view.current = min(max(view.current + step, 0), len(sentences) - 1)
-            if not overlay.is_visible(view.current, view.scroll):
-                view.scroll = overlay.scroll_to(view.current)
+            if view.app in ("count_in", "rehearse") and view.drill is None:  # within the section
+                unit = takes.section_sentences()
+                i = unit.index(view.current) if view.current in unit else 0
+                view.current = unit[min(max(i + step, 0), len(unit) - 1)]
+                view.panel_scroll = overlay.panel_scroll_to(view, view.current)
+            elif view.mode == "focus" and overlay.panel_max_scroll(view):  # scroll the focused panel
+                view.panel_scroll = overlay.clamp_panel_scroll(view, view.panel_scroll + step * 3 * overlay.line_h)
+                page_pause_until = time.perf_counter() + TEXT.page_pause_s
+            elif view.app in ("prepare", "review"):
+                view.current = min(max(view.current + step, 0), len(sentences) - 1)
+                if not overlay.is_visible(view.current, view.scroll):
+                    view.scroll = overlay.scroll_to(view.current)
+        elif key == ord("h"):
+            view.keys_help = not view.keys_help
         elif key == ord("d"):
             show_debug = not show_debug
         elif key == ord("r"):

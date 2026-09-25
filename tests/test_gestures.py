@@ -593,3 +593,27 @@ def test_word_commit_in_review_is_not_a_drill():
     _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.2), t)
     events, _ = run(m, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
     assert kinds(events) == ["commit"] and m.mode == "review"
+
+
+# --- the keyboard fallback -------------------------------------------------------
+
+def test_key_commands_make_the_same_transitions_as_the_gestures():
+    from palmcards.gestures import GestureLog, ModeMachine
+
+    log = GestureLog()
+    m = ModeMachine((1280, 720), log)
+    assert [e.kind for e in m.command("stop", 1.0)] == [] and m.mode == "prepare"  # nothing to stop
+    assert [e.kind for e in m.command("start", 1.0)] == ["count_in"] and m.mode == "count_in"
+    assert [e.kind for e in m.command("stop", 1.5)] == ["count_in_cancel"] and m.mode == "prepare"
+    m.command("start", 2.0)
+    assert [e.kind for e in m.tick(2.0 + 3.1)] == ["take_start"] and m.mode == "rehearse"
+    assert [e.kind for e in m.command("next", 6.0)] == ["next_section"]
+    assert [e.kind for e in m.command("start", 6.5)] == [] and m.mode == "rehearse"  # already recording
+    assert [e.kind for e in m.command("stop", 7.0)] == ["take_stop"] and m.mode == "review"
+    assert [e.kind for e in m.command("prepare", 8.0)] == ["to_prepare"] and m.mode == "prepare"
+    m.drill = True
+    m.command("start", 9.0)
+    m.tick(12.5)
+    assert m.command("next", 13.0) == []  # a drill has no next section
+    keys = [e for e in log.entries if e["kind"] == "key"]
+    assert [(k["command"], k["acted"]) for k in keys][:3] == [("stop", False), ("start", True), ("stop", True)]

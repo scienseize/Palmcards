@@ -1,7 +1,9 @@
 import numpy as np
+import pytest
 
 from palmcards.notes import parse_text
 from palmcards.render import Hit, OpsView, TextOverlay, ViewState, layout, sentence_units
+from palmcards.style import LABEL
 
 TEXT = (
     "[slow] Thank you for *being* here. / Truly. [rise]\n\n"
@@ -96,13 +98,17 @@ def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
-    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "EXPLORE WORD ALTERNATIVES: TURN AN L-HAND")
-    focus.ops.pointing, focus.ops.picked = True, 4
-    assert ov.label_lines(focus)[1].startswith("PREVIEW: STRESS")
+    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "TURN AN L-HAND TO PICK")
+    # Only what works is offered: the word itself, and hearing it.
+    assert ov.ring_labels(focus) == ("being", "hear it")
+    focus.ops.pointing, focus.ops.picked = True, 1
+    assert ov.label_lines(focus)[1] == "PINCH + LIFT: HEAR IT"
+    focus.ops.picked = 0
+    assert ov.label_lines(focus)[1] == "KEEP THE WORD (NO CHANGE)"
     focus.ops = OpsView()
-    assert ov.label_lines(focus)[1].startswith("OPEN PALM: ALTERNATIVES")
+    assert ov.label_lines(focus)[1].startswith("OPEN PALM: HEAR IT")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
-    assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "CHANGE SENTENCE TONE: WARM")
+    assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "SENTENCE TONE: WARM  (PREVIEW ONLY, NOT AVAILABLE YET)")
     tone.drop_progress = 0.4
     assert ov.label_lines(tone)[1] == "DROP HAND TO BACK OUT"
 
@@ -110,7 +116,7 @@ def test_label_lines_follow_mode_and_operation():
 def test_draw_focus_states_and_stubs():
     ov = overlay()
     for view in (
-        ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=2, pointing=True)),
+        ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=1, pointing=True)),
         ViewState(mode="focus", level="sentence", focus=Hit(2, None), ops=OpsView(kind="tone", tone=-0.5)),
         ViewState(mode="focus", level="paragraph", focus=Hit(4, None),
                   ops=OpsView(kind="stretch", stretch=1.4, stretch_ends=((900, 300), (1100, 320)))),
@@ -124,8 +130,7 @@ def test_long_paragraph_focus_panel_grows_to_fit():
     long = " ".join(f"Sentence number {i} has a few more words in it." for i in range(8))
     ov = TextOverlay(parse_text(long).sentences, (1280, 720))
     view = ViewState(mode="focus", level="paragraph", focus=Hit(0, None))
-    panel_h, _ = ov._focus_panel(ov._panel_unit(view))
-    assert panel_h > ov.box_h
+    assert ov._focus_panel(ov._panel_unit(view)).height > ov.box_h
     ov.draw(np.full((720, 1280, 3), 128, np.uint8), view)
 
 
@@ -186,8 +191,8 @@ def test_review_draws_verdict_chips_and_the_focus_detail():
     detail = (("hit", '/ before "Truly."  HIT  0.40 s pause'), ("", "Pace 140 wpm, take 150"), ("", "No fillers."))
     view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), mark_verdicts=verdicts,
                      detail=detail, status="TAKE 2  2 OF 3  /  L-HAND: TAKES  /  PINCH + LIFT: DRILL")
-    _, (_, inv_with) = ov._focus_panel(ov._panel_unit(view), detail, verdicts)
-    _, (_, inv_without) = ov._focus_panel(ov._panel_unit(view))
+    inv_with = ov._focus_panel(ov._panel_unit(view), detail, verdicts).inv
+    inv_without = ov._focus_panel(ov._panel_unit(view)).inv
     assert (1 - inv_with).sum() > (1 - inv_without).sum() * 1.3  # the verdict lines are drawn
     ov.draw(np.full((720, 1280, 3), 128, np.uint8), view)
     assert ov.label_lines(view)[1].startswith("TAKE 2")
@@ -198,3 +203,82 @@ def test_a_drill_shows_only_its_sentence():
     view = ViewState(app="rehearse", section=0, drill=1, status="SENTENCE 2")
     assert ov._panel_unit(view) == (1,)
     assert ov.label_lines(view) == ("DRILL", "SENTENCE 2")
+
+
+# --- everything reachable (review finding F2) -------------------------------------
+
+LONG_SECTION = "# Long\n\n" + " ".join(f"This is sentence number {i} of the long section." for i in range(1, 21))
+LABEL_RESERVE = lambda ov: LABEL.min_top + ov.label_h + ov.pad // 2
+
+
+@pytest.mark.parametrize("size", [(640, 480), (1280, 720), (1920, 1080)])
+def test_every_sentence_of_a_long_section_can_be_brought_into_view(size):
+    notes = parse_text(LONG_SECTION, "md")
+    ov = TextOverlay(notes.sentences, size)
+    view = ViewState(app="rehearse", section=0)
+    panel = ov.panel(view)
+    vh = ov.panel_view_h(panel)
+    assert panel.height > vh  # it does not fit: a viewport, not a clipped panel
+    top = ov._panel_top(vh)
+    assert top >= LABEL_RESERVE(ov) and top + vh <= size[1]  # below the label, on the frame
+    for i in range(len(notes.sentences)):
+        view.current = i
+        view.panel_scroll = ov.panel_scroll_to(view, i)
+        a, b = ov.panel(view).rows[i]
+        assert view.panel_scroll <= a and b <= view.panel_scroll + vh, i
+    assert view.panel_scroll == ov.panel_max_scroll(view)  # the last sentence is at the very bottom
+    frame = np.full((size[1], size[0], 3), 128, np.uint8)
+    ov.draw(frame, view)
+
+
+def test_the_current_sentence_is_orange_in_rehearse():
+    notes = parse_text(SECTIONS, "md")
+    ov = TextOverlay(notes.sentences, (1280, 720))
+    a = ov._focus_panel((0, 1), current=0).color
+    b = ov._focus_panel((0, 1), current=1).color
+    assert (a != b).any()
+    assert ov._panel_current(ViewState(app="rehearse", current=1), (0, 1)) == 1
+    assert ov._panel_current(ViewState(app="rehearse", current=1, drill=1), (1,)) is None  # a drill: one sentence
+
+
+def test_long_review_details_reach_the_last_line():
+    ov = overlay()
+    detail = tuple(("missed", f"mark {i}: a reason long enough to wrap onto a second line of the panel") for i in range(30))
+    view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), detail=detail)
+    panel = ov.panel(view)
+    vh = ov.panel_view_h(panel)
+    assert panel.height > vh and ov.panel_max_scroll(view) == panel.height - vh
+    view.panel_scroll = 10 ** 6  # far past the end: clamped to show the last line
+    assert ov.clamp_panel_scroll(view, view.panel_scroll) == panel.height - vh
+    ov.draw(np.full((720, 1280, 3), 128, np.uint8), view)
+
+
+def test_a_word_longer_than_a_row_is_split_and_still_hit():
+    text = "Say " + "supercalifragilisticexpialidocious" * 2 + " now."
+    ov = TextOverlay(parse_text(text).sentences, (1280, 720), columns=20)
+    assert all(sum(len(sp.text) for _, sp in r.spans) + len(r.spans) - 1 <= 20 for r in ov.rows)
+    pieces = [(ri, c, sp) for ri, r in enumerate(ov.rows) for c, sp in r.spans if sp.word == 1]
+    assert len({ri for ri, _, _ in pieces}) >= 3 and "".join(sp.text for _, _, sp in pieces) == \
+        "supercalifragilisticexpialidocious" * 2
+    ri, col, sp = pieces[-1]  # the last piece, on its own row, still answers as word 1
+    x = ov.x + ov.margin + ov.pad + (col + 1) * ov.char_w
+    y = ov.y + ov.margin + ov.pad + (ri + 0.5) * ov.line_h
+    assert ov.hit_test(x, y, 0.0) == Hit(0, 1)
+
+
+def test_verdict_lines_carry_a_symbol_not_just_a_colour():
+    ov = overlay()
+    plain = ov._focus_panel((1,), (("", "hit or not"),)).inv
+    marked = ov._focus_panel((1,), (("hit", "hit or not"),)).inv
+    assert (plain != marked).any()
+
+
+def test_the_alert_line_and_keys_help_are_drawn():
+    ov = overlay()
+    base = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(base, ViewState())
+    alert = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(alert, ViewState(alert="RECORDING FAILED: AUDIO SO FAR KEPT"))
+    keys = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(keys, ViewState(keys_help=True))
+    assert (base != alert).any() and (base != keys).any()

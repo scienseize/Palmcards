@@ -116,7 +116,10 @@ class Board:
         return tuple(lines)
 
     def summary(self, number: int) -> str:
-        """ "5/8 MARKS HIT" for the take's status line."""
+        """ "5 HIT, 2 MISSED, 1 UNCLEAR" for the take's status line: each count
+        on its own, as unclear (too little evidence) is not a miss."""
         c = self.takes[number]["counts"]
-        judged = c["hit"] + c["missed"] + c["unclear"]
-        return f"{c['hit']}/{judged} MARKS HIT" if judged else "NO MARKS JUDGED"
+        if not sum(c.values()):
+            return "NO MARKS"
+        parts = [f"{c['hit']} HIT"] + [f"{c[k]} {k.upper()}" for k in ("missed", "unclear", "skipped") if c[k]]
+        return ", ".join(parts)
