@@ -54,8 +54,9 @@ import numpy as np
 
 from palmcards import revisions
 from palmcards.notes import Notes, notes_from_bytes
+from palmcards.paths import data_dir
 
-SESSIONS_DIR = Path(__file__).resolve().parent.parent / "sessions"
+SESSIONS_DIR = data_dir()  # palmcards.paths: $PALMCARDS_DATA, the checkout's sessions/, or Application Support
 SILENT_PEAK = 1e-3  # a take whose loudest sample is below this is silence
 SCHEMA = 2
 TAKE_WAV = re.compile(r"take-(\d+)\.wav$")

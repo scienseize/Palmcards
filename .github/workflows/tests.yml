@@ -1,0 +1,15 @@
+# Headless tests on Apple silicon: no camera, microphone or window is used.
+# Hardware behaviour is checked by hand (docs/hardware-smoke-test.md).
+name: tests
+on: [push, pull_request]
+jobs:
+  pytest:
+    runs-on: macos-14  # Apple silicon, like the target Mac
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python 3.12 .venv
+      - run: uv pip install --python .venv/bin/python -r requirements.lock.txt
+      - run: .venv/bin/python -m pytest -q -p no:cacheprovider
+        env:
+          PALMCARDS_DATA: ${{ runner.temp }}/palmcards-data

@@ -93,7 +93,7 @@ from palmcards.follow import LiveFollow
 from palmcards.speech import make_job
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
-SCREENS_DIR = Path(__file__).parent / "sessions" / "screens"
+SCREENS_DIR = SESSIONS_DIR / "screens"
 WINDOW = "PalmCards"
 NOTE_S = 1.5  # how long a commit message stays in the label
 KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("b"): "previous",

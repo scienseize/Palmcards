@@ -40,6 +40,7 @@ probability (usually hallucinations in noise).
 
 from __future__ import annotations
 
+import numpy as np
 from rapidfuzz import fuzz
 from rapidfuzz.process import cdist
 
@@ -69,8 +70,9 @@ def _pick(cands: list[tuple[float, int]]) -> tuple[float, int]:
     return best, code
 
 
-def _dp(notes: list[str], trans: list[str], filler: list[bool]):
-    """Alignment of note words to transcript words.
+def _dp_python(notes: list[str], trans: list[str], filler: list[bool]):
+    """Alignment of note words to transcript words (the reference version;
+    _dp runs the same fill compiled, and the tests hold the two identical).
 
     Returns [(note indices, transcript indices, similarity)] in order.
     """
@@ -163,6 +165,140 @@ def _dp(notes: list[str], trans: list[str], filler: list[bool]):
     return _traceback(back, end, end_state, s1, sjt, sjn)
 
 
+def _sim_arrays(notes: list[str], trans: list[str]):
+    """The three similarity matrices of _dp_python, as float64 arrays."""
+    n, m = len(notes), len(trans)
+
+    def sims(a, b):
+        return (cdist(a, b, scorer=fuzz.ratio) / 100.0).astype(np.float64) if a and b \
+            else np.zeros((len(a), len(b)), np.float64)
+
+    return (sims(notes, trans), sims(notes, [trans[j - 1] + trans[j] for j in range(1, m)]),
+            sims([notes[i - 1] + notes[i] for i in range(1, n)], trans))
+
+
+def _fill(s1, sjt, sjn, filler, match_score, fuzzy_slope, min_sim, join_min_sim, op, ext, fc, sub):
+    """_dp_python's fill, loop for loop, on arrays (compiled with numba when
+    available): backpointer codes per cell and state (255 = start, 254 =
+    unreachable), and the last row and last column of scores."""
+    n, m = s1.shape
+    neg = -np.inf
+    eps = 1e-9
+    back = np.full((n + 1, m + 1, 3), 255, np.uint8)
+    r2 = np.full((m + 1, 3), neg)
+    r1 = np.full((m + 1, 3), neg)
+    cur = np.full((m + 1, 3), neg)
+    last_col = np.full((n + 1, 3), neg)
+    last_row = np.full((m + 1, 3), neg)
+    for i in range(n + 1):
+        cur[:, :] = neg
+        for j in range(m + 1):
+            if i == 0 and j == 0:
+                cur[0, 0] = 0.0
+                continue
+            if i == 0:
+                cur[j, 2] = 0.0
+                continue
+            if j == 0:
+                cur[0, 1] = 0.0
+                continue
+            tf = filler[j - 1]
+            # M
+            best, code = neg, 254
+            sim = s1[i - 1, j - 1]
+            pst, pv = 0, r1[j - 1, 0]
+            if r1[j - 1, 1] > pv + eps:
+                pst, pv = 1, r1[j - 1, 1]
+            if r1[j - 1, 2] > pv + eps:
+                pst, pv = 2, r1[j - 1, 2]
+            if sim >= min_sim:
+                sc = pv + (match_score - fuzzy_slope * (1.0 - sim))
+                if sc > best + eps:
+                    best, code = sc, 4 + pst
+            if j >= 2:
+                sj = sjt[i - 1, j - 2]
+                if sj > max(s1[i - 1, j - 2], s1[i - 1, j - 1]) + eps and sj >= join_min_sim:
+                    st, v = 0, r1[j - 2, 0]
+                    if r1[j - 2, 1] > v + eps:
+                        st, v = 1, r1[j - 2, 1]
+                    if r1[j - 2, 2] > v + eps:
+                        st, v = 2, r1[j - 2, 2]
+                    sc = v + (match_score - fuzzy_slope * (1.0 - sj))
+                    if sc > best + eps:
+                        best, code = sc, 8 + st
+            if i >= 2:
+                sj = sjn[i - 2, j - 1]
+                if sj > max(s1[i - 2, j - 1], s1[i - 1, j - 1]) + eps and sj >= join_min_sim:
+                    st, v = 0, r2[j - 1, 0]
+                    if r2[j - 1, 1] > v + eps:
+                        st, v = 1, r2[j - 1, 1]
+                    if r2[j - 1, 2] > v + eps:
+                        st, v = 2, r2[j - 1, 2]
+                    sc = v + (match_score - fuzzy_slope * (1.0 - sj))
+                    if sc > best + eps:
+                        best, code = sc, 12 + st
+            if tf:
+                sc = cur[j - 1, 0] - fc
+                if sc > best + eps:
+                    best, code = sc, 16
+            sc = pv - sub
+            if sc > best + eps:
+                best, code = sc, 20 + pst
+            cur[j, 0] = best
+            back[i, j, 0] = code
+            # X
+            best, code = neg, 254
+            for sc, c in ((r1[j, 0] - op, 4), (r1[j, 2] - op, 6), (r1[j, 1] - ext, 5)):
+                if sc > best + eps:
+                    best, code = sc, c
+            if tf:
+                sc = cur[j - 1, 1] - fc
+                if sc > best + eps:
+                    best, code = sc, 9
+            cur[j, 1] = best
+            back[i, j, 1] = code
+            # Y
+            best, code = neg, 254
+            ycost = fc if tf else ext
+            for sc, c in ((cur[j - 1, 0] - op, 0), (cur[j - 1, 1] - op, 1), (cur[j - 1, 2] - ycost, 2)):
+                if sc > best + eps:
+                    best, code = sc, c
+            cur[j, 2] = best
+            back[i, j, 2] = code
+        last_col[i, :] = cur[m, :]
+        if i == n:
+            last_row[:, :] = cur[:, :]
+        r2, r1, cur = r1, cur, r2
+    return back, last_row, last_col
+
+
+try:  # compiled: ~100x faster, same result
+    from numba import njit
+
+    _fill_fast = njit(cache=True, nogil=True)(_fill)
+except Exception:  # no numba: the same code, slowly
+    _fill_fast = _fill
+
+
+def _dp(notes: list[str], trans: list[str], filler: list[bool]):
+    """_dp_python's alignment with the fill compiled. Same result."""
+    n, m = len(notes), len(trans)
+    if n == 0 or m == 0:
+        return []
+    cfg = ALIGN
+    s1, sjt, sjn = _sim_arrays(notes, trans)
+    back, last_row, last_col = _fill_fast(s1, sjt, sjn, np.array(filler, np.bool_), cfg.match_score,
+                                          cfg.fuzzy_slope, cfg.min_sim, cfg.join_min_sim, cfg.gap_open,
+                                          cfg.gap_extend, cfg.filler_cost, cfg.substitute_cost)
+    ends = [((n, j), last_row[j]) for j in range(m, -1, -1)] + [((i, m), last_col[i]) for i in range(n - 1, -1, -1)]
+    best, end, end_state = NEG, None, M
+    for cell_ij, cell in ends:
+        st, v = _best_state(list(cell))
+        if v > best + EPS:
+            best, end, end_state = v, cell_ij, st
+    return [(ns, ts, float(sim)) for ns, ts, sim in _traceback(back, end, end_state, s1, sjt, sjn)]
+
+
 def _best_state(cell: list[float]) -> tuple[int, float]:
     """State with the highest score; ties prefer M, then X, then Y."""
     st, v = M, cell[M]
@@ -176,7 +312,7 @@ def _traceback(back, end, state, s1, sjt, sjn):
     pairs = []
     i, j = end
     while (i, j) != (0, 0):
-        code = back[i][j][state]
+        code = int(back[i][j][state])
         if code == START:
             break
         if state == M:

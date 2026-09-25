@@ -313,15 +313,36 @@ class MlxWhisperLive:
             self._reader.join(timeout=1.0)
 
 
+PINNED = {SPEECH.model: SPEECH.model_revision, SPEECH.live_model: SPEECH.live_model_revision}
+
+
 def model_revision(repo: str) -> str | None:
-    """The commit of the model snapshot mlx-whisper loads from the local
-    Hugging Face cache, or None if it can't be told (never downloads)."""
+    """The commit of the model snapshot used for `repo`: the pinned one if
+    config pins it, else the cached one; None if it can't be told."""
+    if PINNED.get(repo):
+        return PINNED[repo]
     try:
         from huggingface_hub import snapshot_download
 
         return Path(snapshot_download(repo, local_files_only=True)).name
     except Exception:
         return None
+
+
+def model_path(repo: str) -> str:
+    """Where mlx-whisper should load `repo` from: the pinned revision's local
+    snapshot. Falls back to the repo name (mlx-whisper then fetches the
+    latest) only when nothing is pinned."""
+    revision = PINNED.get(repo)
+    if not revision:
+        return repo
+    from huggingface_hub import snapshot_download
+
+    try:
+        return snapshot_download(repo, revision=revision, local_files_only=True)
+    except Exception:
+        raise RuntimeError(f"model {repo} at revision {revision[:12]} is not downloaded; "
+                           "run: python scripts/download_models.py") from None
 
 
 class MlxWhisper:
@@ -339,7 +360,7 @@ class MlxWhisper:
 
         result = mlx_whisper.transcribe(
             audio,
-            path_or_hf_repo=self.model,
+            path_or_hf_repo=model_path(self.model),
             language=language,
             word_timestamps=True,
             condition_on_previous_text=False,
@@ -352,7 +373,7 @@ class MlxWhisper:
 
     def live(self, language: str, clock: Callable[[], float], where: str = SPEECH.live_where,
              hints: tuple[str, ...] = ()) -> MlxWhisperLive:
-        return MlxWhisperLive(self.live_model, language, clock, where)  # hints: no (a prompt made it loop)
+        return MlxWhisperLive(model_path(self.live_model), language, clock, where)  # hints: no (a prompt made it loop)
 
 
 def _apple() -> Recognizer:

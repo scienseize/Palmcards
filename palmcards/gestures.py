@@ -43,9 +43,10 @@ import cv2
 import numpy as np
 
 from palmcards.config import CURSOR, OPS, POSE, REHEARSE, TIMING, TRACKING
+from palmcards.paths import data_dir
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
-LOG_DIR = Path(__file__).resolve().parent.parent / "sessions" / "gesture-logs"
+LOG_DIR = data_dir() / "gesture-logs"
 
 # MediaPipe hand landmark indices.
 WRIST = 0

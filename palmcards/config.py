@@ -106,6 +106,10 @@ class Recording:
 class Speech:
     backend: str = "mlx-whisper"  # palmcards.asr BACKENDS: "mlx-whisper" or "apple"
     model: str = "mlx-community/whisper-large-v3-turbo"  # or "mlx-community/whisper-small-mlx"
+    # Model revisions (Hugging Face commits) are pinned, so a model update
+    # upstream never changes results silently; scripts/download_models.py
+    # fetches exactly these. None: whatever snapshot is cached.
+    model_revision: str | None = "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb"
     language: str = "en"  # default for `main.py --lang`
     rate: int = 16000  # Whisper's input rate
     # Leading/trailing silence is trimmed before transcription: a 20 ms frame
@@ -128,6 +132,7 @@ class Speech:
     # every 0.3 s gave a median lag of 0.63-0.75 s on good takes (every 0.5 s:
     # over 1 s), in a separate process the frame rate held at 30 fps.
     live_model: str = "mlx-community/whisper-base-mlx"
+    live_model_revision: str | None = "1e3e249fb8d01c655324bd6841b1deadffd6d04c"
     live_window_s: float = 4.0
     live_step_s: float = 0.3
     live_where: str = "process"  # where windows are read: "process" or "thread"
