@@ -4,6 +4,8 @@ CI and `pytest` never touch a camera, microphone, window or model inference in t
 
 Setup: the lock-file environment, the models downloaded, and Camera and Microphone allowed for the terminal.
 
+First run the automatic part, `.venv/bin/python scripts/hardware_check.py`. It covers the camera rate, the microphone and its device clock, a loopback click, the live model's load time and `say`, and needs no one at the Mac. The steps below are the ones that need you.
+
 1. **Start.** Run `.venv/bin/python main.py samples/sample_notes.md`. The window shows the mirrored camera at ~30 fps (stats line, bottom right) with the notes on the left.
 2. **Prepare gestures.** Browse with one finger, two fingers and a flat hand, and focus. Open palm on a focused word, pick **hear it**, then pinch and lift: `say` speaks the sentence. A tone commit says "not available yet".
 3. **Take.** Raise a fist and hold 1 s; the count-in runs and REC starts. Read the first section aloud: the orange sentence follows you, and the next section appears faint during the last sentence and takes over once you say its opening. Flick in the zone; the section moves on. Hold an open palm to stop.

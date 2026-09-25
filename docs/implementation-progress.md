@@ -20,7 +20,7 @@ user runs them. They are never inferred from unit tests.
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
 | 8 — Product completion | Implemented, validation pending | Six slices: reopen + playback; export; stress edits + undo; optional LLM (off by default); tutorial, hints, preferences; take metrics (speech, hands; gaze/posture not measured) | 381 passed | Hardware checks; decisions: cloud LLM provider, left-handed layout, backward flick; gaze/posture need models + calibration |
-| End-to-end release gate | Pending (hardware) | — | Not run: needs the target Mac with camera and microphone | Run the checklist below and docs/hardware-smoke-test.md; record results here |
+| End-to-end release gate | In progress | scripts/hardware_check.py (automatic part) | 2026-09-26: camera 29.9 fps, loop 30.2 fps, hands 12.8 ms, draw 3.2 ms; mic 48 kHz with device clock (adc), no overflows; click round trip 113.6 ms; live model ready 1.6 s; say ok | Interactive checklist below (gestures, a real take, clap, recovery, reopen) |
 
 ## Log
 
@@ -765,3 +765,27 @@ Next action: the end-to-end release gate on the target Mac (hardware; user).
 - [ ] Saved sessions reopen, and Review and playback use their own snapshots.
 - [ ] The available controls match what is implemented.
 - [ ] Automated tests (pytest: 381 passed on 2026-09-26) and manual checks are reported separately.
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: end-to-end release gate, automatic part
+Status: automatic hardware checks passed; interactive checks pending (need the user at the Mac)
+Current HEAD / optional commit ID: cdfa4ee -> hardware check commit (see git log)
+Files and behavior changed: scripts/hardware_check.py (new): camera (rate, loop rate with hand tracking
+  and drawing), microphone (3 s through AudioRecorder + TakeWriter to a temporary folder, deleted;
+  clock source, peak, overflows, gaps), a loopback click (speaker -> microphone round trip), the live
+  model's load in its own process, `say`. --quiet skips the sounds; --json saves results.
+Tests run and exact outcome: pytest unchanged (381 passed).
+Manual / hardware checks performed (MacBook Air, macOS 26.6.2, 2026-09-26), all ok:
+  camera 1280x720, 29.9 fps from the camera, 30.2 fps loop with hand tracking (12.8 ms) and the
+    overlay (3.2 ms median);
+  microphone 48 kHz, first sample placed with the device clock (adc, not the fallback), 3.05 s
+    written, peak 0.21 (permission granted), 0 overflows, 0 gaps, state saved;
+  click round trip 113.6 ms (output + input latency: the most the audio/app-clock mapping can be off
+    by; the input side alone is less);
+  live model (whisper-base, pinned) ready in 1.6 s in a separate process; `say` spoke in 2.9 s.
+Evidence or artifact paths: sessions/hardware/check-*.json (gitignored).
+Unverified assumptions and remaining risks: the interactive checklist (gestures, voice follow in a
+  real take, clap test, recovery after a kill, reopen and playback, keys) still needs the user.
+Next action: the user runs the interactive release-gate checklist.
+```
