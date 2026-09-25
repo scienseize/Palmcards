@@ -8,11 +8,16 @@
         during a take: feed() it audio as it arrives, poll() for the words
         that are confirmed
 
-Live words are confirmed by agreement: the engine re-reads the last
-SPEECH.live_window_s of audio every SPEECH.live_step_s, and a word counts
-once two consecutive readings agree on it (same word, same place). The
-newest word in a window is often cut off and read differently each time;
-waiting for agreement keeps those guesses off the screen.
+Live words are confirmed by agreement: every SPEECH.live_step_s the engine
+re-reads the recent audio, and a word counts once two consecutive readings
+agree on it (same word, same place). The newest word in a window is often
+cut off and read differently each time; waiting for agreement keeps those
+guesses off the screen.
+
+A window starts at the last confirmed word, never more than
+SPEECH.live_window_s back. Starting mid-word would make Whisper garble the
+opening words, and two windows cut in the same place garble them the same
+way, so the garbage would be confirmed.
 
 Live words are display only. The transcript of record is made after the
 take (palmcards.speech).
@@ -123,7 +128,7 @@ class Agreement:
 
 # --- mlx-whisper -------------------------------------------------------------
 
-def _read_window(audio: np.ndarray, language: str, model: str) -> list[dict]:
+def _read_window(audio: np.ndarray, language: str, model: str, prompt: str | None = None) -> list[dict]:
     import mlx_whisper  # heavy; only the reader needs it
 
     result = mlx_whisper.transcribe(
@@ -132,6 +137,7 @@ def _read_window(audio: np.ndarray, language: str, model: str) -> list[dict]:
         language=language,
         word_timestamps=True,
         condition_on_previous_text=False,
+        initial_prompt=prompt or None,
         temperature=0.0,
         verbose=None,
     )
@@ -141,13 +147,13 @@ def _read_window(audio: np.ndarray, language: str, model: str) -> list[dict]:
 
 
 def _serve_windows(inbox, outbox, model: str, language: str) -> None:
-    """Window reader loop, in a thread or a process: (n, audio) in,
+    """Window reader loop, in a thread or a process: (n, audio, prompt) in,
     (n, words, ms, error) out, until None."""
     while (job := inbox.get()) is not None:
-        n, audio = job
+        n, audio, prompt = job
         t = time.perf_counter()
         try:
-            words, error = _read_window(audio, language, model), None
+            words, error = _read_window(audio, language, model, prompt), None
         except Exception as exc:
             words, error = [], f"{type(exc).__name__}: {exc}"
         outbox.put((n, words, round((time.perf_counter() - t) * 1000, 1), error))
@@ -155,7 +161,7 @@ def _serve_windows(inbox, outbox, model: str, language: str) -> None:
 
 
 class MlxWhisperLive:
-    """Live stream on mlx-whisper: re-reads the last window every step.
+    """Live stream on mlx-whisper: re-reads the recent audio every step.
 
     Windows are read one at a time; while one is being read, new audio just
     accumulates and the next window goes as soon as the reader is free (a
@@ -179,7 +185,7 @@ class MlxWhisperLive:
         self._fed = 0  # samples fed in total
         self._since = self._step  # samples fed since the last window was sent
         self._busy = False
-        self._sent: dict[int, tuple[float, bool]] = {}  # run -> (window start, window full)
+        self._sent: dict[int, tuple[float, bool]] = {}  # run -> (window start, window cut mid-speech)
         self._agree = Agreement()
         self._done: queue.Queue = queue.Queue()
         if where == "process":
@@ -193,12 +199,12 @@ class MlxWhisperLive:
                                             name="live-reader", daemon=True)
         self._reader.start()
         threading.Thread(target=self._collect, args=(results,), name="live-collect", daemon=True).start()
-        self._send(-1, np.zeros(self.rate, np.float32), 0.0, False)  # loads the model
+        self._send(-1, np.zeros(self.rate, np.float32), 0.0, False, None)  # loads the model
 
-    def _send(self, n: int, audio: np.ndarray, start: float, full: bool) -> None:
+    def _send(self, n: int, audio: np.ndarray, start: float, cut: bool, prompt: str | None) -> None:
         self._busy = True
-        self._sent[n] = (start, full)
-        self._inbox.put((n, audio))
+        self._sent[n] = (start, cut)
+        self._inbox.put((n, audio, prompt))
 
     def _collect(self, results) -> None:
         while (item := results.get()) is not None:
@@ -212,12 +218,20 @@ class MlxWhisperLive:
         if self._since < self._step or self._busy or not self.ready:
             return
         self._since = 0
-        if rms_db(self._window) < SPEECH.live_min_rms_db:
+        start = t_end - len(self._window) / self.rate
+        confirmed = self._agree.confirmed
+        anchor = confirmed[-1].start - SPEECH.live_anchor_pad_s if confirmed else None
+        if anchor is not None and anchor > start:  # start at the last confirmed word
+            window, start, cut = self._window[int((anchor - start) * self.rate):], anchor, False
+        else:  # nothing confirmed lately: the last live_window_s, cut wherever it falls
+            window, cut = self._window, self._fed > len(self._window)
+        if rms_db(window) < SPEECH.live_min_rms_db:
             self.skipped_silent += 1
             return
+        n = SPEECH.live_prompt_words
+        prompt = " ".join(w.text for w in confirmed[-n - 1:] if w.start < start) if n else None
         self.runs += 1
-        full = self._fed > len(self._window)  # older audio was cut off at the window's start
-        self._send(self.runs, self._window.copy(), t_end - len(self._window) / self.rate, full)
+        self._send(self.runs, window.copy(), start, cut, prompt)
 
     def poll(self) -> list[LiveWord]:
         out = []
@@ -226,7 +240,7 @@ class MlxWhisperLive:
                 n, words, ms, error, arrived = self._done.get_nowait()
             except queue.Empty:
                 return out
-            start, full = self._sent.pop(n)
+            start, cut = self._sent.pop(n)
             if n < 0:
                 self.ready = True
                 continue
@@ -234,8 +248,8 @@ class MlxWhisperLive:
                 self.errors.append(error)
                 continue
             self.run_ms.append(ms)
-            # A word starting right at a full window's edge may be cut off.
-            edge = SPEECH.live_edge_s if full else -1.0
+            # A word starting right at the edge of a window cut mid-speech may be cut off.
+            edge = SPEECH.live_edge_s if cut else -1.0
             reading = [LiveWord(w["text"], round(start + w["start"], 3), round(start + w["end"], 3),
                                 round(w["probability"], 3))
                        for w in words if w["start"] >= edge and w["probability"] >= ALIGN.min_probability]

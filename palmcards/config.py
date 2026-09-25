@@ -113,11 +113,17 @@ class Speech:
         ("en", "Um, uh, so, like, I mean... okay, so, um, here's the thing."),
     )
     # Live recognition during a take (milestone 6b): a small model re-reads
-    # the last window of audio every step; a word is confirmed once two
-    # consecutive readings agree on it (palmcards.asr).
+    # the recent audio every step, from the last confirmed word but at most
+    # live_window_s back; a word is confirmed once two consecutive readings
+    # agree on it (palmcards.asr).
     live_model: str = "mlx-community/whisper-base-mlx"
     live_window_s: float = 4.0
     live_step_s: float = 0.5
+    live_anchor_pad_s: float = 0.05  # a window starts this long before the last confirmed word
+    # Confirmed words before the window given as Whisper's prompt; 0 = none.
+    # Off: in the stage 1 benchmark a prompt sent Whisper into loops
+    # ("very, very, very, ...") and carried misheard words forward.
+    live_prompt_words: int = 0
     live_min_rms_db: float = -45.0  # quieter windows (dBFS) are not read
     live_edge_s: float = 0.2  # words starting this close to a full window's start may be cut off
     live_overlap_s: float = 0.1  # word edges move this much between readings
@@ -194,6 +200,18 @@ class Cues:
 
 
 @dataclass(frozen=True)
+class Follow:
+    # The notes following the voice during a take (palmcards.follow). Live
+    # words are matched against the current section plus the opening of the
+    # next only, so a stray match can't jump far.
+    tail_words: int = 12  # newest live words aligned each time
+    ahead_words: int = 8  # the next section's opening: whole sentences up to at least this many words
+    forward_words: int = 3  # note words matched in a row to move on (next sentence or next section)
+    back_words: int = 5  # ... to move back to an earlier sentence in the section
+    run_gap: int = 1  # note words missing, or odd words heard, between two matches in a row
+
+
+@dataclass(frozen=True)
 class Voice:
     # Text to speech (palmcards.tts), for the options ring's "hear it" node.
     backend: str = "say"  # palmcards.tts BACKENDS; macOS `say`
@@ -210,4 +228,5 @@ REHEARSE = Rehearse()
 SPEECH = Speech()
 ALIGN = Align()
 CUES = Cues()
+FOLLOW = Follow()
 VOICE = Voice()

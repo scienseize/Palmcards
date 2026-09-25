@@ -92,12 +92,19 @@ def test_run_job_writes_what_the_recognizer_heard(tmp_path, monkeypatch):
 
 
 def test_live_stream_reads_windows_and_confirms(monkeypatch):
-    """The live stream's plumbing, with a scripted reader instead of Whisper."""
-    said = [("one", 0.2), ("two", 0.6), ("three", 1.0)]
+    """The live stream's plumbing, with a scripted reader instead of Whisper.
+    The fake audio's samples hold their own time, so the reader knows where
+    each window starts."""
+    said = [("one", 0.2), ("two", 0.6), ("three", 1.0), ("four", 1.9)]
+    windows, prompts = [], []
 
-    def fake_read(audio, language, model):
-        heard = len(audio) / SPEECH.rate  # seconds of audio in this window
-        return [{"text": t, "start": s, "end": s + 0.3, "probability": 0.9} for t, s in said if s + 0.3 <= heard]
+    def fake_read(audio, language, model, prompt=None):
+        w0 = (float(audio[0]) - 0.1) / 0.01  # seconds into the take
+        w1 = w0 + len(audio) / SPEECH.rate
+        windows.append(round(w0, 2))
+        prompts.append(prompt)
+        return [{"text": t, "start": s - w0, "end": s + 0.3 - w0, "probability": 0.9}
+                for t, s in said if w0 <= s and s + 0.3 <= w1]
 
     monkeypatch.setattr(asr, "_read_window", fake_read)
     clock = [0.0]
@@ -108,19 +115,26 @@ def test_live_stream_reads_windows_and_confirms(monkeypatch):
             live.poll()
             time.sleep(0.01)
         assert live.ready
-        loud = np.full(int(SPEECH.live_step_s * SPEECH.rate), 0.1, np.float32)
+        n = int(SPEECH.live_step_s * SPEECH.rate)
         got = []
         for step in range(1, 7):  # 3 s of sound, fed step by step
             t = step * SPEECH.live_step_s
             clock[0] = t
-            live.feed(loud, t_end=10.0 + t)  # the take started at app time 10
+            audio = (0.1 + 0.01 * (t - SPEECH.live_step_s + np.arange(n) / SPEECH.rate)).astype(np.float32)
+            live.feed(audio, t_end=10.0 + t)  # the take started at app time 10
             deadline = time.time() + 2
             while live._busy and time.time() < deadline:
                 time.sleep(0.005)
             got += live.poll()
-        assert [w.text for w in got] == ["one", "two", "three"]
+        assert [w.text for w in got] == ["one", "two", "three", "four"]
         assert got[0].start == pytest.approx(10.2) and got[0].confirmed_at is not None
         assert live.runs == 6 and live.skipped_silent == 0 and not live.errors
+        # Windows start at the take until a word is confirmed, then at the last confirmed word.
+        windows, prompts = windows[1:], prompts[1:]  # the first read loads the model
+        assert windows[:2] == [0.0, 0.0]
+        assert windows[2] == pytest.approx(0.2 - SPEECH.live_anchor_pad_s, abs=0.01)
+        assert windows[-1] == pytest.approx(1.0 - SPEECH.live_anchor_pad_s, abs=0.01)
+        assert all(p is None for p in prompts)  # SPEECH.live_prompt_words = 0
         live.feed(np.zeros(int(SPEECH.live_window_s * SPEECH.rate), np.float32), t_end=20.0)
         assert live.skipped_silent == 1
     finally:

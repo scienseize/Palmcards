@@ -248,6 +248,7 @@ palmcards/
 │   ├── tts.py           # text to speech interface; macOS say
 │   ├── prosody.py       # pitch (pyin) and loudness per take, cached
 │   ├── align.py         # transcript <-> notes alignment
+│   ├── follow.py        # live words -> where the speaker is in the notes (6b)
 │   ├── player.py        # debug player: a take's audio with the notes highlighted as they're said
 │   ├── replay.py        # replay recorded hand landmarks through the gesture code (regression)
 │   ├── cues.py          # planned marks vs measured delivery -> verdicts
@@ -268,6 +269,7 @@ palmcards/
 - Gesture regression: `samples/gestures/*.json` are stretches of `main.py --trace` recordings (MediaPipe hand landmarks only, no video) with what the app recognised live. `tests/test_gesture_replay.py` replays them through `ModeMachine` and must reproduce it; `python -m palmcards.replay` prints the same check. Samples marked `known_issue` are strict expected failures that document a bug until it's fixed. New samples: record with `--trace`, add the window to `SEGMENTS` in `scripts/cut_gesture_samples.py`, run it. Never commit video.
 - Keep camera/gesture code runnable standalone (`python -m palmcards.gestures` shows a debug view with landmarks and the detected gesture name).
 - Speech runs offline on recorded sessions: `python -m palmcards.speech sessions/<run>` (transcribe, judge and report; takes from before milestone 6 get their verdicts; `--realign` re-aligns and re-judges saved transcripts without Whisper or pyin, for tuning `ALIGN` and `CUES`) and `python -m palmcards.player sessions/<run> [--take N]` (hear a take with the notes highlighted as they're said).
+- Live recognition (6b) is benchmarked offline: `python scripts/bench_live.py sessions/<run> --take N [--model REPO] [--step S] [--where thread|process] [--camera SECONDS] [--json OUT]` replays a take in real time and reports live-word lag, wrong section jumps, sentence tracking and (with `--camera`) the frame rate; `--rescore OUT.json` re-scores saved runs after tuning `FOLLOW`.
 - macOS needs Camera and Microphone permission for the terminal app running Python (System Settings > Privacy & Security).
 
 ## Milestones
