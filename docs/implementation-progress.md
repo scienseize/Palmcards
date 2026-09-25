@@ -20,7 +20,7 @@ user runs them. They are never inferred from unit tests.
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
 | 8 — Product completion | Implemented, validation pending | Six slices: reopen + playback; export; stress edits + undo; optional LLM (off by default); tutorial, hints, preferences; take metrics (speech, hands; gaze/posture not measured) | 381 passed | Hardware checks; decisions: cloud LLM provider, left-handed layout, backward flick; gaze/posture need models + calibration |
-| End-to-end release gate | Pending | None | Not run | Run on target hardware |
+| End-to-end release gate | Pending (hardware) | — | Not run: needs the target Mac with camera and microphone | Run the checklist below and docs/hardware-smoke-test.md; record results here |
 
 ## Log
 
@@ -733,3 +733,35 @@ Reason for any departure from this plan: gaze, posture and face touching are not
   step and validation against people; reporting them as "not measured" is the honest state.
 Next action: the end-to-end release gate on the target Mac (hardware; user).
 ```
+
+## Open decisions (need the user)
+
+- **Cloud LLM provider.** Only a local Ollama provider is wired in (off by default). `ANTHROPIC_API_KEY`
+  is set in this environment, but sending notes off the Mac, and the cost, were never authorised, so
+  no cloud provider was implemented or called.
+- **Backward flick.** Asked on 2026-09-25, unanswered. The voice only advances; `b`, `j` and `k` correct
+  by hand for now.
+- **Left-handed layout.** Mirror the text, hand box and command zone? MediaPipe's handedness label is
+  too unreliable to switch on automatically.
+- **Push and CI.** `.github/workflows/tests.yml` has never run. Pushing publishes the repository, so it
+  waits for your go-ahead.
+- **Evaluation data.** Consented, labelled takes are needed before any accuracy claim (see
+  docs/evaluation.md).
+
+## End-to-end release gate (to run on the target Mac)
+
+`import -> prepare -> rehearse -> review -> play a sentence -> drill -> close -> reopen the saved session`
+(`python main.py notes.md`, then `python main.py --open RUN`). Tick each item after checking it live:
+
+- [ ] Every sentence and verdict is reachable without clipping.
+- [ ] Gesture controls work, with a reliable fallback stop and navigation route (keys t x n b j k).
+- [ ] An interrupted take is preserved and recoverable, with an accurate status.
+- [ ] A worker failure can be retried (r) without duplicate or mismatched results.
+- [ ] Missing terminal speech does not receive an ending-intonation hit or miss.
+- [ ] Editing or moving the imported document does not alter past takes.
+- [ ] New edits create revisions and support undo (u); old takes keep their meaning.
+- [ ] Recording, live-follow and analysis clocks and discontinuities line up (clap test).
+- [ ] Long sessions have bounded queues and memory, and measured performance.
+- [ ] Saved sessions reopen, and Review and playback use their own snapshots.
+- [ ] The available controls match what is implemented.
+- [ ] Automated tests (pytest: 381 passed on 2026-09-26) and manual checks are reported separately.
