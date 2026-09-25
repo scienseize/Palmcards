@@ -66,10 +66,10 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 - All other hand movement is logged as data (gesture amount, fidgeting, face touching), never treated as a command.
 
 ### Review (same grammar)
-- Two fingers together: browse sentences; each shows verdict chips
-- Fold to focus: full verdicts for that sentence (marks hit/missed/unclear, pace, fillers, gaze)
-- L-hand tilt: dial through takes (take 1, 2, 3...) for the focused sentence
-- Pinch + lift on a focused sentence: drill it (loop just that sentence as a mini take)
+- Two fingers together: browse sentences; every delivery mark is drawn as a chip coloured by its verdict (green hit, red missed, grey unclear, faint text for skipped)
+- Fold to focus: the sentence enlarged with its verdicts listed under it (each mark's verdict and reason, pace against the take, fillers; gaze comes with milestone 7)
+- L-hand turned like a knob (~20° per take, relative to where it starts, like the options ring): dial through the takes that said the focused sentence. Each sentence shows the latest take that said it until dialled; the pick stays after backing out, until a newer take says the sentence again.
+- Pinch + lift on a focused sentence: drill it. The count-in, then only that sentence on screen; no flick; open palm in the zone stops it. A drill take is aligned against that sentence only and its pace is judged against the last full take. Pinch + lift at word or paragraph level does nothing in Review.
 - Closed fist raised and held 1 s: new full take
 - Open palm inside the command zone held 1.5 s: back to Prepare, to edit before the next take (the zone is shown in Review with this hint)
 
@@ -119,13 +119,15 @@ Temporal rules:
 
 | Markup | Meaning | Check after a take (starting thresholds, tune later) |
 | --- | --- | --- |
-| `/` | short pause | gap >= ~0.3 s between word timestamps |
-| `//` | long pause | gap >= ~0.7 s |
-| `*word*` | stress | word's peak loudness or pitch clearly above sentence median |
-| `[slow]` / `[fast]` | pace | sentence WPM < 85% / > 115% of take average |
-| `[rise]` / `[fall]` | ending intonation | pitch slope over last ~0.5 s of voiced audio |
+| `/` | short pause | gap >= 0.3 s from the last word said before the note word (so a restart is measured on its final attempt); a filler in the gap is a miss; words Whisper was unsure of are ignored |
+| `//` | long pause | gap >= 0.7 s |
+| `*word*` | stress | word's peak (90th percentile, window padded 0.05 s) >= +3 dB louder or +2 semitones higher than the other words: a line fitted through their peaks over time (pitch and loudness drift down through a sentence) with 4+ other words, else their median |
+| `[slow]` / `[fast]` | pace | sentence WPM < 85% / > 115% of the take average (spoken sentences without a pace mark); fewer than 4 aligned words = unclear |
+| `[rise]` / `[fall]` | ending intonation | Theil-Sen slope of pitch over the last 0.5 s of voiced sound in the sentence, at least 3 semitones/s up or down |
 
 Each mark gets a verdict: `hit`, `missed`, or `unclear` (not enough voiced audio to judge). "Unclear" is a valid answer; never invent a verdict. A sentence that was not spoken is `skipped`, not `missed`.
+
+Pitch is librosa `pyin` (65 to 400 Hz, 10 ms hop) on the take at 16 kHz, in semitones from the speaker's median for the take. Voiced frames 18 dB below the take's loud speech are ignored (breath, hum and creak that pyin tracks at the bottom of its range). All thresholds are `CUES` in `config.py`.
 
 Whisper tends to drop "um"/"uh": prime it with an initial prompt containing fillers.
 
@@ -139,6 +141,8 @@ sessions/
 │   ├── session.json                 # created with the first take; no takes, no folder
 │   ├── take-01.wav                  # 16-bit PCM mono at the mic's own rate (48 kHz on the MacBook Air)
 │   ├── take-01.transcript.json      # Whisper's words, written after the take stops
+│   ├── take-01.prosody.npz          # pitch and loudness per 10 ms frame (cache; verdicts are recomputed from it)
+│   ├── take-01.verdicts.json        # a verdict per delivery mark
 │   └── take-02.wav
 ├── gesture-logs/
 │   ├── 20260925-101345.jsonl        # every pose and event, one JSON object per line
@@ -166,6 +170,8 @@ sessions/
       "peak": 0.40456,
       "sections": [{"section": 0, "t": 0.0}, {"section": 1, "t": 30.943}],
       "transcript": "take-01.transcript.json",
+      "verdicts": "take-01.verdicts.json",
+      "marks": {"hit": 6, "missed": 4, "unclear": 0, "skipped": 0},
       "alignment": {
         "sentences": [{"sentence": 0, "status": "spoken", "coverage": 1.0, "start": 50.29, "end": 52.49,
                        "words": [0, 1, 2], "misheard": []}],
@@ -191,6 +197,8 @@ sessions/
 | `sections` | section indices (0-based, as in `Notes.sections`) with the time into the take each one came up; the first is always `t = 0` |
 | `transcript` | the take's transcript file; absent until transcription finishes |
 | `alignment` | the transcript matched to the notes (`palmcards/align.py`); word numbers index the transcript's `words` |
+| `verdicts`, `marks` | the take's verdicts file and its verdict counts; absent until judged |
+| `drill` | only on a drill take: the sentence (`Notes.sentences` index) it rehearsed |
 
 | Alignment field | Meaning |
 | --- | --- |
@@ -202,9 +210,24 @@ sessions/
 
 `take-01.transcript.json`: `{"take", "wav", "model", "language", "t_start", "offset_s", "text", "words": [{"text", "start", "end", "probability"}]}`. `offset_s` is the leading silence trimmed before Whisper ran; word times are already on the app clock (`t_start + offset_s + Whisper's time`).
 
-Later milestones add their results to each take (verdicts, metrics) rather than inventing new files.
+`take-01.prosody.npz`: arrays `t` (frame centres, app clock), `f0` (Hz, NaN where pyin found no voice), `rms_db` (dBFS). Made once per take in the transcription worker, alongside Whisper; the loudness gate and semitones are applied when it is read, so tuning `CUES` never re-runs pyin.
 
-Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill_stub`, `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
+`take-01.verdicts.json` (`palmcards/cues.py`):
+
+```json
+{"take": 1, "take_wpm": 193.0, "baseline": "take",
+ "counts": {"hit": 6, "missed": 4, "unclear": 0, "skipped": 0},
+ "thresholds": {"short_pause_s": 0.3, "...": "every CUES value used"},
+ "sentences": [{"sentence": 2, "status": "spoken", "wpm": 171.2, "fillers": ["um"],
+                "marks": [{"kind": "long_pause", "word": 7, "verdict": "hit", "value": 0.9, "threshold": 0.7,
+                           "reason": "0.90 s pause"}]}]}
+```
+
+`marks` follow `Sentence.marks` order; `word` is as in `Mark.word`. `value`/`threshold` are seconds (pauses), a ratio to `take_wpm` (pace), `{"loud_db", "pitch_st"}` (stress) or semitones per second (ending). `baseline` is `given` for a drill, whose `take_wpm` is the last full take's. A filler counts toward the sentence it falls in, or the next one said after it.
+
+Later milestones add their results to each take (metrics) rather than inventing new files.
+
+Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
 
 ## Code layout
 
@@ -217,11 +240,13 @@ palmcards/
 │   ├── gestures.py      # landmarks -> gesture events, mode-aware state machine, command zone
 │   ├── config.py        # every gesture threshold in one place
 │   ├── render.py        # Pillow text overlay onto mirrored frame
-│   ├── speech.py        # whisper transcription (worker process, offline CLI), prosody features
+│   ├── speech.py        # whisper transcription and judging (worker process, offline CLI)
+│   ├── prosody.py       # pitch (pyin) and loudness per take, cached
 │   ├── align.py         # transcript <-> notes alignment
 │   ├── player.py        # debug player: a take's audio with the notes highlighted as they're said
 │   ├── replay.py        # replay recorded hand landmarks through the gesture code (regression)
 │   ├── cues.py          # planned marks vs measured delivery -> verdicts
+│   ├── review.py        # which take each sentence shows in Review, verdict lines
 │   ├── metrics.py       # gaze, posture, filler rate, pace
 │   ├── llm.py           # optional LLM helper behind one interface
 │   └── session.py       # takes and results as JSON, export
@@ -234,10 +259,10 @@ palmcards/
 ## How to work in this repo
 
 - Build one milestone at a time (below). Finish, run, commit, then move on.
-- Pure logic (`notes.py`, `cues.py`, `align.py`) gets unit tests with pytest. Camera and gesture code is tested by running the app; the user will report what they see or share screenshots.
+- Pure logic (`notes.py`, `cues.py`, `align.py`, `review.py`) gets unit tests with pytest; `cues.py` uses synthetic audio (tones gliding up and down, a louder word) for stress and intonation. Camera and gesture code is tested by running the app; the user will report what they see or share screenshots.
 - Gesture regression: `samples/gestures/*.json` are stretches of `main.py --trace` recordings (MediaPipe hand landmarks only, no video) with what the app recognised live. `tests/test_gesture_replay.py` replays them through `ModeMachine` and must reproduce it; `python -m palmcards.replay` prints the same check. Samples marked `known_issue` are strict expected failures that document a bug until it's fixed. New samples: record with `--trace`, add the window to `SEGMENTS` in `scripts/cut_gesture_samples.py`, run it. Never commit video.
 - Keep camera/gesture code runnable standalone (`python -m palmcards.gestures` shows a debug view with landmarks and the detected gesture name).
-- Speech runs offline on recorded sessions: `python -m palmcards.speech sessions/<run>` (transcribe and report; `--realign` re-aligns saved transcripts without Whisper) and `python -m palmcards.player sessions/<run> [--take N]` (hear a take with the notes highlighted as they're said).
+- Speech runs offline on recorded sessions: `python -m palmcards.speech sessions/<run>` (transcribe, judge and report; takes from before milestone 6 get their verdicts; `--realign` re-aligns and re-judges saved transcripts without Whisper or pyin, for tuning `ALIGN` and `CUES`) and `python -m palmcards.player sessions/<run> [--take N]` (hear a take with the notes highlighted as they're said).
 - macOS needs Camera and Microphone permission for the terminal app running Python (System Settings > Privacy & Security).
 
 ## Milestones

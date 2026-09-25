@@ -14,13 +14,18 @@ which move but never rewrite the text.
 
 In Rehearse the current section is shown whole in the focus panel, with the
 command zone (top right), a recording clock and microphone level, and a
-large 3-2-1 during the count-in.
+large 3-2-1 during the count-in. A drill shows just its one sentence.
+
+In Review each delivery mark is drawn as a chip coloured by its verdict in
+the take that sentence shows (green hit, red missed, grey unclear; a skipped
+mark stays faint text), and a focused sentence lists its verdicts under it.
 """
 
 from __future__ import annotations
 
 import math
 import re
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -56,6 +61,9 @@ COLD_BGR = (255, 150, 60)
 WARM_BGR = (0, 140, 255)
 ZONE_BGR = (170, 170, 170)
 REC_BGR = (60, 60, 230)
+VERDICT_FILL = {"hit": (95, 205, 115), "missed": (240, 90, 75), "unclear": (160, 160, 160)}  # RGB
+DETAIL_TEXT = (235, 235, 235, 235)
+DETAIL_SCALE = 0.7  # verdict lines under a focused sentence, relative to the text
 
 PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
@@ -116,6 +124,11 @@ class ViewState:
     zone_active: bool = False  # a hand is in the command zone
     hold_progress: float = 0.0  # open palm held in the zone, 0..1
     flick_progress: float = 0.0  # sideways swing toward a flick, 0..1
+    drill: int | None = None  # count_in, rehearse: the one sentence a drill rehearses
+    # Review: per sentence, the verdict of each mark (Sentence.marks order) in
+    # the take the sentence shows, "" where there is none.
+    mark_verdicts: tuple[tuple[str, ...], ...] = ()
+    detail: tuple[tuple[str, str], ...] = ()  # Review focus: (verdict or "", line) under the sentence
 
 
 @dataclass(frozen=True)
@@ -123,6 +136,7 @@ class Span:
     text: str
     role: str  # "word" | "mark" | "punct"
     word: int | None = None
+    mark: int | None = None  # index into Sentence.marks, for marks
 
 
 @dataclass
@@ -133,28 +147,35 @@ class Row:
 
 def sentence_units(s: Sentence) -> list[list[Span]]:
     """Display units (unbreakable, space-separated) for one sentence."""
-    pauses = {m.word: m.kind for m in s.pauses()}
+    pauses = {m.word: (i, m.kind) for i, m in enumerate(s.marks) if m in s.pauses()}
+    stress = {m.word: i for i, m in enumerate(s.marks) if m.kind is MarkKind.STRESS}
     units: list[list[Span]] = []
     if s.pace:
-        units.append([Span(f"[{s.pace}]", "mark")])
+        units.append([Span(f"[{s.pace}]", "mark", mark=_mark_index(s, s.pace))])
     wi = 0
     for tok in re.finditer(r"\S+", s.text):
         if wi < len(s.words) and tok.start() == s.words[wi].start:
             if wi in pauses:
-                units.append([Span(PAUSE_TEXT[pauses[wi]], "mark")])
+                units.append([Span(PAUSE_TEXT[pauses[wi][1]], "mark", mark=pauses[wi][0])])
             word = Span(tok.group(), "word", wi)
             if s.words[wi].stressed:
-                units.append([Span("*", "mark"), word, Span("*", "mark")])
+                mi = stress.get(wi)
+                units.append([Span("*", "mark", mark=mi), word, Span("*", "mark", mark=mi)])
             else:
                 units.append([word])
             wi += 1
         else:
             units.append([Span(tok.group(), "punct")])
     if len(s.words) in pauses:
-        units.append([Span(PAUSE_TEXT[pauses[len(s.words)]], "mark")])
+        i, kind = pauses[len(s.words)]
+        units.append([Span(PAUSE_TEXT[kind], "mark", mark=i)])
     if s.ending:
-        units.append([Span(f"[{s.ending}]", "mark")])
+        units.append([Span(f"[{s.ending}]", "mark", mark=_mark_index(s, s.ending))])
     return units
+
+
+def _mark_index(s: Sentence, kind: MarkKind) -> int | None:
+    return next((i for i, m in enumerate(s.marks) if m.kind is kind), None)
 
 
 def layout(sentences: list[Sentence], columns: int) -> list[Row]:
@@ -324,7 +345,7 @@ class TextOverlay:
                 second = f"STARTING IN {state.count_in}"
             else:
                 second = state.status
-            return "REHEARSE", second
+            return "DRILL" if state.drill is not None else "REHEARSE", second
 
         level = (state.level or "").upper()
         if state.mode == "focus":
@@ -354,8 +375,10 @@ class TextOverlay:
         elif ops.kind == "stretch":
             change = "INCREASE" if ops.stretch > 1.05 else "DECREASE" if ops.stretch < 0.95 else "SAME"
             second = f"ADJUST PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}"
-        elif state.mode == "focus":  # nothing started yet: say what the next shape does
-            second = FOCUS_HINTS.get(state.level, "") if state.app == "prepare" else "DROP HAND: BACK"
+        elif state.mode == "focus" and state.app == "prepare":  # nothing started yet: say what the next shape does
+            second = FOCUS_HINTS.get(state.level, "")
+        elif state.mode == "focus":
+            second = state.status or "DROP HAND: BACK"
         else:
             second = state.status
         return first, second
@@ -384,17 +407,39 @@ class TextOverlay:
     def _band_style(self, state: ViewState) -> tuple:
         """What the band's colours depend on (also its cache key)."""
         if state.mode == "focus" and state.focus is not None:
-            return ("focus", state.focus.sentence)
+            return ("focus", state.focus.sentence, state.mark_verdicts)
         if state.mode == "browse" and state.hover is not None:
-            return ("browse", tuple(self.unit(state.level, state.hover.sentence)))
-        return ("browse", (state.current,))
+            return ("browse", tuple(self.unit(state.level, state.hover.sentence)), state.mark_verdicts)
+        return ("browse", (state.current,), state.mark_verdicts)
+
+    def _verdict(self, verdicts: tuple, sentence: int, sp: Span) -> str:
+        if sp.mark is None or sentence >= len(verdicts) or sp.mark >= len(verdicts[sentence]):
+            return ""
+        return verdicts[sentence][sp.mark]
+
+    def _draw_span(self, draw: ImageDraw.ImageDraw, xy: tuple[float, float], sp: Span, font, word_c, mark_c,
+                   verdict: str = "") -> None:
+        """A word, punctuation, or a mark; a judged mark on a chip of its verdict's colour."""
+        if sp.role != "mark":
+            draw.text(xy, sp.text, font=font, fill=word_c)
+        elif verdict in VERDICT_FILL:
+            x0, y0, x1, y1 = draw.textbbox(xy, sp.text, font=font)
+            pad = max(2, font.size // 8)
+            alpha = max(70, min(235, word_c[3] * 2))  # as prominent as the words around it
+            draw.rounded_rectangle((x0 - pad, y0 - pad, x1 + pad, y1 + pad), radius=pad + 1,
+                                   fill=(*VERDICT_FILL[verdict], alpha))
+            draw.text(xy, sp.text, font=font, fill=(20, 20, 20, alpha))
+        elif verdict == "skipped":
+            draw.text(xy, sp.text, font=font, fill=FAINT_MARK)
+        else:
+            draw.text(xy, sp.text, font=font, fill=mark_c)
 
     def _render_band(self, style: tuple, start: int) -> tuple[np.ndarray, np.ndarray]:
         """Rows start..start+band_rows, with row `start` at y = pad."""
         band_h = self.band_rows * self.line_h + 2 * self.pad
         text = Image.new("RGBA", (self.box_w, band_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(text)
-        kind, which = style
+        kind, which, verdicts = style
         for ri in range(start, min(len(self.rows), start + self.band_rows)):
             row = self.rows[ri]
             y = self.pad + (ri - start) * self.line_h
@@ -403,8 +448,8 @@ class TextOverlay:
             else:
                 word_c, mark_c = (ORANGE, ORANGE_MARK) if row.sentence in which else (DIM, DIM_MARK)
             for col, sp in row.spans:
-                x = self.pad + col * self.char_w
-                draw.text((x, y), sp.text, font=self.font, fill=mark_c if sp.role == "mark" else word_c)
+                self._draw_span(draw, (self.pad + col * self.char_w, y), sp, self.font, word_c, mark_c,
+                                self._verdict(verdicts, row.sentence, sp))
         return _premultiply(text)
 
     def _band_valid(self, scroll: float) -> bool:
@@ -426,6 +471,8 @@ class TextOverlay:
 
     def _panel_unit(self, state: ViewState) -> tuple[int, ...] | None:
         """Sentences shown enlarged in the panel instead of the scrolling text, if any."""
+        if state.app in ("count_in", "rehearse") and state.drill is not None:
+            return (state.drill,)
         if state.app in ("count_in", "rehearse"):
             first = next((i for i, s in enumerate(self.sentences) if s.section == state.section), 0)
             return tuple(self.unit("section", first))
@@ -433,16 +480,26 @@ class TextOverlay:
             return tuple(self.unit(state.level, state.focus.sentence))
         return None
 
-    def _focus_panel(self, unit: tuple[int, ...]) -> tuple[int, tuple[np.ndarray, np.ndarray]]:
-        """The unit's sentences enlarged, faint context rows around them.
+    def _focus_panel(self, unit: tuple[int, ...], detail: tuple[tuple[str, str], ...] = (),
+                     verdicts: tuple = ()) -> tuple[int, tuple[np.ndarray, np.ndarray]]:
+        """The unit's sentences enlarged, then the detail lines (Review's
+        verdicts), faint context rows around them.
 
         Returns (panel box height, premultiplied text). The panel grows past
         the normal box only if the unit doesn't fit even at normal size.
         """
-        if self._panel_key == unit:
+        key = (unit, detail, verdicts)
+        if self._panel_key == key:
             return self._panel
         sents = [self.sentences[i] for i in unit]
-        avail = self.box_h - 2 * self.pad
+        dfont = self._get_font(round(self.font_size * DETAIL_SCALE))
+        dlh = round(self.line_h * DETAIL_SCALE)
+        bullet = dlh // 2
+        dcols = max(10, int((self.box_w - 2 * self.pad - bullet * 2) / dfont.getlength("M")))
+        dlines = [(verdict if k == 0 else "", piece) for verdict, line in detail
+                  for k, piece in enumerate(textwrap.wrap(line, dcols, subsequent_indent="  ") or [""])]
+        detail_h = len(dlines) * dlh + (self.pad // 2 if dlines else 0)
+        avail = self.box_h - 2 * self.pad - detail_h
         for scale in FOCUS_SCALES:
             font = self._get_font(round(self.font_size * scale))
             lh = round(self.line_h * scale)
@@ -451,29 +508,39 @@ class TextOverlay:
             if len(rows) * lh <= avail:
                 break
         big_h = len(rows) * lh
-        panel_h = max(self.box_h, min(big_h + 2 * self.pad, int(self.frame_h * 0.9)))
-        spare = panel_h - 2 * self.pad - big_h
+        panel_h = max(self.box_h, min(big_h + detail_h + 2 * self.pad, int(self.frame_h * 0.9)))
+        spare = panel_h - 2 * self.pad - big_h - detail_h
         first, last = self._first_row[unit[0]], self._last_row[unit[-1]]
         above = self.rows[max(0, first - int(spare / 2 // self.line_h)) : first]
         below = self.rows[last + 1 : last + 1 + int((spare - len(above) * self.line_h) // self.line_h)]
-        content = (len(above) + len(below)) * self.line_h + big_h
+        content = (len(above) + len(below)) * self.line_h + big_h + detail_h
         y = self.pad + max(0, (panel_h - 2 * self.pad - content) // 2)
 
         img = Image.new("RGBA", (self.box_w, panel_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        def draw_rows(rows_, font_, lh_, cw_, word_c, mark_c, y_):
+        def draw_rows(rows_, font_, lh_, cw_, word_c, mark_c, y_, sentence_of=lambda r: r.sentence):
             for row in rows_:
                 for col, sp in row.spans:
-                    draw.text((self.pad + col * cw_, y_), sp.text, font=font_,
-                              fill=mark_c if sp.role == "mark" else word_c)
+                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, word_c, mark_c,
+                                    self._verdict(verdicts, sentence_of(row), sp))
                 y_ += lh_
             return y_
 
         y = draw_rows(above, self.font, self.line_h, self.char_w, FAINT, FAINT_MARK, y)
-        y = draw_rows(rows, font, lh, cw, FOCUS_TEXT, FOCUS_MARK, y)
+        # The enlarged rows were laid out afresh: their sentence numbers count from the unit's first.
+        y = draw_rows(rows, font, lh, cw, FOCUS_TEXT, FOCUS_MARK, y, lambda r: unit[r.sentence])
+        if dlines:
+            y += self.pad // 2
+            for verdict, piece in dlines:
+                if verdict in VERDICT_FILL:
+                    cy = y + dlh * 0.45
+                    draw.ellipse((self.pad, cy - bullet / 3, self.pad + bullet * 2 / 3, cy + bullet / 3),
+                                 fill=(*VERDICT_FILL[verdict], 255))
+                draw.text((self.pad + bullet, y), piece, font=dfont, fill=DETAIL_TEXT)
+                y += dlh
         draw_rows(below, self.font, self.line_h, self.char_w, FAINT, FAINT_MARK, y)
-        self._panel_key, self._panel = unit, (panel_h, _premultiply(img))
+        self._panel_key, self._panel = key, (panel_h, _premultiply(img))
         return self._panel
 
     def _chip(self, text: str, size: int, fg, bg, outline=None) -> tuple[np.ndarray, np.ndarray]:
@@ -570,7 +637,8 @@ class TextOverlay:
             # The dot swells with the microphone level: a flat dot means no sound is arriving.
             cv2.circle(frame, (bx0 - 14, (by0 + by1) // 2), 4 + round(8 * state.mic), REC_BGR, -1, cv2.LINE_AA)
             y = by1 + self.pad // 2
-            hints = ("FLICK SIDEWAYS: NEXT SECTION", "HOLD OPEN PALM: STOP")
+            hints = ("HOLD OPEN PALM: STOP",) if state.drill is not None else \
+                ("FLICK SIDEWAYS: NEXT SECTION", "HOLD OPEN PALM: STOP")
         elif state.app == "count_in":
             hints = ("HOLD OPEN PALM: CANCEL",)
         else:
@@ -596,7 +664,7 @@ class TextOverlay:
         top, bottom = box_top, box_top + self.box_h
         unit = self._panel_unit(state)
         if unit is not None:
-            panel_h, text = self._focus_panel(unit)
+            panel_h, text = self._focus_panel(unit, state.detail, state.mark_verdicts)
             top = max(0, box_top + (self.box_h - panel_h) // 2)
             bottom = top + panel_h
             _blend(frame, self.x, top - self.margin, *self._backing(panel_h))

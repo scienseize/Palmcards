@@ -2,9 +2,14 @@ import json
 
 import numpy as np
 
+from datetime import datetime
+
 from palmcards.config import SPEECH
-from palmcards.session import write_wav
-from palmcards.speech import initial_prompt, prepare_audio, resample, run_job, trim_silence, words_on_clock
+from palmcards.notes import parse_text
+from palmcards.session import Session, write_wav
+from palmcards.speech import (
+    baseline_wpm, initial_prompt, make_job, prepare_audio, resample, run_job, trim_silence, words_on_clock,
+)
 
 
 def tone(seconds: float, rate: int, amp: float = 0.3) -> np.ndarray:
@@ -61,15 +66,26 @@ def test_initial_prompt_has_fillers():
     assert initial_prompt("xx") is None
 
 
-def test_silent_take_skips_whisper(tmp_path):
+def job_for(tmp_path, **kw) -> dict:
     job = {"take": 1, "wav": str(tmp_path / "take-01.wav"), "transcript": str(tmp_path / "take-01.transcript.json"),
-           "t_start": 3.0, "language": "en", "silent": True, "sentences": [["hello", "there"]],
-           "texts": ["Hello there."], "realign": False}
-    result = run_job(job)
+           "prosody": str(tmp_path / "take-01.prosody.npz"), "verdicts": str(tmp_path / "take-01.verdicts.json"),
+           "t_start": 3.0, "language": "en", "silent": False, "sentences": [["hello", "there"]],
+           "texts": ["Hello there /."], "words": [["Hello", "there"]], "marks": [[["short_pause", 2]]],
+           "baseline_from": [], "realign": False}
+    return job | kw
+
+
+def test_silent_take_skips_whisper(tmp_path):
+    result = run_job(job_for(tmp_path, silent=True))
     assert result["ok"] and result["transcript"] == "take-01.transcript.json"
     assert result["alignment"]["sentences"][0]["status"] == "skipped"
     data = json.loads((tmp_path / "take-01.transcript.json").read_text())
     assert data["words"] == [] and data["t_start"] == 3.0
+    # Judged too: the only mark is in a sentence that wasn't said.
+    assert result["verdicts"] == "take-01.verdicts.json" and result["marks"]["skipped"] == 1
+    saved = json.loads((tmp_path / "take-01.verdicts.json").read_text())
+    assert saved["take"] == 1 and saved["sentences"][0]["marks"][0]["verdict"] == "skipped"
+    assert (tmp_path / "take-01.prosody.npz").exists()
 
 
 def test_realign_uses_saved_transcript(tmp_path):
@@ -77,10 +93,25 @@ def test_realign_uses_saved_transcript(tmp_path):
     path.write_text(json.dumps({"words": [
         {"text": "Hello", "start": 4.0, "end": 4.3, "probability": 0.9},
         {"text": "there.", "start": 4.4, "end": 4.7, "probability": 0.9}]}))
-    job = {"take": 1, "wav": str(tmp_path / "missing.wav"), "transcript": str(path), "t_start": 3.0,
-           "language": "en", "silent": False, "sentences": [["hello", "there"]], "texts": ["Hello there."],
-           "realign": True}
-    result = run_job(job)
+    write_wav(tmp_path / "take-01.wav", np.zeros(16000 * 2, np.float32), 16000)
+    result = run_job(job_for(tmp_path, realign=True, marks=[[]]))
     s = result["alignment"]["sentences"][0]
     assert (s["status"], s["start"], s["end"]) == ("spoken", 4.0, 4.7)
     assert "0:01.0-0:01.7" in result["report"]
+    assert "no delivery marks" in result["summary"]
+
+
+def test_drill_job_matches_only_its_sentence_and_borrows_the_pace(tmp_path):
+    notes = parse_text("Hello there my friend. [slow] Good evening to you all.")
+    session = Session.create("notes.md", root=tmp_path)
+    full = session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)])
+    drill = session.add_take(np.zeros(800, np.float32), 8000, 5.0, datetime.now(), [(0.0, 0)], drill=1)
+    job = make_job(session, drill, notes)
+    assert job["sentences"] == [[], ["good", "evening", "to", "you", "all"]]
+    assert job["marks"] == [[], [["slow", None]]]
+    assert job["baseline_from"] == [str(session.dir / "take-01.verdicts.json")]
+    assert make_job(session, full, notes)["baseline_from"] == []
+    # Take 1 is judged after the drill was submitted, before the worker reaches it.
+    assert baseline_wpm(job["baseline_from"]) is None
+    (session.dir / full.verdicts_name).write_text(json.dumps({"take_wpm": 150.0}))
+    assert baseline_wpm(job["baseline_from"]) == 150.0

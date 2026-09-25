@@ -11,15 +11,24 @@ between takes. For each take it:
      condition_on_previous_text off,
   3. writes take-NN.transcript.json, every word on the app clock:
      app time = t_start + offset_s + Whisper's time,
-  4. aligns the words to the notes (palmcards.align) and returns the result,
-     which the app stores on the take in session.json.
+  4. aligns the words to the notes (palmcards.align),
+  5. meanwhile, in a thread, measures pitch and loudness (palmcards.prosody,
+     cached as take-NN.prosody.npz),
+  6. judges every delivery mark (palmcards.cues), writes
+     take-NN.verdicts.json, and returns the lot, which the app stores on the
+     take in session.json.
+
+A drill take (one sentence rehearsed on its own) is aligned against that
+sentence only, and its pace is judged against the last full take's.
 
 Offline, for takes already recorded:
 
   python -m palmcards.speech SESSION_DIR [--take N] [--force] [--realign] [--lang xx]
       transcribes takes that have no transcript yet and prints a report;
       --force transcribes again, --realign re-aligns the saved transcripts
-      without running Whisper (fast, for tuning palmcards/config.py ALIGN).
+      and judges them again without running Whisper or pyin (fast, for
+      tuning palmcards/config.py ALIGN and CUES). Takes transcribed before
+      milestone 6 get their verdicts on a plain run.
 
 `python -m palmcards.speech --serve` is the worker: one JSON job per line
 on stdin, one JSON result per line on stdout.
@@ -40,9 +49,11 @@ from pathlib import Path
 
 import numpy as np
 
+from palmcards import cues, prosody
 from palmcards.align import align, summary
 from palmcards.config import SPEECH
 from palmcards.notes import Notes
+from palmcards.prosody import Prosody
 from palmcards.session import Session, TakeRecord, read_wav
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -82,6 +93,19 @@ def prepare_audio(wav: Path) -> tuple[np.ndarray, float]:
     audio = resample(audio, rate)
     start, end = trim_silence(audio, SPEECH.rate)
     return audio[start:end], start / SPEECH.rate
+
+
+def take_prosody(wav: Path, t_start: float, cache: Path, silent: bool) -> Prosody:
+    """The take's pitch and loudness, from the cache or measured (and cached)."""
+    if cache.exists():
+        return prosody.load(cache)
+    if silent:
+        p = Prosody(prosody.EMPTY, prosody.EMPTY, prosody.EMPTY)
+    else:
+        audio, rate = read_wav(wav)
+        p = prosody.analyse(resample(audio, rate), SPEECH.rate, t_start)
+    prosody.save(p, cache)
+    return p
 
 
 # --- Whisper -----------------------------------------------------------------
@@ -124,25 +148,58 @@ def words_on_clock(result: dict, t_start: float, offset_s: float) -> list[dict]:
 
 # --- jobs ----------------------------------------------------------------------
 
+def baseline_wpm(paths: list[str]) -> float | None:
+    """Pace of the first of these verdicts files that has one. The worker
+    reads them when it gets to the drill: takes are judged in order, so the
+    full take just before it is done by then even if it wasn't at submit."""
+    for path in map(Path, paths):
+        if path.exists() and (wpm := json.loads(path.read_text()).get("take_wpm")) is not None:
+            return wpm
+    return None
+
+
 def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = False) -> dict:
     """Everything the worker needs, as plain JSON (it never parses the notes)."""
+    sentences = [[w.norm for w in s.words] for s in notes.sentences]
+    if take.drill is not None:  # only the drilled sentence can be matched
+        sentences = [words if i == take.drill else [] for i, words in enumerate(sentences)]
     return {
         "take": take.number,
         "wav": str(session.dir / take.wav),
         "transcript": str(session.dir / take.transcript_name),
+        "prosody": str(session.dir / take.prosody_name),
+        "verdicts": str(session.dir / take.verdicts_name),
         "t_start": take.t_start,
         "language": session.language,
         "silent": take.silent,
-        "sentences": [[w.norm for w in s.words] for s in notes.sentences],
+        "sentences": sentences,
         "texts": [s.text for s in notes.sentences],
+        "words": [[w.text for w in s.words] for s in notes.sentences],
+        "marks": [[[m.kind, m.word] for m in s.marks] for s in notes.sentences],
+        # A drill's pace is judged against the latest full take's (newest first).
+        "baseline_from": [str(session.dir / t.verdicts_name) for t in reversed(session.takes[: take.number - 1])
+                          if t.drill is None] if take.drill is not None else [],
         "realign": realign,
     }
 
 
 def run_job(job: dict) -> dict:
-    """Transcribe (unless re-aligning) and align one take."""
+    """Transcribe (unless re-aligning), align and judge one take."""
     path = Path(job["transcript"])
     t0 = time.perf_counter()
+    # pyin runs on the CPU while Whisper runs on the GPU.
+    measured: dict = {}
+
+    def measure() -> None:
+        try:
+            measured["prosody"] = take_prosody(Path(job["wav"]), job["t_start"], Path(job["prosody"]), job["silent"])
+        except Exception:
+            print(f"take {job['take']}: pitch and loudness failed; stress and intonation will be unclear",
+                  file=sys.stderr)
+            traceback.print_exc()
+
+    thread = threading.Thread(target=measure, name="prosody", daemon=True)
+    thread.start()
     if job.get("realign") and path.exists():
         data = json.loads(path.read_text())
     else:
@@ -167,13 +224,25 @@ def run_job(job: dict) -> dict:
         tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
         tmp.replace(path)
     alignment = align(job["sentences"], data["words"])
+    thread.join()
+    judged = cues.verdicts(job["marks"], alignment, data["words"], measured.get("prosody"),
+                           baseline_wpm(job["baseline_from"]) if job["baseline_from"] else None)
+    judged["take"] = job["take"]
+    vpath = Path(job["verdicts"])
+    tmp = vpath.with_suffix(".tmp")
+    tmp.write_text(json.dumps(judged, indent=1) + "\n")
+    tmp.replace(vpath)
     return {
         "take": job["take"],
         "ok": True,
         "transcript": path.name,
         "alignment": alignment,
-        "summary": summary(alignment),
-        "report": report(alignment, data["words"], job["texts"], job["t_start"]),
+        "verdicts": vpath.name,
+        "verdict_data": judged,
+        "marks": judged["counts"],
+        "summary": f"{summary(alignment)}; {cues.summary(judged)}",
+        "report": report(alignment, data["words"], job["texts"], job["t_start"]) + "\n"
+                  + cues.report(judged, job["words"], job["texts"]),
         "seconds": round(time.perf_counter() - t0, 2),
     }
 
@@ -327,15 +396,19 @@ def _cli(argv: list[str]) -> int:
         have = take.transcript is not None and (session.dir / take.transcript).exists()
         realign = args.realign and have
         if have and not (args.force or realign):
-            if take.alignment is None:
-                realign = True
+            if take.alignment is None or take.verdicts is None or not (session.dir / take.verdicts).exists():
+                realign = True  # transcribed before milestone 6: judge it now
             else:
                 t = json.loads((session.dir / take.transcript).read_text())
+                texts = [s.text for s in notes.sentences]
                 print(f"take {take.number} (saved; --force to transcribe again, --realign to re-align)")
-                print(report(take.alignment, t["words"], [s.text for s in notes.sentences], take.t_start))
+                print(report(take.alignment, t["words"], texts, take.t_start))
+                judged = json.loads((session.dir / take.verdicts).read_text())
+                print(cues.report(judged, [[w.text for w in s.words] for s in notes.sentences], texts))
                 continue
         result = run_job(make_job(session, take, notes, realign=realign))
-        session.set_result(take.number, result["transcript"], result["alignment"])
+        session.set_result(take.number, result["transcript"], result["alignment"], result["verdicts"],
+                           result["marks"])
         print(f"take {take.number} ({'re-aligned' if realign else 'transcribed'} in {result['seconds']:.1f} s)")
         print(result["report"])
     return 0

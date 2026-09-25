@@ -528,3 +528,68 @@ def test_open_palm_in_zone_goes_from_review_back_to_prepare():
     _, t = run(m, [None] * 40, t)
     events, _ = run(m, hold(fist, 1.3), t)
     assert kinds(events) == ["count_in"]
+
+
+# --- review: take dial and drills --------------------------------------------------
+
+def reviewing():
+    m, t = rehearsing()
+    _, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    assert m.mode == "review" and m.grammar.take_dial
+    _, t = run(m, [None] * 10, t)
+    return m, t
+
+
+def sentence_focus(m, t):
+    _, t = run(m, hold(two, 0.3), t)
+    events, t = run(m, lerp_frames(hand, TWO_TIPS, TWO_FOLDED, 6), t)
+    assert kinds(events) == ["focus"] and m.state.level == "sentence"
+    return t
+
+
+def test_review_take_dial_steps_relative_to_the_start():
+    m, t = reviewing()
+    t = sentence_focus(m, t)
+    step = OPS.take_step_deg
+    _, t = run(m, hold(l_hand, 0.3, rotate=-15), t)  # wherever it starts is zero
+    assert m.state.op == "take" and m.state.take_step == 0
+    _, t = run(m, hold(l_hand, 0.2, rotate=-15 - step), t)
+    assert m.state.take_step == -1
+    _, t = run(m, hold(l_hand, 0.2, rotate=-15 + 2 * step), t)
+    assert m.state.take_step == 2
+    # Put down and picked up at another angle: continues from 2.
+    _, t = run(m, hold(two, 0.3) + hold(l_hand, 0.3, rotate=30) + hold(l_hand, 0.2, rotate=30 - step), t)
+    assert m.state.take_step == 1
+    assert m.state.tone == 0.0  # not Prepare's tone dial
+
+
+def test_no_take_dial_in_prepare_or_at_other_levels():
+    m = ModeMachine((W, H))
+    t = sentence_focus(m, 0.0)
+    run(m, hold(l_hand, 0.3), t)
+    assert m.state.op == "tone"
+    m, t = reviewing()
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(l_hand, 0.5), t)
+    assert m.state.mode == "focus" and m.state.op is None
+
+
+def test_pinch_and_lift_on_a_focused_sentence_in_review_drills_it():
+    m, t = reviewing()
+    t = sentence_focus(m, t)
+    events, t = run(m, hold(two, 0.2) + hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
+    assert kinds(events) == ["commit", "drill"] and m.mode == "count_in" and m.drill
+    assert kinds(m.tick(t + REHEARSE.count_in_s)) == ["take_start"] and m.drill
+    t += REHEARSE.count_in_s
+    # No section flicks in a drill; the open palm stops it as usual.
+    events, t = run(m, hold(one, 0.4, origin=ZONE) + flick(-150), t)
+    assert "next_section" not in kinds(events)
+    _, t = run(m, [None] * 40, t)
+    events, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    assert kinds(events) == ["take_stop"] and m.mode == "review" and not m.drill
+
+
+def test_word_commit_in_review_is_not_a_drill():
+    m, t = reviewing()
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.2), t)
+    events, _ = run(m, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
+    assert kinds(events) == ["commit"] and m.mode == "review"

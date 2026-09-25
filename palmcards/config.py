@@ -1,4 +1,4 @@
-"""Every gesture threshold in one place, and the speech and alignment settings.
+"""Every gesture threshold in one place, and the speech, alignment and cue settings.
 
 Hand distances are divided by the palm size, dist(wrist, middle MCP), so they
 hold at any distance from the camera. Screen positions are fractions of the
@@ -71,6 +71,7 @@ class Ops:
     knob_hysteresis: float = 0.2  # of a step, past the boundary before the node changes
     stretch_min: float = 0.5  # length ratio clamp
     stretch_max: float = 2.0
+    take_step_deg: float = 20.0  # Review: L-hand turn per take on the take dial
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,43 @@ class Align:
     fillers: tuple[str, ...] = ("um", "umm", "uh", "uhh", "uhm", "er", "erm", "ah", "hmm", "mm", "like", "so")
 
 
+@dataclass(frozen=True)
+class Cues:
+    # Prosody: librosa pyin on the take resampled to 16 kHz (SPEECH.rate).
+    fmin_hz: float = 65.0  # speech range, low male to high female voice
+    fmax_hz: float = 400.0
+    frame_length: int = 1024  # samples; 64 ms holds two periods of fmin
+    hop_s: float = 0.01
+    rms_frame_s: float = 0.025
+    # Voiced frames this far below the take's loud speech (95th percentile of
+    # voiced loudness) are ignored: breath, hum and creak after a word, which
+    # pyin tracks at the bottom of its range.
+    voiced_floor_db: float = 18.0
+    # Pauses: silence between the words around the mark.
+    short_pause_s: float = 0.3
+    long_pause_s: float = 0.7
+    # Pace: sentence words per minute against the take's average.
+    slow_ratio: float = 0.85
+    fast_ratio: float = 1.15
+    pace_min_words: int = 4  # fewer aligned words: unclear
+    # Stress: the word's peak against the other words' peaks. Pitch and
+    # loudness drift down through a sentence, so with enough other words the
+    # comparison is with a line fitted through them, else with their median.
+    stress_pad_s: float = 0.05  # Whisper's word edges are approximate
+    stress_min_s: float = 0.08  # shorter words: unclear
+    stress_min_voiced: int = 3  # frames with a pitch, for the pitch measure
+    stress_min_others: int = 2  # words to compare with
+    stress_trend_min: int = 4  # other words needed to fit the drift
+    stress_loud_db: float = 3.0  # louder by this much, or ...
+    stress_pitch_st: float = 2.0  # ... higher by this many semitones
+    peak_percentile: float = 90.0  # a word's "peak", robust to one bad frame
+    # Ending intonation: line fitted to the last voiced stretch of the sentence.
+    ending_window_s: float = 0.5
+    ending_pad_s: float = 0.15  # looked at past the last word's end
+    ending_min_voiced_s: float = 0.15  # less voiced sound: unclear
+    ending_slope_st_s: float = 3.0  # semitones per second, up for rise, down for fall
+
+
 TRACKING = Tracking()
 POSE = Pose()
 TIMING = Timing()
@@ -152,3 +190,4 @@ OPS = Ops()
 REHEARSE = Rehearse()
 SPEECH = Speech()
 ALIGN = Align()
+CUES = Cues()

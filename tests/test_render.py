@@ -165,3 +165,36 @@ def test_draw_count_in_and_rehearse():
         ov.draw(frame, view)
         zone = frame[:int(0.42 * 720), int(0.72 * 1280):]
         assert (zone != 128).any()
+
+
+def test_marks_know_their_index_for_verdict_chips():
+    s = parse_text(TEXT).sentences[0]  # [slow] Thank you for *being* here.
+    spans = [sp for u in sentence_units(s) for sp in u if sp.role == "mark"]
+    assert [(sp.text, s.marks[sp.mark].kind) for sp in spans] == [
+        ("[slow]", "slow"), ("*", "stress"), ("*", "stress")]
+
+
+def test_review_draws_verdict_chips_and_the_focus_detail():
+    ov = overlay()
+    verdicts = (("hit", "missed"), ("unclear", "skipped"), (), (), (), (), ())
+    plain = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(plain, ViewState(app="review"))
+    chips = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(chips, ViewState(app="review", mark_verdicts=verdicts))
+    assert (plain != chips).any()
+
+    detail = (("hit", '/ before "Truly."  HIT  0.40 s pause'), ("", "Pace 140 wpm, take 150"), ("", "No fillers."))
+    view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), mark_verdicts=verdicts,
+                     detail=detail, status="TAKE 2  2 OF 3  /  L-HAND: TAKES  /  PINCH + LIFT: DRILL")
+    _, (_, inv_with) = ov._focus_panel(ov._panel_unit(view), detail, verdicts)
+    _, (_, inv_without) = ov._focus_panel(ov._panel_unit(view))
+    assert (1 - inv_with).sum() > (1 - inv_without).sum() * 1.3  # the verdict lines are drawn
+    ov.draw(np.full((720, 1280, 3), 128, np.uint8), view)
+    assert ov.label_lines(view)[1].startswith("TAKE 2")
+
+
+def test_a_drill_shows_only_its_sentence():
+    ov = TextOverlay(parse_text(SECTIONS, "md").sentences, (1280, 720))
+    view = ViewState(app="rehearse", section=0, drill=1, status="SENTENCE 2")
+    assert ov._panel_unit(view) == (1,)
+    assert ov.label_lines(view) == ("DRILL", "SENTENCE 2")

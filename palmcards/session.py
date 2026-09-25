@@ -4,6 +4,8 @@
       session.json
       take-01.wav
       take-01.transcript.json   (milestone 5, see palmcards.speech)
+      take-01.prosody.npz       (milestone 6: pitch and loudness, palmcards.prosody)
+      take-01.verdicts.json     (milestone 6: a verdict per delivery mark, palmcards.cues)
       take-02.wav
 
 Take times (`t_start`, and the gesture log's `t`) share one clock: seconds
@@ -40,14 +42,28 @@ class TakeRecord:
     sections: list[dict] = field(default_factory=list)  # {"section": i, "t": s into the take}
     transcript: str | None = None  # take-NN.transcript.json, once transcribed
     alignment: dict | None = None  # see palmcards.align
+    verdicts: str | None = None  # take-NN.verdicts.json, once judged
+    marks: dict | None = None  # verdict counts: {"hit": 5, "missed": 2, "unclear": 1, "skipped": 0}
+    drill: int | None = None  # a drill: the one sentence (Notes.sentences index) it rehearsed
 
     @property
     def silent(self) -> bool:
         return self.peak < SILENT_PEAK
 
+    def _sibling(self, suffix: str) -> str:
+        return Path(self.wav).with_suffix(suffix).name
+
     @property
     def transcript_name(self) -> str:
-        return Path(self.wav).with_suffix(".transcript.json").name
+        return self._sibling(".transcript.json")
+
+    @property
+    def prosody_name(self) -> str:
+        return self._sibling(".prosody.npz")
+
+    @property
+    def verdicts_name(self) -> str:
+        return self._sibling(".verdicts.json")
 
 
 @dataclass
@@ -78,15 +94,19 @@ class Session:
     def take(self, number: int) -> TakeRecord:
         return self.takes[number - 1]
 
-    def set_result(self, number: int, transcript: str, alignment: dict) -> None:
-        """Record a take's transcript file and its alignment to the notes."""
+    def set_result(self, number: int, transcript: str, alignment: dict, verdicts: str | None = None,
+                   marks: dict | None = None) -> None:
+        """Record a take's transcript file, its alignment to the notes and its verdicts file."""
         take = self.take(number)
         take.transcript, take.alignment = transcript, alignment
+        if verdicts is not None:
+            take.verdicts, take.marks = verdicts, marks
         self.save()
 
     def add_take(self, audio: np.ndarray, rate: int, t_start: float, started: datetime,
-                 sections: list[tuple[float, int]]) -> TakeRecord:
-        """Save audio as the next take. `sections` is [(t into the take, section)]."""
+                 sections: list[tuple[float, int]], drill: int | None = None) -> TakeRecord:
+        """Save audio as the next take. `sections` is [(t into the take, section)];
+        `drill` is the sentence a drill take rehearsed."""
         self.dir.mkdir(parents=True, exist_ok=True)
         number = len(self.takes) + 1
         wav = f"take-{number:02d}.wav"
@@ -100,6 +120,7 @@ class Session:
             sample_rate=rate,
             peak=round(float(np.abs(audio).max()) if len(audio) else 0.0, 5),
             sections=[{"section": s, "t": round(t, 3)} for t, s in sections],
+            drill=drill,
         )
         self.takes.append(take)
         self.save()

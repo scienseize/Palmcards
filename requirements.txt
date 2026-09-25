@@ -24,5 +24,9 @@ mlx-whisper
 scipy
 rapidfuzz
 
+# Milestone 6: pitch (pyin) and loudness for the delivery-mark verdicts.
+# The numpy<2 pin above keeps this at librosa 0.11; librosa 1.x wants numpy 2.
+librosa
+
 # Tests
 pytest

@@ -440,8 +440,9 @@ class GestureLog:
 
 @dataclass
 class GestureEvent:
-    # Grammar: "focus" | "commit" | "back". Modes: "count_in" | "count_in_cancel"
-    # | "take_start" | "next_section" | "take_stop" | "to_prepare".
+    # Grammar: "focus" | "commit" | "back". Modes: "count_in" | "drill" (a
+    # count-in for one sentence) | "count_in_cancel" | "take_start" |
+    # "next_section" | "take_stop" | "to_prepare".
     kind: str
     t: float
     level: str | None = None
@@ -453,13 +454,14 @@ class GestureEvent:
 class GestureState:
     mode: str = "idle"  # idle | browse | focus
     level: str | None = None  # word | sentence | paragraph
-    op: str | None = None  # ring | tone | stretch (stubs)
+    op: str | None = None  # ring | tone | stretch (Prepare stubs), take (Review's take dial)
     cursor: tuple[float, float] | None = None  # (u, v) in the hand box
     scroll_rate: float = 0.0  # rows per second
     pointing: bool = False  # L-hand turning the ring knob
     knob: int = 0  # ring steps turned since the ring opened; node = knob mod nodes
     tone: float = 0.0  # -1 cold .. 1 warm
     stretch: float = 1.0  # length ratio
+    take_step: int = 0  # Review: take-dial steps turned since the focus (the app clamps to the takes there are)
     stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
     drop_progress: float = 0.0  # 0..1 while backing out
     primary: HandTrack | None = None
@@ -467,7 +469,7 @@ class GestureState:
 
 
 class Grammar:
-    """Prepare-mode state machine over up to two tracked hands."""
+    """Browse/focus state machine over up to two tracked hands (Prepare and Review)."""
 
     def __init__(self, frame_size: tuple[int, int], log: GestureLog | None = None):
         self.w, self.h = frame_size
@@ -476,6 +478,7 @@ class Grammar:
         self.log = log or GestureLog()
         self.tracks: dict[str, HandTrack] = {}
         self.operations = True  # Prepare's ring, tone and stretch; off in Review
+        self.take_dial = False  # Review's take dial on a focused sentence
         self._primary_key: str | None = None
         self._lost_since: float | None = None  # browse: primary hand missing
         self._gone_since: float | None = None  # focus: hand missing or dropped
@@ -615,6 +618,7 @@ class Grammar:
         s = self.state
         s.mode, s.op, s.scroll_rate = "focus", None, 0.0
         s.pointing, s.knob, s.tone, s.stretch, s.stretch_ends, s.drop_progress = False, 0, 0.0, 1.0, None, 0.0
+        s.take_step = 0
         self._focus_armed = False
         self._commit_armed_t = None
         self._gone_since = None
@@ -658,6 +662,8 @@ class Grammar:
 
         if self.operations:
             self._operate(t, events)
+        elif self.take_dial and s.level == "sentence":
+            self._dial_takes(t)
 
     def _holds_l(self, track: HandTrack | None, started: bool) -> bool:
         """An L starts a control; once started, any shape with the index up
@@ -667,6 +673,23 @@ class Grammar:
         if not started:
             return track.stable == L
         return track.feat.extended[0] and not track.pinching and track.raw in (L, ONE, NONE)
+
+    def _dial_takes(self, t: float) -> None:
+        """Review: an L-hand turned like a knob steps through the takes,
+        relative to its angle when it appears, like the options-ring knob."""
+        s, p = self.state, self.state.primary
+        if self._holds_l(p, self._knob0 is not None):
+            tilt = p.feat.tilt
+            if s.op != "take":
+                s.op = "take"
+                self.log(t, "op", op="take")
+            if self._knob0 is None:  # picked up again: continue from where it was
+                self._knob0 = tilt - s.take_step * OPS.take_step_deg
+            pos = (tilt - self._knob0) / OPS.take_step_deg
+            if abs(pos - s.take_step) > 0.5 + OPS.knob_hysteresis:
+                s.take_step = round(pos)
+        else:
+            self._knob0 = None
 
     def _operate(self, t: float, events: list[GestureEvent]) -> None:
         s, p, q = self.state, self.state.primary, self.state.secondary
@@ -830,11 +853,14 @@ class ModeMachine:
     """The app's modes around the Prepare grammar.
 
       prepare, review  --fist held 1 s-->  count_in  --3 s-->  rehearse
+      review    --pinch + lift on a focused sentence-->  count_in (a drill)
       rehearse  --open palm held in the zone-->  review
       count_in  --open palm held in the zone-->  back where it came from
       review    --open palm held in the zone-->  prepare
 
-    Prepare and Review run the grammar (Review without Prepare's operations).
+    Prepare and Review run the grammar (Review without Prepare's operations,
+    with the take dial instead). A drill rehearses one sentence: the same
+    count-in and recording, but no flick to the next section.
     In count_in and rehearse the hands only act inside the command zone; they
     are still tracked, so every pose is logged.
     """
@@ -846,6 +872,7 @@ class ModeMachine:
         self.mode = "prepare"  # prepare | count_in | rehearse | review
         self.start_progress = 0.0  # fist hold, 0..1
         self.count_in_end = 0.0
+        self.drill = False  # the count-in or take is a drill
         self._back_to = "prepare"
         self._fist_since: float | None = None
 
@@ -858,6 +885,11 @@ class ModeMachine:
         events: list[GestureEvent] = []
         if self.mode in ("prepare", "review"):
             events += self.grammar.step(track_events, t)
+            if self.mode == "review" and any(e.kind == "commit" and e.level == "sentence" for e in events):
+                events.append(GestureEvent("drill", t, "sentence"))
+                self._enter("count_in", t)
+                self.drill = True
+                return events
             if self._fist_held(t):
                 events.append(GestureEvent("count_in", t))
                 self._enter("count_in", t)
@@ -867,7 +899,7 @@ class ModeMachine:
 
         for command in self.zone.update({k: self.grammar.tracks[k] for k in track_events}, t):
             self.log(t, "zone", command=command)
-            if command == "flick" and self.mode == "rehearse":
+            if command == "flick" and self.mode == "rehearse" and not self.drill:
                 events.append(GestureEvent("next_section", t))
             elif command == "hold" and self.mode == "rehearse":
                 events.append(GestureEvent("take_stop", t))
@@ -914,8 +946,10 @@ class ModeMachine:
             self._back_to = self.mode
             self.count_in_end = t + REHEARSE.count_in_s
         self.mode = mode
+        self.drill = self.drill and mode in ("count_in", "rehearse")
         self.grammar.reset()
         self.grammar.operations = mode == "prepare"
+        self.grammar.take_dial = mode == "review"
         self.zone.reset()
         self._fist_since, self.start_progress = None, 0.0
         self.log(t, "mode", mode=mode)

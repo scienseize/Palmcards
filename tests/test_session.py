@@ -59,3 +59,16 @@ def test_loads_session_from_before_milestone_5(tmp_path):
     loaded = Session.load(tmp_path)
     assert loaded.language == "en"
     assert loaded.take(1).transcript is None and loaded.take(1).alignment is None
+
+
+def test_verdicts_and_drill_round_trip(tmp_path):
+    session = Session.create("notes.md", root=tmp_path)
+    session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)])
+    drill = session.add_take(np.zeros(800, np.float32), 8000, 2.0, datetime.now(), [(0.0, 1)], drill=4)
+    assert (drill.prosody_name, drill.verdicts_name) == ("take-02.prosody.npz", "take-02.verdicts.json")
+    marks = {"hit": 2, "missed": 1, "unclear": 0, "skipped": 0}
+    session.set_result(2, "take-02.transcript.json", {"sentences": []}, "take-02.verdicts.json", marks)
+    data = json.loads((session.dir / "session.json").read_text())
+    assert "drill" not in data["takes"][0] and "verdicts" not in data["takes"][0]
+    loaded = Session.load(session.dir)
+    assert (loaded.take(2).drill, loaded.take(2).verdicts, loaded.take(2).marks) == (4, "take-02.verdicts.json", marks)

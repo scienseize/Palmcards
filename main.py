@@ -26,16 +26,25 @@ Rehearse listens only to the command zone, top right:
   flick sideways           next section
   open palm held 1.5 s     stop the take (or cancel the count-in), on to Review
 
-Review browses and focuses like Prepare, without the operations (verdicts
-come in milestone 6); a fist raised and held 1 s starts a new take, an open palm held
-1.5 s in the command zone goes back to Prepare to edit before the next take.
-Each take is transcribed in the background as soon as it stops; the label
-shows TRANSCRIBING, then which sentences were spoken, and the terminal
-prints the full report.
+Review browses and focuses like Prepare, without Prepare's operations.
+Each take is transcribed, measured and judged in the background as soon as
+it stops; the label shows TRANSCRIBING, then how many marks were hit, and
+the terminal prints the full report. Every delivery mark is then drawn as a
+chip coloured by its verdict (green hit, red missed, grey unclear):
 
-Operations are stubs until milestone 8. Poses and events are logged to
-sessions/gesture-logs/; each take is saved as a WAV in its session folder
-under sessions/, with session.json.
+  two fingers together     browse sentences
+  fold onto the thumb      focus: each mark's verdict and why, pace, fillers
+  L-hand turned (focused)  dial through the takes that said this sentence
+  pinch + lift (focused)   drill the sentence: count-in, then just that
+                           sentence; open palm in the zone to stop
+  fist raised, held 1 s    new full take
+  open palm held 1.5 s in the command zone
+                           back to Prepare, to edit before the next take
+
+Prepare's operations are stubs until milestone 8. Poses and events are
+logged to sessions/gesture-logs/; each take is saved as a WAV in its session
+folder under sessions/, with its transcript, pitch and verdicts and
+session.json.
 
 Dev keys: space/j next sentence, k previous, d toggle landmarks and hand box,
 s save a screenshot to sessions/screens/, q/Esc quit.
@@ -60,6 +69,7 @@ from palmcards.gestures import (
 )
 from palmcards.notes import Notes, load_notes
 from palmcards.render import Hit, OpsView, TextOverlay, ViewState
+from palmcards.review import Board
 from palmcards.session import Session
 from palmcards.speech import Transcriber, make_job
 
@@ -97,8 +107,8 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         view.ops = OpsView()
         return None
     if ev.kind == "commit" and view.app == "review":
-        log(ev.t, "drill_stub", sentence=view.focus.sentence if view.focus else None)
-        view.note = "DRILL (STUB, MILESTONE 6)"
+        if ev.level != "sentence":  # a sentence commit is a drill, which the mode events start
+            view.note = "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
     elif ev.kind == "commit":
         if ev.op == "ring":
             what = overlay.ring_labels(view)[view.ops.picked]
@@ -113,7 +123,7 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         view.note = f"COMMITTED (STUB): {what.upper()}"
     view.focus = None
     view.ops = OpsView()
-    return time.perf_counter() + NOTE_S if ev.kind == "commit" else None
+    return time.perf_counter() + NOTE_S if ev.kind == "commit" and view.note else None
 
 
 class Takes:
@@ -129,18 +139,36 @@ class Takes:
         self.started = datetime.now()
         self.marks: list[tuple[float, int]] = []
         self.last_saved = ""
+        self.board = Board(notes)  # verdicts of the judged takes, for Review
+        self.drill: int | None = None  # the sentence the current count-in or take drills
+        self.drill_sentence: int | None = None  # set by a Review commit, used by the drill event
+        self.dial_seen = 0  # take-dial steps already applied
 
-    def status(self, mode: str) -> str:
+    def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown."""
+        if mode in ("count_in", "rehearse") and self.drill is not None:
+            return f"SENTENCE {self.drill + 1}"
         if mode in ("count_in", "rehearse"):
             title = self.notes.sections[self.section].title or "untitled"
             return f"SECTION {self.section + 1}/{len(self.notes.sections)}: {title.upper()}"
+        if mode == "review" and view.mode == "focus" and view.level == "sentence" and view.focus is not None:
+            return f"{self.board.take_label(view.focus.sentence)}  /  L-HAND: TAKES  /  PINCH + LIFT: DRILL"
         if self.transcriber.pending:
             dots = "." * (int(time.perf_counter() * 2) % 4)
             return f"TAKE {self.transcriber.pending[0]}: TRANSCRIBING{dots:<3}"
         if mode == "review" and self.last_saved:
             return f"{self.last_saved}  /  RAISE A FIST: NEW TAKE"
         return "RAISE A FIST: START A TAKE"
+
+    def sync_review(self, grammar: Grammar, view: ViewState) -> None:
+        """Review: turn the take dial, and show the chosen takes' verdicts."""
+        gs = grammar.state
+        focused = view.focus.sentence if view.mode == "focus" and view.focus is not None else None
+        if gs.op == "take" and focused is not None and view.level == "sentence":
+            self.board.step(focused, gs.take_step - self.dial_seen)
+            self.dial_seen = gs.take_step
+        view.mark_verdicts = self.board.mark_verdicts()
+        view.detail = self.board.detail(focused) if focused is not None and view.level == "sentence" else ()
 
     def on_transcribed(self, result: dict) -> str:
         """A take's transcript and alignment arrived. Returns a label note."""
@@ -149,18 +177,26 @@ class Takes:
             print(f"take {n}: transcription failed: {result['error']}. Retry with: "
                   f"python -m palmcards.speech {self.session.dir} --take {n}", file=sys.stderr)
             return "TRANSCRIPTION FAILED (SEE TERMINAL)"
-        self.session.set_result(n, result["transcript"], result["alignment"])
+        self.session.set_result(n, result["transcript"], result["alignment"], result["verdicts"], result["marks"])
+        take = self.session.take(n)
+        self.board.add(n, result["verdict_data"], take.drill)
         self.log(time.perf_counter() - self.t0, "transcribed", take=n, seconds=result["seconds"])
-        print(f"take {n} (transcribed in {result['seconds']:.1f} s)\n{result['report']}")
+        print(f"take {n} (transcribed and judged in {result['seconds']:.1f} s)\n{result['report']}")
+        if take.drill is not None:
+            self.last_saved = f"TAKE {n} (DRILL): {self.board.summary(n)}"
+            return ""
         c = counts(result["alignment"])
-        parts = [f"{c['spoken']}/{len(result['alignment']['sentences'])} SPOKEN"]
-        parts += [f"{c[k]} {k.upper()}" for k in ("partial", "fillers", "restarts") if c[k]]
+        parts = [f"{c['spoken']}/{len(result['alignment']['sentences'])} SPOKEN", self.board.summary(n)]
+        parts += [f"{c[k]} {k.upper()}" for k in ("fillers", "restarts") if c[k]]
         self.last_saved = f"TAKE {n}: {', '.join(parts)}"
         return ""
 
     def handle(self, ev: GestureEvent, modes: ModeMachine, view: ViewState, overlay: TextOverlay) -> str:
         """Mode events. Returns a label note to show, or ""."""
-        if ev.kind == "count_in":
+        if ev.kind in ("count_in", "drill"):
+            self.drill = self.drill_sentence if ev.kind == "drill" else None
+            if self.drill is not None:
+                self.log(ev.t, "drill", sentence=self.drill)
             try:
                 if self.recorder is None:
                     self.recorder = AudioRecorder()
@@ -171,8 +207,9 @@ class Takes:
                       file=sys.stderr)
                 self.log(ev.t, "mic_error", error=str(exc))
                 modes.cancel_count_in(ev.t)
+                self.drill = None
                 return "MICROPHONE UNAVAILABLE"
-            self.section = 0
+            self.section = 0 if self.drill is None else self.notes.sentences[self.drill].section
             view.hover = view.focus = None
             view.mode, view.level, view.ops = "idle", None, OpsView()
             return ""
@@ -182,10 +219,11 @@ class Takes:
             return ""
         if ev.kind == "count_in_cancel":
             self.recorder.close()
+            self.drill = None
             return "TAKE CANCELLED"
         if ev.kind == "take_start":
             self.recorder.start()
-            self.t_start, self.started, self.marks = ev.t, datetime.now(), [(0.0, 0)]
+            self.t_start, self.started, self.marks = ev.t, datetime.now(), [(0.0, self.section)]
             self.log(ev.t, "take_start", take=len(self.session.takes) + 1)
             return ""
         if ev.kind == "next_section":
@@ -198,11 +236,16 @@ class Takes:
         if ev.kind == "take_stop":
             audio = self.recorder.stop()
             self.recorder.close()
-            take = self.session.add_take(audio, self.recorder.rate, self.t_start, self.started, self.marks)
+            take = self.session.add_take(audio, self.recorder.rate, self.t_start, self.started, self.marks,
+                                         drill=self.drill)
             self.log(ev.t, "take_stop", take=take.number, duration_s=take.duration_s, wav=take.wav)
             print(f"saved {self.session.dir / take.wav} ({take.duration_s:.1f} s)")
             self.transcriber.submit(make_job(self.session, take, self.notes))
-            view.current = next(i for i, s in enumerate(overlay.sentences) if s.section == self.section)
+            if self.drill is not None:
+                view.current = self.drill
+            else:
+                view.current = next(i for i, s in enumerate(overlay.sentences) if s.section == self.section)
+            self.drill = None
             view.scroll = overlay.scroll_to(view.current)
             m, s = divmod(round(take.duration_s), 60)
             self.last_saved = f"TAKE {take.number} SAVED ({m}:{s:02d})"
@@ -285,10 +328,14 @@ def main() -> int:
             else:
                 events = []
             events += modes.tick(start - t0)
-            for result in takes.transcriber.poll():
-                if note := takes.on_transcribed(result):
+            for done in takes.transcriber.poll():
+                if note := takes.on_transcribed(done):
                     view.note, note_until = note, start + NOTE_S
             for ev in events:
+                if ev.kind == "commit" and view.app == "review":  # a drill of this sentence may follow
+                    takes.drill_sentence = view.focus.sentence if view.focus else view.current
+                if ev.kind == "focus":
+                    takes.dial_seen = 0
                 if ev.kind in ("focus", "commit", "back"):
                     until = apply_event(ev, view, overlay, log)
                 elif note := takes.handle(ev, modes, view, overlay):
@@ -297,19 +344,26 @@ def main() -> int:
                     until = None
                 if until is not None:
                     note_until = until
-            view.app, view.status = modes.mode, takes.status(modes.mode)
+            view.app = modes.mode
             zone = modes.zone
             view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
+            view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
             if modes.mode in ("prepare", "review"):
                 if result is not None:
                     sync_view(grammar, view, overlay)
                 view.start_progress = modes.start_progress
+                if modes.mode == "review":
+                    takes.sync_review(grammar, view)
+                else:
+                    view.mark_verdicts, view.detail = (), ()
             else:
                 view.section = takes.section
                 view.count_in = max(1, math.ceil(modes.count_in_end - (start - t0)))
                 view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" else 0.0
                 view.mic = takes.recorder.level
                 view.start_progress = 0.0
+                view.mark_verdicts, view.detail = (), ()
+            view.status = takes.status(modes.mode, view)
             # Edge scrolling advances every displayed frame so it stays smooth.
             if view.app in ("prepare", "review") and view.mode == "browse" and grammar.state.scroll_rate:
                 view.scroll = overlay.clamp_scroll(view.scroll + grammar.state.scroll_rate * (start - prev_start))
