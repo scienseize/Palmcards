@@ -99,14 +99,17 @@ def test_label_lines_follow_mode_and_operation():
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
     assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "TURN AN L-HAND TO PICK")
-    # Only what works is offered: the word itself, and hearing it.
-    assert ov.ring_labels(focus) == ("being", "hear it")
-    focus.ops.pointing, focus.ops.picked = True, 1
+    # Only what works is offered: the word itself, (un)stressing it, and hearing it.
+    assert ov.ring_labels(focus) == ("being", "unstress", "hear it")  # *being* is stressed
+    assert ov.ring_labels(ViewState(mode="focus", level="word", focus=Hit(0, 1)))[1] == "stress"
+    focus.ops.pointing, focus.ops.picked = True, 2
     assert ov.label_lines(focus)[1] == "PINCH + LIFT: HEAR IT"
+    focus.ops.picked = 1
+    assert ov.label_lines(focus)[1] == 'PINCH + LIFT: UNSTRESS "BEING"'
     focus.ops.picked = 0
     assert ov.label_lines(focus)[1] == "KEEP THE WORD (NO CHANGE)"
     focus.ops = OpsView()
-    assert ov.label_lines(focus)[1].startswith("OPEN PALM: HEAR IT")
+    assert ov.label_lines(focus)[1].startswith("OPEN PALM: STRESS, HEAR IT")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
     assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "SENTENCE TONE: WARM  (PREVIEW ONLY, NOT AVAILABLE YET)")
     tone.drop_progress = 0.4

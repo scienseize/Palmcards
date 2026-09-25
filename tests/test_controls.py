@@ -30,7 +30,7 @@ def focused(ops: OpsView, level="word", hit=Hit(0, 2)):
 
 def test_hear_it_speaks_the_sentence_stressing_the_word():
     ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
-    view = focused(OpsView(kind="ring", picked=1))
+    view = focused(OpsView(kind="ring", picked=2))  # the word, stress, hear it
     speaker, log = FakeSpeaker(), GestureLog()
     main.apply_event(GestureEvent("commit", 1.0, "word", "ring"), view, ov, log, speaker)
     assert speaker.said == [(["Thank", "you", "for", "being", "here."], {2, 3})]  # its own stress mark too

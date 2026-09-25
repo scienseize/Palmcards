@@ -15,11 +15,12 @@ the right of the frame; it steers the highlight in the text on the left.
   top or bottom of the box scroll
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
                            focus
-  open palm (word)         options ring: the word, and "hear it"; turn an L-hand like a knob to pick
+  open palm (word)         options ring: the word, stress/unstress it, "hear it"; turn an L-hand like a knob to pick
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left (preview only)
   two L-hands (paragraph)  length stretch (preview only)
-  pinch + lift             commit: "hear it" speaks the sentence with the word stressed;
-                           tone and length say they are not available yet (milestone 8)
+  pinch + lift             commit: stress/unstress makes a new notes revision (u undoes it);
+                           "hear it" speaks the sentence with the word stressed;
+                           tone and length say they are not available yet (they need the optional LLM)
   drop the hand for 1 s    back out
   fist raised into view, held 1 s
                            start a take after a 3-2-1 count-in
@@ -58,7 +59,8 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   t start a take, x stop it (or cancel the count-in), n next section, b previous section,
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
-  a play the focused sentence (Review), r retry failed analysis, h keys, q/Esc quit.
+  a play the focused sentence (Review), u undo the last edit (Prepare), r retry failed analysis,
+  h keys, q/Esc quit.
 Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
 """
 
@@ -81,8 +83,9 @@ from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import ANALYSIS, FOLLOW, RECORDING, SPEECH
 from palmcards.gestures import OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.notes import Notes, notes_from_bytes
+from palmcards.edit import is_stressed, toggle_stress
 from palmcards.render import (
-    HEAR_IT, Hit, OpsView, TextOverlay, ViewState,
+    HEAR_IT, STRESS, UNSTRESS, Hit, OpsView, TextOverlay, ViewState,
     draw_fingertips, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
@@ -126,7 +129,7 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
 
 
 def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog,
-                speaker=None) -> float | None:
+                speaker=None, takes: "Takes | None" = None) -> float | None:
     """Grammar events. Returns the time a label note should expire, if one was set.
     A commit only ever reports what really happened."""
     if ev.kind == "focus":
@@ -141,7 +144,10 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
             view.note = "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
     elif ev.kind == "commit":
         sentence = view.focus.sentence if view.focus else None
-        if ev.op == "ring" and overlay.ring_labels(view)[view.ops.picked] == HEAR_IT and view.focus is not None:
+        picked = overlay.ring_labels(view)[view.ops.picked] if ev.op == "ring" else None
+        if picked in (STRESS, UNSTRESS) and takes is not None and view.focus is not None:
+            view.note = takes.edit_stress(view.focus.sentence, view.focus.word)
+        elif picked == HEAR_IT and view.focus is not None:
             s = overlay.sentences[view.focus.sentence]
             stressed = {m.word for m in s.marks if m.kind == "stress"} | {view.focus.word}
             try:
@@ -180,6 +186,7 @@ class Takes:
         self.follow_enabled = follow
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
         self.player = None  # Review playback, made at the first play
+        self.notes_version = 0  # bumped when an edit or undo changes the notes
         self._follow_reported = False
         self.recorder: AudioRecorder | None = None
         self.analysis = Supervisor()
@@ -216,21 +223,61 @@ class Takes:
             return f"{self.last_saved}  /  RAISE A FIST: NEW TAKE"
         return "RAISE A FIST: START A TAKE"
 
-    def restore(self) -> bool:
-        """A reopened session: its judged takes onto the board (mapped onto the
-        current notes by sentence id), and takes whose analysis never finished
-        submitted again. Returns whether there is anything to review."""
-        from palmcards.analysis import resolve_jobs
-
+    def _fill_board(self) -> None:
+        """Every judged take on the board, placed on the current notes by sentence id."""
         for take in self.session.takes:
             path = self.session.dir / take.verdicts if take.verdicts else None
             if path is not None and path.exists():
                 self.board.add(take.number, json.loads(path.read_text()), take.drill,
                                self.session.sentence_map(take))
-            elif take.status == "saved" and take.revision is not None:
+
+    def restore(self) -> bool:
+        """A reopened session: its judged takes onto the board, and takes whose
+        analysis never finished submitted again. Returns whether there is
+        anything to review."""
+        from palmcards.analysis import resolve_jobs
+
+        self._fill_board()
+        for take in self.session.takes:
+            if not take.verdicts and take.status == "saved" and take.revision is not None:
                 resolve_jobs(self.session.dir, take.number, "failed", "superseded: submitted again on reopening")
                 self._submit(take.number)
         return bool(self.board.takes)
+
+    def _use_notes(self, notes: Notes) -> None:
+        """New current notes (an edit or an undo): the board, the follow and the
+        display (main's frame loop rebuilds the overlay on notes_version)."""
+        self.notes = notes
+        self.board = Board(notes)
+        self._fill_board()
+        if self.follow is not None:
+            self.follow.notes = notes
+        self.notes_version += 1
+
+    def edit_stress(self, sentence: int, word: int) -> str:
+        """Stress or unstress a word: a new notes revision. Returns a label note."""
+        text = self.notes.sentences[sentence].words[word].text
+        on = not is_stressed(self.notes, sentence, word)
+        try:
+            rid = self.session.edit(toggle_stress(self.notes, sentence, word),
+                                    note=f'{"stress on" if on else "stress off"} "{text}" in sentence {sentence + 1}')
+        except (OSError, SessionError) as exc:
+            print(f"could not save the edit: {exc}", file=sys.stderr)
+            return "EDIT NOT SAVED (SEE TERMINAL)"
+        self._use_notes(self.session.current_notes())
+        self.log(time.perf_counter() - self.t0, "edit", op="stress", on=on, sentence=sentence, word=word,
+                 revision=rid)
+        return f'{"STRESSED" if on else "UNSTRESSED"} "{text.upper()}"  /  U: UNDO'
+
+    def undo(self) -> str:
+        if self.session.current_revision is None or self.session._parsed is not None:
+            return "NOTHING TO UNDO"
+        rid = self.session.undo()
+        if rid is None:
+            return "NOTHING TO UNDO"
+        self._use_notes(self.session.current_notes())
+        self.log(time.perf_counter() - self.t0, "undo", revision=rid)
+        return "UNDONE"
 
     def play_sentence(self, sentence: int) -> str:
         """Play a sentence (current notes' index) from the take Review shows for it."""
@@ -681,6 +728,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
     palm_since, played_for = None, None  # Review: an open palm held on a focused sentence plays it
+    notes_seen = takes.notes_version
 
     while True:
         frame = camera.read()
@@ -709,7 +757,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "focus":
                 takes.dial_seen = 0
             if ev.kind in ("focus", "commit", "back"):
-                until = apply_event(ev, view, overlay, log, speaker)
+                until = apply_event(ev, view, overlay, log, speaker, takes)
             elif note := takes.handle(ev, modes, view, overlay):
                 view.note, until = note, start + NOTE_S
             else:
@@ -749,6 +797,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         elif start - palm_since >= PLAY_HOLD_S and played_for != focused:
             view.note, note_until = takes.play_sentence(focused), start + NOTE_S
             played_for = focused
+        if takes.notes_version != notes_seen:  # an edit or undo: lay the new notes out
+            notes_seen = takes.notes_version
+            sentences = takes.notes.sentences
+            overlay = TextOverlay(sentences, (w, h))
+            view.current = min(view.current, len(sentences) - 1)
+            view.scroll = overlay.clamp_scroll(view.scroll)
         view.status = takes.status(modes.mode, view)
         view.alert = takes.alert_line(modes.mode)
         # A focused panel taller than the frame turns its own pages, so every
@@ -813,6 +867,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                     view.scroll = overlay.scroll_to(view.current)
         elif key == ord("h"):
             view.keys_help = not view.keys_help
+        elif key == ord("u") and view.app == "prepare":
+            view.note, note_until = takes.undo(), time.perf_counter() + NOTE_S
         elif key == ord("a") and view.app == "review":
             sentence = view.focus.sentence if view.focus is not None else view.current
             view.note, note_until = takes.play_sentence(sentence), time.perf_counter() + NOTE_S

@@ -145,6 +145,7 @@ class Session:
     revisions: list[dict] = field(default_factory=list)
     schema: int = SCHEMA
     orphans: list[str] = field(default_factory=list)  # files found on load that no take claims
+    current: str | None = None  # the notes revision in use (None: the latest); undo moves it back
     _loaded_schema: int = SCHEMA
     _parsed: Notes | None = None  # notes of the pending first revision, until the folder exists
     _source_bytes: bytes | None = None
@@ -202,7 +203,7 @@ class Session:
         session = cls(
             Path(data["notes"]), folder, data.get("gesture_log"), takes, data.get("language", "en"),
             id=data.get("id", ""), source=data.get("source"), revisions=data.get("revisions", []),
-            schema=SCHEMA, _loaded_schema=schema,
+            schema=SCHEMA, current=data.get("current"), _loaded_schema=schema,
         )
         session.orphans = session._find_orphans()
         return session
@@ -277,8 +278,10 @@ class Session:
     def add_revision(self, notes: Notes, provenance: str = "edited", note: str = "") -> str:
         """Save `notes` as a revision (unchanged sentences keep their ids) and
         make it current; returns its id."""
-        previous = self.snapshot(self.revisions[-1]["id"]) if self.revisions else None
-        snap, ancestry = revisions.to_snapshot(notes, previous)
+        previous = self.snapshot(self.current_revision) if self.revisions else None
+        # New sentence ids start past every id this session has given out (in any branch).
+        next_id = max((self.snapshot(r["id"]).get("next_id", 1) for r in self.revisions), default=None)
+        snap, ancestry = revisions.to_snapshot(notes, previous, next_id)
         rid = revisions.revision_id(snap)
         if not any(r["id"] == rid for r in self.revisions):
             folder = self.dir / "notes"
@@ -286,7 +289,7 @@ class Session:
             _write_atomic(folder / f"{rid}.json", json.dumps(snap, indent=1, ensure_ascii=False).encode() + b"\n")
             entry = {
                 "id": rid, "file": f"notes/{rid}.json", "hash": revisions.content_hash(snap),
-                "parser": snap["parser"], "parent": self.revisions[-1]["id"] if self.revisions else None,
+                "parser": snap["parser"], "parent": self.current_revision,
                 "created": datetime.now().isoformat(timespec="seconds"), "provenance": provenance,
             }
             if ancestry:
@@ -295,12 +298,35 @@ class Session:
                 entry["note"] = note
             self.revisions.append(entry)
             self._snapshots[rid] = snap
-            self.save()  # the revision is on record as soon as it exists
+        self.current = rid
+        self.save()  # the revision is on record, and current, as soon as it exists
         return rid
 
     @property
     def current_revision(self) -> str | None:
+        if self.current is not None:
+            return self.current
         return self.revisions[-1]["id"] if self.revisions else None
+
+    def edit(self, notes: Notes, note: str = "") -> str:
+        """Save edited notes as a new revision and make it current (the session
+        folder is made now if no take has made it yet). Returns its id."""
+        self._ensure_written()
+        return self.add_revision(notes, provenance="edited", note=note)
+
+    def undo(self) -> str | None:
+        """Make the current revision's parent current again (nothing is deleted:
+        the undone revision stays on record). Returns it, or None."""
+        rid = self.current_revision
+        parent = self.revision(rid)["parent"] if rid else None
+        if parent is None:
+            return None
+        self.current = parent
+        self.save()
+        return parent
+
+    def current_notes(self) -> Notes:
+        return revisions.from_snapshot(self.snapshot(self.current_revision))
 
     def revision(self, rid: str) -> dict:
         for r in self.revisions:
@@ -499,6 +525,7 @@ class Session:
             "notes": str(self.notes),
             "source": self.source,
             "revisions": self.revisions,
+            "current": self.current,
             "gesture_log": self.gesture_log,
             "language": self.language,
             # Fields a take doesn't have yet are left out, not written as null.

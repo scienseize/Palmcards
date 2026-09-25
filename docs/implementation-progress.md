@@ -19,7 +19,7 @@ user runs them. They are never inferred from unit tests.
 | 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
-| 8 — Product completion | In progress | Slice 1: reopen + playback; slice 2: export (txt/md/docx, round-trip, never overwrites) | 354 passed | Slices: stress edits + revisions/undo, LLM interface, guidance/prefs, metrics |
+| 8 — Product completion | In progress | Slices 1-3: reopen + playback; export; stress edits as revisions with undo (session-wide unique ids) | 357 passed | Slices: LLM interface, guidance/prefs, metrics |
 | End-to-end release gate | Pending | None | Not run | Run on target hardware |
 
 ## Log
@@ -558,4 +558,44 @@ Manual / hardware checks performed: none needed beyond tests.
 Unverified assumptions and remaining risks: rebuilt sentences normalise spacing around marks.
 Reason for any departure from this plan: none.
 Next action: Phase 8 slice 3 (stress edits with revisions and undo).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 8 slice 3 (Prepare edits: stress; revisions; undo)
+Status: implemented, validation pending (the ring gesture on the target Mac)
+Current HEAD / optional commit ID: d822682 -> slice 3 commit (see git log)
+Pre-existing changes preserved: yes.
+Files and behavior changed:
+  palmcards/edit.py (new): toggle_stress(notes, sentence, word) -> new Notes; the sentence is
+    rebuilt as markup (export.marked) and re-parsed, so words, marks (parser order) and raw agree;
+    other sentences untouched; the input Notes unchanged. is_stressed().
+  palmcards/session.py: `current` revision (persisted; default the latest); edit(notes) makes the
+    session folder if needed and adds an "edited" revision whose parent is the current one;
+    undo() makes the parent current (nothing deleted; returns None at the import); takes bind to
+    the current revision; current_notes(). New sentence ids start past every id the session has
+    given out (fixes an id collision found by the tests: a branch after an undo reused an undone
+    revision's id for a different sentence).
+  palmcards/revisions.py: carry_ids/to_snapshot take next_id.
+  palmcards/export.py: an empty raw means "rebuild from words and marks".
+  palmcards/render.py: ring = (word, stress|unstress, hear it); labels for each; focus hint; keys
+    help lists U.
+  main.py: a ring commit on stress/unstress calls Takes.edit_stress (new revision, board rebuilt on
+    the new notes by sentence id, follow notes updated, `edit` log entry, "STRESSED ... / U: UNDO");
+    key u in Prepare undoes (`undo` log entry, "UNDONE" / "NOTHING TO UNDO"); the frame loop lays
+    out the new notes when notes_version changes.
+  CLAUDE.md: what Prepare offers, how edits relate to takes, edit.py.
+Migration / compatibility implications: session.json gains "current". Older sessions read as before
+  (current = latest revision).
+Tests run and exact outcome: pytest (full) -> 357 passed. New tests/test_edit.py (3): toggling stress
+  on and off rebuilds only that sentence with canonical marks; edit -> folder, imported + edited
+  revisions, take bound to the edit; undo to the import, then a take bound to it; a new edit after
+  the undo parents from the import; reload keeps current; ids unique across branches; sentence
+  maps; the app's edit_stress/undo rebuild notes and board, log them, persist "current".
+  tests/test_render.py, tests/test_controls.py: ring order (word, unstress/stress, hear it).
+Manual / hardware checks performed: none.
+Unverified assumptions and remaining risks: after an edit, the edited sentence's earlier verdicts
+  are no longer shown (by design: they were for other words); users may expect them.
+Reason for any departure from this plan: none.
+Next action: Phase 8 slice 4 (LLM interface).
 ```

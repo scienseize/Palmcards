@@ -31,8 +31,8 @@ FORMATS = ("txt", "md", "docx")
 def marked(s: Sentence) -> str:
     """The sentence as marked-up text: its original if that still says the
     same, else rebuilt from its words and marks."""
-    again = parse_sentence(s.raw)
-    if [w.text for w in again.words] == [w.text for w in s.words] and again.marks == s.marks:
+    again = parse_sentence(s.raw) if s.raw else None
+    if again is not None and [w.text for w in again.words] == [w.text for w in s.words] and again.marks == s.marks:
         return s.raw
     pauses = {m.word: m.kind for m in s.marks if m.kind in (MarkKind.SHORT_PAUSE, MarkKind.LONG_PAUSE)}
     stressed = {m.word for m in s.marks if m.kind == MarkKind.STRESS}

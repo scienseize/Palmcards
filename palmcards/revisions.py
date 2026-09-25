@@ -70,13 +70,15 @@ def _sentence(s: Sentence, sid: str) -> dict:
     }
 
 
-def carry_ids(previous: dict, notes: Notes) -> tuple[list[str], dict[str, list[str]], int]:
+def carry_ids(previous: dict, notes: Notes, next_id: int | None = None) -> tuple[list[str], dict[str, list[str]], int]:
     """Sentence ids for `notes`, keeping those of sentences unchanged since
-    `previous` (same marked-up text), however they moved. Returns (ids,
-    ancestry: new id -> the old ids it replaces, next id number)."""
+    `previous` (same marked-up text), however they moved. New ids start at
+    `next_id` (a session passes one past every id it has ever given out, so
+    a branch after an undo never reuses an undone revision's ids). Returns
+    (ids, ancestry: new id -> the old ids it replaces, next id number)."""
     old = previous["sentences"]
     new = notes.sentences
-    next_id = previous.get("next_id", len(old) + 1)
+    next_id = max(previous.get("next_id", len(old) + 1), next_id or 0)
     ids: list[str | None] = [None] * len(new)
     ancestry: dict[str, list[str]] = {}
     matcher = difflib.SequenceMatcher(a=[s["raw"] for s in old], b=[s.raw for s in new], autojunk=False)
@@ -101,14 +103,15 @@ def carry_ids(previous: dict, notes: Notes) -> tuple[list[str], dict[str, list[s
     return ids, ancestry, next_id
 
 
-def to_snapshot(notes: Notes, previous: dict | None = None) -> tuple[dict, dict[str, list[str]]]:
+def to_snapshot(notes: Notes, previous: dict | None = None,
+                next_id: int | None = None) -> tuple[dict, dict[str, list[str]]]:
     """Snapshot of `notes`; with `previous`, unchanged sentences keep their ids.
     Returns (snapshot, ancestry)."""
     if previous is None:
         ids = [f"s{k + 1}" for k in range(len(notes.sentences))]
         ancestry, next_id = {}, len(ids) + 1
     else:
-        ids, ancestry, next_id = carry_ids(previous, notes)
+        ids, ancestry, next_id = carry_ids(previous, notes, next_id)
     snap = {
         "snapshot": SNAPSHOT_VERSION,
         "parser": PARSER_VERSION,

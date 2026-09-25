@@ -67,10 +67,9 @@ CLEAR = (0, 0, 0, 0)
 PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
-RING_NODES = ("hear it",)  # node 0 is the original word; alternatives and stress come with milestone 8
-HEAR_IT = "hear it"
+HEAR_IT, STRESS, UNSTRESS = "hear it", "stress", "unstress"  # ring nodes after the original word
 FOCUS_HINTS = {
-    "word": "OPEN PALM: HEAR IT  /  DROP HAND: BACK",
+    "word": "OPEN PALM: STRESS, HEAR IT  /  DROP HAND: BACK",
     "sentence": "L-HAND, THEN TILT: TONE (PREVIEW ONLY)  /  DROP HAND: BACK",
     "paragraph": "TWO L-HANDS: LENGTH (PREVIEW ONLY)  /  DROP HAND: BACK",
 }
@@ -78,7 +77,7 @@ VERDICT_SYMBOL = {"hit": "✓", "missed": "✗", "unclear": "?", "skipped": "–
 KEYS_HELP = (
     "KEYS (WHEN GESTURES WON'T DO)",
     "T  START A TAKE      X  STOP / CANCEL",
-    "N B  NEXT / PREVIOUS SECTION",
+    "N B  NEXT / PREVIOUS SECTION     U  UNDO EDIT",
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
     "A  PLAY SENTENCE     P  BACK TO PREPARE",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
@@ -413,7 +412,9 @@ class TextOverlay:
             second = "TURN AN L-HAND TO PICK"
             if ops.pointing:
                 picked = self.ring_labels(state)[ops.picked]
-                second = "PINCH + LIFT: HEAR IT" if picked == HEAR_IT else "KEEP THE WORD (NO CHANGE)"
+                word = self.word_text(state.focus).upper() if state.focus and state.focus.word is not None else ""
+                second = {HEAR_IT: "PINCH + LIFT: HEAR IT", STRESS: f'PINCH + LIFT: STRESS "{word}"',
+                          UNSTRESS: f'PINCH + LIFT: UNSTRESS "{word}"'}.get(picked, "KEEP THE WORD (NO CHANGE)")
         elif ops.kind == "tone":
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
             second = f"SENTENCE TONE: {tone}  (PREVIEW ONLY, NOT AVAILABLE YET)"
@@ -429,8 +430,13 @@ class TextOverlay:
         return first, second
 
     def ring_labels(self, state: ViewState) -> tuple[str, ...]:
-        original = self.word_text(state.focus) if state.focus and state.focus.word is not None else "original"
-        return (original, *RING_NODES)
+        """The word as it is, stress (or unstress) it, hear it. Word alternatives
+        need the optional LLM and are not offered without one."""
+        if state.focus is None or state.focus.word is None:
+            return ("original", HEAR_IT)
+        stressed = any(m.kind == MarkKind.STRESS and m.word == state.focus.word
+                       for m in self.sentences[state.focus.sentence].marks)
+        return (self.word_text(state.focus), UNSTRESS if stressed else STRESS, HEAR_IT)
 
     # --- drawing: text -----------------------------------------------------
 

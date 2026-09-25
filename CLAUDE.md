@@ -80,7 +80,8 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 `ModeMachine.command` runs the same transitions as the gestures, logged as `key` events. `t` start a take (count-in), `x` stop it or cancel the count-in, `n` next section, `p` back to Prepare from Review, `space`/`j` and `k` next/previous sentence (in Rehearse within the section; in a focused panel they scroll it), `r` retry failed analysis, `h` show the keys, `q` quit. No text editing.
 
 ### What the screen promises
-- Prepare offers only what works: the options ring holds the original word and **hear it** (speaks the sentence with the word stressed, via `palmcards/tts.py`); tone and length preview their controls and say "not available yet"; a commit never claims a change it didn't make (milestone 8 adds the edits).
+- Prepare offers only what works: the options ring holds the original word, **stress** / **unstress** (a real edit: a new notes revision, `palmcards/edit.py`) and **hear it** (speaks the sentence with the word stressed, via `palmcards/tts.py`); `u` undoes the last edit (the session's current revision steps back to its parent; nothing is deleted). Word alternatives, tone and length need the optional LLM: without one, tone and length preview their controls and say "not available yet"; a commit never claims a change it didn't make.
+- Edits never touch the imported file. Takes keep the revision they were recorded with; Review places older takes on the current notes by sentence id, so an edited sentence starts without verdicts. Sentence ids are unique across the whole session, including branches after an undo.
 - The focus panel is a viewport over the whole unit: never under the label, never off the frame; long sections and long verdict lists scroll (scrollbar, more-above/below markers). In Rehearse the current sentence is orange and kept in view. A focused Review panel too tall for the frame pages itself every few seconds.
 - Verdicts carry a symbol as well as a colour (✓ hit, ✗ missed, ? unclear, – skipped), and counts are given separately ("4 HIT, 3 MISSED, 2 UNCLEAR"): unclear is too little evidence, not a miss.
 - Recording and analysis trouble stays on a persistent alert line under the text until dealt with; gesture hints stay in the label.
@@ -301,6 +302,7 @@ palmcards/
 │   ├── paths.py         # where data lives ($PALMCARDS_DATA, sessions/, Application Support)
 │   ├── data.py          # list / export / delete / prune recordings (python -m palmcards.data)
 │   ├── playback.py      # Review: play a sentence of a take
+│   ├── edit.py          # edits to the notes (stress), each a new Notes for a new revision
 │   └── export.py        # a notes revision back out as .txt / .md / .docx (python -m palmcards.export)
 ├── models/              # MediaPipe .task files (gitignored; scripts/download_models.py, pinned + checksummed)
 ├── scripts/             # download_models, bench_live, profile_align, evaluate, cut_gesture_samples
