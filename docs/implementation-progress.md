@@ -18,7 +18,7 @@ user runs them. They are never inferred from unit tests.
 | 4 — Navigation and controls | Implemented, validation pending | Panel viewport + scroll, Rehearse current sentence nav, long-word splitting, keyboard fallback (ModeMachine.command), persistent alert line, truthful Prepare ops (hear it via TTS; tone/length preview only), verdict symbols + separate counts, label backing | 266 passed; reachability at 640x480/1280x720/1920x1080; synthetic dark/light/busy renders inspected | Real camera scenes; gesture-based panel scrolling not added (keys + auto-paging instead) |
 | 5 — Scoring/provenance | Implemented, validation pending | Endings need their last word (and confidence); capture gaps make marks unclear; dropped audio filled with silence to keep the timeline; prosody cache provenance + hop from cache; verdict/transcript provenance; uncalibrated languages not judged by English standards | 280 passed (x3); F4 regression; real-session re-judge diff: only the F4 case changed | Human-labelled agreement (Phase 7) |
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
-| 7 — Setup/evaluation | Pending | None | No real-speaker validation | Lock environment and establish evaluation |
+| 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
 | 8 — Product completion | Pending | None | Planned milestones only | Implement features in small complete slices |
 | End-to-end release gate | Pending | None | Not run | Run on target hardware |
 
@@ -432,4 +432,64 @@ Reason for any departure from this plan: step 1 (one controller for all state) w
   section changes are owned by Takes; a full controller refactor would rewrite main.py's loop
   without changing behaviour, so it is left for when the Phase 8 editing work needs it.
 Next action: Phase 7.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Phase 7 (reproducibility, scaling, evaluation, data controls)
+Status: implemented, validation pending (CI not run: no push; no human-labelled data exists)
+Current HEAD / optional commit ID: code in cdab0ad; this ledger entry and CLAUDE.md in the
+  follow-up commit (a documentation edit failed on a pattern and the code commit went ahead
+  without it; fixed forward, history not rewritten).
+Pre-existing changes preserved: yes (clean tree at start; real sessions only read).
+Files and behavior changed:
+  requirements.lock.txt (new): uv pip freeze of the tested venv (Python 3.12.14; numpy 1.26.4,
+    mediapipe 0.10.21, mlx-whisper 0.4.3, librosa 0.11.0, ...), no colour codes.
+  scripts/download_models.py: MediaPipe from versioned /1/ URLs (verified byte-identical to the local
+    files) with SHA-256 checks on existing and downloaded files; only gesture_recognizer.task is
+    required today, hand/face/pose landmarkers optional (--all); Whisper at pinned revisions.
+  palmcards/config.py + asr.py: SPEECH.model_revision / live_model_revision pinned to the cached
+    commits (a4aaeec0.., 1e3e249f..); model_path() loads exactly that local snapshot (clear error
+    if missing, never an unpinned download); model_revision() reports the pinned commit.
+  palmcards/paths.py (new): data_dir(): $PALMCARDS_DATA, else the checkout's sessions/ if present
+    (existing sessions keep being found), else ~/Library/Application Support/PalmCards/sessions.
+    session.SESSIONS_DIR, gestures.LOG_DIR and main.SCREENS_DIR use it. No automatic migration.
+  palmcards/data.py (new): python -m palmcards.data list | export RUN DEST.zip (never overwrites,
+    no lock file) | delete RUN [--yes] (dry run without --yes; takes the gesture log and trace
+    with it; refuses a session another PalmCards holds) | prune --older-than DAYS [--yes].
+  palmcards/align.py: the DP fill as _fill on arrays, compiled with numba (njit, cache) when
+    available, falling back to the same Python code; _dp_python kept as the reference. Results
+    identical (tests); traceback and restart handling unchanged.
+  scripts/profile_align.py (new): time and peak memory for varied and repeating scripts.
+  scripts/evaluate.py (new) + docs/evaluation.md (new): consent/hold-out/labelling protocol, label
+    format, metrics (mark agreement, false hits/misses, abstention rate, called-skipped, word start
+    error median/p90 and unaligned, gesture false triggers per minute; keys never count).
+  docs/hardware-smoke-test.md (new): manual camera/mic/recovery/clock checklist.
+  .github/workflows/tests.yml (new): macos-14, uv, lock file, pytest with PALMCARDS_DATA in a temp dir.
+  README.md (new): install, permissions, use (gestures + keys), data and deletion, recovery, what
+    works vs planned; includes "Tested on macOS with Apple silicon. Windows is not supported yet."
+  CLAUDE.md: code layout (recording, revisions, analysis, paths, data, scripts, docs, lock), how to work.
+Migration / compatibility implications: none for data. Installs from the lock file reproduce the
+  tested environment; a Whisper model not at the pinned revision is refused with instructions.
+Tests run and exact outcome: pytest (full) -> 343 passed in 27.01 s. New: tests/test_align_fast.py
+  (46: compiled fill is numba; 40 random scripts, 4 realistic takes incl. repeating, joins/splits/
+  restarts/mid-start/chatter: identical pairs to the reference), tests/test_data.py (4: list,
+  export incl. no-overwrite and no lock file, delete dry-run then --yes with the log, open session
+  refused, prune only old and only with --yes), tests/test_evaluate.py (1: agreement 0.5, a false
+  hit, abstention 1/3, word error median 0.125 / p90 0.185 with one unaligned, one false trigger in
+  a minute, the key-driven mode change not counted).
+Manual / hardware checks performed: download_models.py re-run: required files verified, pinned
+  Whisper snapshots present. Pinned-path transcription of a temporary copy of 20260925-171226 take
+  1: words identical to the original transcript; transcript records the revision. Alignment
+  profile (synthetic): 600 words 15.27 s -> 0.04 s, 1200 words 67.74 s -> 0.12 s, 5000 words
+  1.57 s and 744 MB peak (the tested limit, memory-bound).
+Evidence or artifact paths: docs/evaluation.md (profile table), scripts/profile_align.py.
+Unverified assumptions and remaining risks: the CI workflow has never run (pushing publishes the
+  repository; not done without your go-ahead). The Application Support default is untested on an
+  installed build. Numba's first call compiles (~0.4 s); its cache needs a writable __pycache__.
+  No consented, labelled evaluation data exists: verdict accuracy remains unmeasured.
+Reason for any departure from this plan: none. Alignment was optimised by compiling the existing
+  fill (identical results) rather than coarse anchors/local alignment, which would have changed
+  results; memory, not time, is now the limit.
+Next action: Phase 8.
 ```

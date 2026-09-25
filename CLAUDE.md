@@ -272,6 +272,7 @@ palmcards/
 ├── main.py              # entry point, mode loop
 ├── palmcards/
 │   ├── capture.py       # camera + audio capture
+│   ├── recording.py     # takes streamed to disk while recorded (bounded queue, writer thread), crash-safe
 │   ├── notes.py         # file loading, sections/sentences/words, cue parsing
 │   ├── gestures.py      # landmarks -> gesture events, mode-aware state machine, command zone
 │   ├── config.py        # every gesture threshold in one place
@@ -292,8 +293,15 @@ palmcards/
 │   ├── review.py        # which take each sentence shows in Review, verdict lines
 │   ├── metrics.py       # gaze, posture, filler rate, pace
 │   ├── llm.py           # optional LLM helper behind one interface
-│   └── session.py       # takes and results as JSON, export
-├── models/              # MediaPipe .task files (gitignored)
+│   ├── session.py       # session folders: schema, notes revisions, takes, lock, recovery
+│   ├── revisions.py     # notes snapshots with stable sentence/word/mark ids
+│   ├── analysis.py      # supervised analysis worker: job records, generations, retries
+│   ├── paths.py         # where data lives ($PALMCARDS_DATA, sessions/, Application Support)
+│   └── data.py          # list / export / delete / prune recordings (python -m palmcards.data)
+├── models/              # MediaPipe .task files (gitignored; scripts/download_models.py, pinned + checksummed)
+├── scripts/             # download_models, bench_live, profile_align, evaluate, cut_gesture_samples
+├── docs/                # implementation-progress (ledger), evaluation, hardware-smoke-test; local/ (gitignored)
+├── requirements.lock.txt  # exact tested versions (uv pip freeze)
 ├── samples/             # sample notes with markup for testing
 │   └── gestures/        # recorded hand landmarks + expected events, for the replay tests
 └── tests/
@@ -307,6 +315,7 @@ palmcards/
 - Keep camera/gesture code runnable standalone (`python -m palmcards.gestures` shows a debug view with landmarks and the detected gesture name).
 - Speech runs offline on recorded sessions: `python -m palmcards.speech sessions/<run>` (transcribe, judge and report; takes from before milestone 6 get their verdicts; `--realign` re-aligns and re-judges saved transcripts without Whisper or pyin, for tuning `ALIGN` and `CUES`) and `python -m palmcards.player sessions/<run> [--take N]` (hear a take with the notes highlighted as they're said).
 - Live recognition (6b) is benchmarked offline: `python scripts/bench_live.py sessions/<run> --take N [--model REPO] [--step S] [--where thread|process] [--camera SECONDS] [--json OUT]` replays a take in real time and reports live-word lag, wrong section jumps, sentence tracking and (with `--camera`) the frame rate; `--rescore OUT.json` re-scores saved runs after tuning `FOLLOW`.
+- Environment: `requirements.lock.txt` holds the tested versions (regenerate with `uv pip freeze --color never`); model revisions are pinned in `config.py` (Whisper) and `scripts/download_models.py` (MediaPipe, with SHA-256). Data lives where `palmcards/paths.py` says (`PALMCARDS_DATA` overrides; tests always use temporary folders). `pytest` is headless; hardware checks follow `docs/hardware-smoke-test.md`. Accuracy claims need labelled takes (`docs/evaluation.md`, `scripts/evaluate.py`); alignment performance: `scripts/profile_align.py`.
 - macOS needs Camera and Microphone permission for the terminal app running Python (System Settings > Privacy & Security).
 
 ## Milestones
