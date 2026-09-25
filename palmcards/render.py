@@ -113,7 +113,8 @@ class ViewState:
     rec_s: float = 0.0  # length of the take so far
     mic: float = 0.0  # microphone level, 0..1
     zone_active: bool = False  # a hand is in the command zone
-    stop_progress: float = 0.0  # open palm held in the zone, 0..1
+    hold_progress: float = 0.0  # open palm held in the zone, 0..1
+    flick_progress: float = 0.0  # sideways swing toward a flick, 0..1
 
 
 @dataclass(frozen=True)
@@ -312,8 +313,8 @@ class TextOverlay:
     def label_lines(self, state: ViewState) -> tuple[str, str]:
         """Kat's two-line state label: mode and level, then the operation."""
         if state.app in ("count_in", "rehearse"):
-            if state.stop_progress > 0:
-                second = f"{'CANCEL' if state.app == 'count_in' else 'STOP'}: HOLD  {_bar(state.stop_progress)}"
+            if state.hold_progress > 0:
+                second = f"{'CANCEL' if state.app == 'count_in' else 'STOP'}: HOLD  {_bar(state.hold_progress)}"
             elif state.note:
                 second = state.note
             elif state.app == "count_in":
@@ -336,6 +337,8 @@ class TextOverlay:
             second = state.note
         elif state.start_progress > 0:
             second = f"START A TAKE: HOLD FIST  {_bar(state.start_progress)}"
+        elif state.hold_progress > 0:
+            second = f"BACK TO PREPARE: HOLD  {_bar(state.hold_progress)}"
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
@@ -548,7 +551,7 @@ class TextOverlay:
         cv2.circle(frame, (x, ky), 8, (245, 245, 245), 2, cv2.LINE_AA)
 
     def _draw_zone(self, frame: np.ndarray, state: ViewState) -> None:
-        """Command zone: outline, recording clock and mic level, hints, stop progress."""
+        """Command zone: outline, recording clock and mic level, hints, flick and hold progress."""
         zx0, zy0, zx1, zy1 = REHEARSE.zone
         x0, y0 = int(zx0 * self.frame_w), int(zy0 * self.frame_h)
         x1, y1 = int(zx1 * self.frame_w) - 2, int(zy1 * self.frame_h)
@@ -564,15 +567,24 @@ class TextOverlay:
             # The dot swells with the microphone level: a flat dot means no sound is arriving.
             cv2.circle(frame, (bx0 - 14, (by0 + by1) // 2), 4 + round(8 * state.mic), REC_BGR, -1, cv2.LINE_AA)
             y = by1 + self.pad // 2
-            hints = ("FLICK: NEXT SECTION", "HOLD OPEN PALM: STOP")
-        else:
+            hints = ("FLICK SIDEWAYS: NEXT SECTION", "HOLD OPEN PALM: STOP")
+        elif state.app == "count_in":
             hints = ("HOLD OPEN PALM: CANCEL",)
+        else:
+            hints = ("HOLD OPEN PALM: BACK TO PREPARE",)
         for text in hints:
             chip = self._chip(text, size, NODE_TEXT if active else DIM, DARK_FILL)
             y = self._blend_centered(frame, chip, cx, y + chip[0].shape[0] / 2)[3] + 4
 
-        if state.stop_progress > 0:
-            cv2.rectangle(frame, (x0 + 6, y1 - 12), (x0 + 6 + int((x1 - x0 - 12) * state.stop_progress), y1 - 6),
+        if state.app == "rehearse":
+            # Flick meter: fills as the hand swings sideways, so a near miss shows.
+            my, half = y1 - 30, (x1 - x0) // 2 - 12
+            cv2.line(frame, (int(cx - half), my), (int(cx + half), my), ZONE_BGR, 1, cv2.LINE_AA)
+            if state.flick_progress > 0:
+                reach = int(half * state.flick_progress)
+                cv2.line(frame, (int(cx - reach), my), (int(cx + reach), my), YELLOW_BGR, 4, cv2.LINE_AA)
+        if state.hold_progress > 0:
+            cv2.rectangle(frame, (x0 + 6, y1 - 12), (x0 + 6 + int((x1 - x0 - 12) * state.hold_progress), y1 - 6),
                           YELLOW_BGR, -1, cv2.LINE_AA)
 
     def draw(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
@@ -609,7 +621,7 @@ class TextOverlay:
         if state.mode == "focus" and state.ops.stretch_ends is not None:
             a, b = (tuple(int(v) for v in p) for p in state.ops.stretch_ends)
             cv2.line(frame, a, b, (245, 245, 245), 2, cv2.LINE_AA)
-        if state.app in ("count_in", "rehearse"):
+        if state.app != "prepare":
             self._draw_zone(frame, state)
         if state.app == "count_in" and state.count_in > 0:
             # In the clear space between the notes and the right edge, below the zone.

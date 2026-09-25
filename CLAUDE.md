@@ -61,7 +61,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 
 ### Rehearse (locked except inside a command zone, top-right of the frame)
 - Closed fist held 1 s: start take after 3-2-1 count-in
-- Flick inside zone: next section
+- Flick inside zone: next section (a sideways swing of the hand, usually from the wrist)
 - Open palm inside zone held 1.5 s: stop take (goes to Review)
 - All other hand movement is logged as data (gesture amount, fidgeting, face touching), never treated as a command.
 
@@ -71,6 +71,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 - L-hand tilt: dial through takes (take 1, 2, 3...) for the focused sentence
 - Pinch + lift on a focused sentence: drill it (loop just that sentence as a mini take)
 - Closed fist held 1 s: new full take
+- Open palm inside the command zone held 1.5 s: back to Prepare, to edit before the next take (the zone is shown in Review with this hint)
 
 ### Gesture classification (rules on MediaPipe hand landmarks, no training needed)
 
@@ -102,6 +103,7 @@ Temporal rules:
 - A pose must be stable for ~150 ms (about 5 frames) before the state machine acts on it.
 - `FOLD` is an event: from `TWO` or `FLAT`, fingertips converge on the thumb within ~400 ms.
 - `COMMIT` is an event: `PINCH` held while wrist y rises > 0.15 of frame height within ~600 ms.
+- `FLICK` is an event (command zone only): after the hand has been in the zone ~150 ms, the fingertip that travels furthest moves > 0.8 palms sideways within ~300 ms, at least 1.5x its vertical travel. Measured at the fingertips because a flick swings from the wrist and the palm barely moves. The zone follows a hand by position, not by MediaPipe's handedness label, which flips during fast moves.
 - Smooth the cursor fingertip with a One Euro filter before mapping it to text.
 - Dials and stretch are always relative to the value captured when the control appears, then clamped.
 - Log every recognized pose and event with a timestamp; the false-trigger measure in the evaluation depends on it.

@@ -145,7 +145,7 @@ def test_label_lines_for_takes():
     assert ov.label_lines(ViewState(status="HOLD FIST: START A TAKE")) == ("PREPARE", "HOLD FIST: START A TAKE")
     assert ov.label_lines(ViewState(start_progress=0.5))[1] == "START A TAKE: HOLD FIST  [=====     ]"
     assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2")
-    assert ov.label_lines(ViewState(app="count_in", stop_progress=0.3))[1].startswith("CANCEL: HOLD")
+    assert ov.label_lines(ViewState(app="count_in", hold_progress=0.3))[1].startswith("CANCEL: HOLD")
     rehearse = ViewState(app="rehearse", status="SECTION 1/2: ONE")
     assert ov.label_lines(rehearse) == ("REHEARSE", "SECTION 1/2: ONE")
     rehearse.note = "LAST SECTION"
@@ -158,8 +158,8 @@ def test_label_lines_for_takes():
 def test_draw_count_in_and_rehearse():
     ov = TextOverlay(parse_text(SECTIONS, "md").sentences, (1280, 720))
     for view in (
-        ViewState(app="count_in", count_in=3, zone_active=True, stop_progress=0.4),
-        ViewState(app="rehearse", section=1, rec_s=75.2, mic=0.7, stop_progress=0.5, status="SECTION 2/2: TWO"),
+        ViewState(app="count_in", count_in=3, zone_active=True, hold_progress=0.4),
+        ViewState(app="rehearse", section=1, rec_s=75.2, mic=0.7, hold_progress=0.5, status="SECTION 2/2: TWO"),
     ):
         frame = np.full((720, 1280, 3), 128, np.uint8)
         ov.draw(frame, view)

@@ -404,7 +404,7 @@ def test_rehearse_ignores_the_grammar_outside_the_zone():
 def test_open_palm_held_in_zone_stops_the_take_into_review():
     m, t = rehearsing()
     events, t = run(m, hold(open_palm, 1.2, origin=ZONE), t)
-    assert events == [] and m.zone.active and 0.5 < m.zone.stop_progress < 1.0
+    assert events == [] and m.zone.active and 0.5 < m.zone.hold_progress < 1.0
     events, t = run(m, hold(open_palm, 0.6, origin=ZONE), t)
     assert kinds(events) == ["take_stop"] and m.mode == "review"
     assert not m.grammar.operations
@@ -449,3 +449,48 @@ def test_open_palm_in_zone_during_count_in_cancels():
         events, t = run(m, hold(open_palm, 1.8, origin=ZONE), t)
         assert kinds(events) == ["count_in_cancel"] and m.mode == back_to
         assert m.tick(t + REHEARSE.count_in_s) == []
+
+
+# Close to a laptop camera: palm ~270 px, as measured in the session traces.
+BIG = 2.7
+BIG_ZONE = (1100, 560)  # wrist; the palm centre sits ~200 px higher, inside the zone
+
+
+def test_wrist_flick_of_a_big_close_hand_is_next_section():
+    m, t = rehearsing()
+    # Swing from the wrist: the palm centre barely moves, the fingertips travel.
+    swing = [one(origin=BIG_ZONE, scale=BIG, rotate=-35 * i / 6) for i in range(1, 7)]  # 0.2 s
+    events, t = run(m, hold(one, 0.3, origin=BIG_ZONE, scale=BIG) + swing, t)
+    assert kinds(events) == ["next_section"]
+
+
+def test_flick_survives_a_tracking_dropout_and_a_label_flip():
+    m, t = rehearsing()
+    frames = hold(one, 0.3, origin=ZONE, label="Left") + [
+        one(origin=(ZONE[0] - 40, ZONE[1]), label="Left"), None, None,
+        one(origin=(ZONE[0] - 120, ZONE[1]), label="Right"), one(origin=(ZONE[0] - 150, ZONE[1]), label="Right"),
+    ]
+    events, _ = run(m, frames, t)
+    assert kinds(events) == ["next_section"]
+
+
+def test_open_palm_hold_rides_out_label_flips():
+    m, t = rehearsing()
+    frames = [open_palm(origin=ZONE, label="Left" if (i // 5) % 2 else "Right") for i in range(round(1.7 / DT))]
+    events, _ = run(m, frames, t)
+    assert kinds(events) == ["take_stop"]
+
+
+def test_open_palm_in_zone_goes_from_review_back_to_prepare():
+    m, t = rehearsing()
+    _, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    assert m.mode == "review"
+    _, t = run(m, [None] * 10, t)  # hand down between the two holds
+    events, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    assert kinds(events) == ["to_prepare"] and m.mode == "prepare" and m.grammar.operations
+    # Prepare's operations are back, and a fist starts the next take.
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.3), t)
+    assert m.state.op == "ring"
+    _, t = run(m, [None] * 40, t)
+    events, _ = run(m, hold(fist, 1.3), t)
+    assert kinds(events) == ["count_in"]

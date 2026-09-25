@@ -75,13 +75,18 @@ class Rehearse:
     start_hold_s: float = 1.0  # closed fist held this long (Prepare, Review) starts a take
     count_in_s: float = 3.0  # 3-2-1 before recording
     # Command zone (x0, y0, x1, y1), top right of the mirrored frame. In
-    # Rehearse, hands only act while their palm centre is inside it.
-    zone: tuple[float, float, float, float] = (0.72, 0.0, 1.0, 0.42)
-    stop_hold_s: float = 1.5  # open palm held in the zone stops the take
-    settle_s: float = 0.2  # a hand must be in the zone this long before it can flick
-    flick_window_s: float = 0.25  # sideways travel must happen within this
-    flick_dist: float = 1.2  # palm-centre travel, palm units
+    # Rehearse, hands only act while their palm centre is inside it. Close to
+    # a laptop camera a palm is ~270 px, so the zone must hold a whole hand.
+    zone: tuple[float, float, float, float] = (0.66, 0.0, 1.0, 0.55)
+    hold_s: float = 1.5  # open palm held in the zone: stop, cancel, or back to Prepare
+    hold_grace_s: float = 0.3  # misread frames the hold forgives
+    settle_s: float = 0.15  # a hand must be in the zone this long before it can flick
+    flick_window_s: float = 0.3  # sideways travel must happen within this
+    flick_dist: float = 0.8  # fingertip travel, palm units
+    flick_straightness: float = 1.5  # sideways travel at least this times the vertical
     flick_cooldown_s: float = 1.0  # no zone command right after a flick
+    follow_palms: float = 2.5  # frame-to-frame jump still counted as the same hand
+    dropout_s: float = 0.3  # tracking gaps shorter than this don't lose the hand
 
 
 TRACKING = Tracking()

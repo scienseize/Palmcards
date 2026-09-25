@@ -22,7 +22,7 @@ text box on the left; its top and bottom bands scroll.
 Around the grammar, ModeMachine runs the app's modes: a fist held 1 s starts
 a take after a 3-2-1 count-in; in Rehearse only the command zone (top right)
 listens, for a flick (next section) and an open palm held 1.5 s (stop, on to
-Review).
+Review). In Review the same open palm in the zone goes back to Prepare.
 
 Run `python -m palmcards.gestures` for a debug view with landmarks, poses,
 feature values, the grammar state and the event log.
@@ -57,6 +57,7 @@ PINKY_PIP, PINKY_TIP = 18, 20
 FINGERS = ((INDEX_PIP, INDEX_TIP), (MIDDLE_PIP, MIDDLE_TIP), (RING_PIP, RING_TIP), (PINKY_PIP, PINKY_TIP))
 TIPS = (THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
 PALM = (WRIST, INDEX_MCP, MIDDLE_MCP, 13, 17)  # wrist and the four finger MCPs
+FINGER_TIPS = (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
 
 HAND_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4),
@@ -435,7 +436,7 @@ class GestureLog:
 @dataclass
 class GestureEvent:
     # Grammar: "focus" | "commit" | "back". Modes: "count_in" | "count_in_cancel"
-    # | "take_start" | "next_section" | "take_stop".
+    # | "take_start" | "next_section" | "take_stop" | "to_prepare".
     kind: str
     t: float
     level: str | None = None
@@ -516,7 +517,10 @@ class Grammar:
         self._tilt0 = self._d0 = self._knob0 = None
 
     def update(self, hands: list[Hand], t: float) -> list[GestureEvent]:
-        track_events = self.track(hands, t)
+        return self.step(self.track(hands, t), t)
+
+    def step(self, track_events: dict[str, list[str]], t: float) -> list[GestureEvent]:
+        """Run browse/focus on hands already passed through track()."""
         events: list[GestureEvent] = []
         if self.state.mode == "focus":
             self._update_focus(t, track_events, events)
@@ -698,13 +702,17 @@ def palm_center(hand: Hand) -> tuple[float, float]:
 
 
 class CommandZone:
-    """Rehearse-mode commands, made by a hand whose palm is inside the zone.
+    """Commands made by a hand whose palm is inside the zone (top right).
 
-      "flick"  the hand, settled in the zone, moves sideways fast
-      "stop"   open palm held in the zone
+      "flick"  the hand, settled in the zone, swings sideways fast
+      "hold"   open palm held in the zone (stop a take, cancel the count-in,
+               leave Review for Prepare)
 
-    A flick may carry the hand out of the zone; it still counts if it
-    started inside.
+    The flick is measured at the fingertips, which travel furthest when the
+    hand swings from the wrist, and may carry the hand out of the zone: it
+    counts if it started inside. The zone follows one hand by position, not
+    by MediaPipe's handedness label (which flips during fast moves), and
+    rides out brief tracking dropouts.
     """
 
     def __init__(self, frame_size: tuple[int, int]):
@@ -714,56 +722,86 @@ class CommandZone:
         self.reset()
 
     def reset(self) -> None:
-        self.key: str | None = None  # the hand the zone is following
-        self.active = False  # that hand is inside the zone now
-        self.stop_progress = 0.0
-        self._entered = self._last_inside = 0.0
-        self._path: deque[tuple[float, float, float, bool]] = deque()  # (t, x, y, inside)
+        self.active = False  # the followed hand is inside the zone now
+        self.hold_progress = 0.0  # open palm, 0..1
+        self.flick_progress = 0.0  # sideways travel toward a flick, 0..1
+        self._pos: tuple[float, float] | None = None  # followed hand's palm centre
+        self._seen = self._entered = self._last_inside = 0.0
+        self._path: deque[tuple[float, np.ndarray, float, bool]] = deque()  # (t, fingertips, palm, inside)
         self._open_since: float | None = None
+        self._last_open = -math.inf
         self._cooldown_until = -math.inf
 
     def contains(self, x: float, y: float) -> bool:
         x0, y0, x1, y1 = self.box
         return x0 <= x <= x1 and y0 <= y <= y1
 
-    def _follow(self, key: str | None, t: float) -> None:
-        self.key, self._entered, self._last_inside = key, t, t
-        self._path.clear()
-        self._open_since, self.stop_progress = None, 0.0
+    def _pick(self, hands: list[Hand]) -> Hand | None:
+        if self._pos is not None and hands:
+            near = min(hands, key=lambda h: math.dist(palm_center(h), self._pos))
+            if math.dist(palm_center(near), self._pos) < REHEARSE.follow_palms * near.size:
+                return near
+        return next((h for h in hands if self.contains(*palm_center(h))), None)
 
     def update(self, tracks: dict[str, HandTrack], t: float) -> list[str]:
-        inside = sorted(k for k, tr in tracks.items() if self.contains(*palm_center(tr.hand)))
-        if self.key in inside:
-            self._last_inside = t
-        elif not (self.key in tracks and t - self._last_inside <= REHEARSE.flick_window_s):
-            self._follow(inside[0] if inside else None, t)
-        self.active = self.key in inside
-        if self.key is None:
+        followed = self._pos is not None
+        hand = self._pick([tr.hand for tr in tracks.values()])
+        if followed and hand is not None and math.dist(palm_center(hand), self._pos) >= REHEARSE.follow_palms * hand.size:
+            self.reset()  # a different hand in the zone: start over with it
+            followed = False
+        if hand is None:
+            self.active = False
+            if followed and t - self._seen > REHEARSE.dropout_s:
+                self.reset()
             return []
+        track = next(tr for tr in tracks.values() if tr.hand is hand)
+        pc = palm_center(hand)
+        inside = self.contains(*pc)
+        if not followed:
+            self._entered = self._last_inside = t
+        if inside:
+            self._last_inside = t
+        elif t - self._last_inside > REHEARSE.flick_window_s:  # wandered off: let it go
+            self.reset()
+            return []
+        self._pos, self._seen, self.active = pc, t, inside
 
         events: list[str] = []
-        tr = tracks[self.key]
-        x, y = palm_center(tr.hand)
-        self._path.append((t, x, y, self.active))
-        while self._path[0][0] < t - REHEARSE.flick_window_s:
+        # Samples from before the hand settled are left out, so sweeping a
+        # hand into the zone isn't a flick.
+        if t - self._entered >= REHEARSE.settle_s - 1e-9:
+            self._path.append((t, hand.points[list(FINGER_TIPS)].copy(), hand.size, inside))
+        while self._path and self._path[0][0] < t - REHEARSE.flick_window_s:
             self._path.popleft()
-        t0, x0, y0, started_inside = self._path[0]
-        dx, dy = (x - x0) / tr.hand.size, (y - y0) / tr.hand.size
-        if (t >= self._cooldown_until and started_inside and t0 - self._entered >= REHEARSE.settle_s
-                and abs(dx) > REHEARSE.flick_dist and abs(dx) > 2 * abs(dy)):
-            events.append("flick")
-            self._cooldown_until = t + REHEARSE.flick_cooldown_s
-            self._path.clear()
+        self.flick_progress = 0.0
+        if self._path and self._path[0][3] and t >= self._cooldown_until:
+            _, tips0, palm0, _ = self._path[0]
+            # The fingertip that travelled furthest sideways: an extended
+            # finger swinging from the wrist moves most.
+            moved = (hand.points[list(FINGER_TIPS)] - tips0) / palm0
+            dx, dy = moved[int(np.argmax(np.abs(moved[:, 0])))]
+            self.flick_progress = min(1.0, abs(dx) / REHEARSE.flick_dist)
+            if abs(dx) > REHEARSE.flick_dist and abs(dx) > REHEARSE.flick_straightness * abs(dy):
+                events.append("flick")
+                self._cooldown_until = t + REHEARSE.flick_cooldown_s
+                self._path.clear()
+                self.flick_progress = 0.0
 
-        if self.active and tr.stable == OPEN and t >= self._cooldown_until:
+        # The open palm counts frame by frame (raw pose), forgiving short
+        # misreads, so a label flip or a blurry frame doesn't restart it.
+        if inside and track.raw == OPEN and t >= self._cooldown_until:
+            self._last_open = t
             if self._open_since is None:
                 self._open_since = t
-            self.stop_progress = min(1.0, (t - self._open_since) / REHEARSE.stop_hold_s)
-            if self.stop_progress >= 1.0:
-                events.append("stop")
-                self._open_since, self.stop_progress = None, 0.0
+        elif t - self._last_open > REHEARSE.hold_grace_s:
+            self._open_since = None
+        if self._open_since is None:
+            self.hold_progress = 0.0
         else:
-            self._open_since, self.stop_progress = None, 0.0
+            self.hold_progress = min(1.0, (t - self._open_since) / REHEARSE.hold_s)
+            if self.hold_progress >= 1.0:
+                events.append("hold")
+                self._open_since, self.hold_progress = None, 0.0
         return events
 
 
@@ -773,6 +811,7 @@ class ModeMachine:
       prepare, review  --fist held 1 s-->  count_in  --3 s-->  rehearse
       rehearse  --open palm held in the zone-->  review
       count_in  --open palm held in the zone-->  back where it came from
+      review    --open palm held in the zone-->  prepare
 
     Prepare and Review run the grammar (Review without Prepare's operations).
     In count_in and rehearse the hands only act inside the command zone; they
@@ -794,25 +833,30 @@ class ModeMachine:
         return self.grammar.state
 
     def update(self, hands: list[Hand], t: float) -> list[GestureEvent]:
+        track_events = self.grammar.track(hands, t)
+        events: list[GestureEvent] = []
         if self.mode in ("prepare", "review"):
-            events = self.grammar.update(hands, t)
+            events += self.grammar.step(track_events, t)
             if self._fist_held(t):
                 events.append(GestureEvent("count_in", t))
                 self._enter("count_in", t)
+                return events
+        if self.mode == "prepare":
             return events
 
-        track_events = self.grammar.track(hands, t)
-        events = []
         for command in self.zone.update({k: self.grammar.tracks[k] for k in track_events}, t):
             self.log(t, "zone", command=command)
             if command == "flick" and self.mode == "rehearse":
                 events.append(GestureEvent("next_section", t))
-            elif command == "stop" and self.mode == "rehearse":
+            elif command == "hold" and self.mode == "rehearse":
                 events.append(GestureEvent("take_stop", t))
                 self._enter("review", t)
-            elif command == "stop":
+            elif command == "hold" and self.mode == "count_in":
                 events.append(GestureEvent("count_in_cancel", t))
                 self._enter(self._back_to, t)
+            elif command == "hold" and self.mode == "review":
+                events.append(GestureEvent("to_prepare", t))
+                self._enter("prepare", t)
         return events
 
     def tick(self, t: float) -> list[GestureEvent]:
@@ -906,7 +950,7 @@ def _debug_view() -> None:
                 modes.update(*result)
             modes.tick(time.perf_counter() - t0)
             s = modes.state
-            if modes.mode in ("count_in", "rehearse"):
+            if modes.mode != "prepare":
                 draw_zone(frame, modes.zone)
             else:
                 draw_hand_box(frame, modes.grammar.cursor)
@@ -916,7 +960,8 @@ def _debug_view() -> None:
             draw_fingertips(frame, s)
 
             op = f"  op {s.op}" if s.op else ""
-            lines = [f"{modes.mode.upper()}  start {modes.start_progress:.0%}  stop {modes.zone.stop_progress:.0%}",
+            lines = [f"{modes.mode.upper()}  start {modes.start_progress:.0%}  hold {modes.zone.hold_progress:.0%}"
+                     f"  flick {modes.zone.flick_progress:.0%}",
                      f"{s.mode.upper()} {s.level or ''}{op}  tone {s.tone:+.2f}  stretch {s.stretch:.2f}"
                      f"  drop {s.drop_progress:.0%}",
                      f"camera {cam.fps:4.1f} fps  hands {tracker.latency_ms:4.1f} ms"]

@@ -21,11 +21,12 @@ the right of the frame; it steers the highlight in the text on the left.
   closed fist held 1 s     start a take after a 3-2-1 count-in
 
 Rehearse listens only to the command zone, top right:
-  flick                    next section
+  flick sideways           next section
   open palm held 1.5 s     stop the take (or cancel the count-in), on to Review
 
 Review browses and focuses like Prepare, without the operations (verdicts
-come in milestone 6); a fist held 1 s starts a new take.
+come in milestone 6); a fist held 1 s starts a new take, an open palm held
+1.5 s in the command zone goes back to Prepare to edit before the next take.
 
 Operations are stubs until milestone 8. Poses and events are logged to
 sessions/gesture-logs/; each take is saved as a WAV in its session folder
@@ -145,6 +146,10 @@ class Takes:
             view.hover = view.focus = None
             view.mode, view.level, view.ops = "idle", None, OpsView()
             return ""
+        if ev.kind == "to_prepare":
+            view.hover = view.focus = None
+            view.mode, view.level, view.ops = "idle", None, OpsView()
+            return ""
         if ev.kind == "count_in_cancel":
             self.recorder.close()
             return "TAKE CANCELLED"
@@ -243,6 +248,8 @@ def main() -> int:
                 if until is not None:
                     note_until = until
             view.app, view.status = modes.mode, takes.status(modes.mode)
+            zone = modes.zone
+            view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
             if modes.mode in ("prepare", "review"):
                 if result is not None:
                     sync_view(grammar, view, overlay)
@@ -252,7 +259,6 @@ def main() -> int:
                 view.count_in = max(1, math.ceil(modes.count_in_end - (start - t0)))
                 view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" else 0.0
                 view.mic = takes.recorder.level
-                view.zone_active, view.stop_progress = modes.zone.active, modes.zone.stop_progress
                 view.start_progress = 0.0
             # Edge scrolling advances every displayed frame so it stays smooth.
             if view.app in ("prepare", "review") and view.mode == "browse" and grammar.state.scroll_rate:
@@ -263,7 +269,7 @@ def main() -> int:
 
             overlay.draw(frame, view)
             if show_debug:
-                if view.app in ("count_in", "rehearse"):
+                if view.app != "prepare":
                     draw_zone(frame, modes.zone)
                 else:
                     draw_hand_box(frame, grammar.cursor)
