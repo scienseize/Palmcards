@@ -61,7 +61,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 
 ### Rehearse (locked except inside a command zone, top-right of the frame)
 - Closed fist held 1 s: start take after 3-2-1 count-in
-- Flick inside zone: next section (a sideways swing of the hand, usually from the wrist)
+- Flick inside zone: next section (a sideways swing of the hand, usually from the wrist). From milestone 6b the notes follow your voice on their own and the flick is the manual override.
 - Open palm inside zone held 1.5 s: stop take (goes to Review)
 - All other hand movement is logged as data (gesture amount, fidgeting, face touching), never treated as a command.
 
@@ -245,6 +245,12 @@ palmcards/
 4. **Rehearse:** closed fist from Prepare starts a take after the 3-2-1 count-in; command zone; flick for next section; open palm in the zone held 1.5 s stops the take and goes to Review; audio recorded to WAV per take.
 5. **Speech:** Whisper transcription with word timestamps; alignment to the notes.
 6. **Cues and Review:** verdicts per mark; Review mode with the same grammar: browse sentences with verdict chips, fold to focus for full verdicts, L-hand tilt dials through takes, pinch + lift drills a sentence, closed fist starts a new take.
+6b. **Follow:** the notes follow your voice during a take, the flick stays as the override.
+    - Live recognition: first try a small Whisper model re-run on the last ~4 s of audio every ~0.5 s; if the lag is over ~1 s or the frame rate drops, switch to Apple's on-device speech recogniser (streams; needs `pyobjc` and Speech Recognition permission).
+    - Match live words with the M5 aligner, but only against the current section plus the start of the next. Advance only after ~3 words in a row match ahead, so a stray match can't jump.
+    - Highlight the current sentence inside the section panel (teleprompter-style). Show the next section when its predecessor's last sentence *starts*, to hide the lag.
+    - Going off script stalls the follow (correct); a flick moves on by hand and corrects a wrong jump.
+    - The live match is display only; the full transcription after the take stays the record. Each `sections` entry in `session.json` notes whether it came from the voice or a flick.
 7. **Metrics:** gaze, posture, fidgeting, filler rate.
 8. **Edit gestures + LLM:** Operate and Commit in Prepare: word options ring (LLM synonyms, stress node, hear-it node via macOS `say`) with L-hand preview, sentence tone dial, faded LLM-suggested delivery marks toggled by L-hand, two-L-hand length stretch; pinch + lift commits; glyph-scramble while the LLM works.
 9. **Export:** revised notes back to the original format.
