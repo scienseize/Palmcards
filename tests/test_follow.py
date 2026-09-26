@@ -13,7 +13,8 @@ Papa quebec romeo sierra tango. Uniform victor whiskey xray yankee.
 
 
 class Speaker:
-    """Says words one at a time, 0.4 s apart, each confirmed 1 s after it ends."""
+    """Says words one at a time, 0.4 s apart, each confirmed 0.7 s after it ends
+    (the live pipeline's measured median lag)."""
 
     def __init__(self, follower: Follower):
         self.f, self.t, self.events = follower, 0.0, []
@@ -21,7 +22,7 @@ class Speaker:
     def say(self, text: str) -> list[FollowEvent]:
         got = []
         for word in text.split():
-            w = LiveWord(word, self.t, self.t + 0.3, 0.9, confirmed_at=round(self.t + 1.3, 3))
+            w = LiveWord(word, self.t, self.t + 0.3, 0.9, confirmed_at=round(self.t + 1.0, 3))
             self.t += 0.4
             got += self.f.update([w])
         self.events += got
@@ -43,32 +44,33 @@ def test_sections_and_sentences():
 def test_straight_read_follows_sentences_and_advances_the_section():
     f = Follower(NOTES)
     sp = Speaker(f)
-    sp.say("alpha bravo")
-    assert moves(sp.events) == []
-    # A run reading on into the next sentence moves there at its first word.
-    assert moves(sp.say("charlie delta echo foxtrot")) == [("sentence", 1)]
+    assert moves(sp.say("alpha bravo charlie")) == []
+    # The live words lag the voice: when "delta" is confirmed the speaker is saying "echo",
+    # the sentence's last word, so the highlight goes on to the next sentence now.
+    assert moves(sp.say("delta")) == [("sentence", 1)]
+    assert moves(sp.say("echo foxtrot")) == []  # finishing sentence 0 doesn't pull it back
     sp.say("golf hotel india juliet kilo lima mike november oscar papa quebec")
-    assert moves(sp.events) == [("sentence", 1), ("sentence", 2)]
+    # Across the section's end too: "papa" lights up in the preview while "oscar" is said;
+    # the recorded section waits for its opening words to be confirmed.
+    assert moves(sp.events) == [("sentence", 1), ("sentence", 2), ("sentence", 3)]
     got = sp.say("romeo")
-    assert moves(got) == [("section", 1), ("sentence", 3)]
-    assert got[0].source == "voice" and got[0].t == round(sp.t - 0.4 + 1.3, 3)  # when "romeo" was confirmed
-    assert moves(sp.say("sierra tango uniform victor whiskey")) == [("sentence", 4)]
+    assert moves(got) == [("section", 1)]
+    assert got[0].source == "voice" and got[0].t == round(sp.t - 0.4 + 1.0, 3)  # when "romeo" was confirmed
+    assert moves(sp.say("sierra")) == [("sentence", 4)]
+    assert moves(sp.say("tango uniform victor whiskey xray yankee")) == []  # the last sentence: nowhere to go
 
 
 def test_fillers_do_not_break_a_run():
     sp = Speaker(Follower(NOTES))
-    sp.say("alpha bravo charlie delta echo")
-    assert moves(sp.say("uh foxtrot")) == [("sentence", 1)]
-    assert moves(sp.say("golf um hotel india juliet uh kilo")) == [("sentence", 2)]
+    assert moves(sp.say("alpha um bravo uh charlie delta")) == [("sentence", 1)]
+    assert moves(sp.say("echo foxtrot golf um hotel uh india")) == [("sentence", 2)]
 
 
 def test_a_dropped_or_misheard_word_does_not_break_a_run():
     sp = Speaker(Follower(NOTES))
-    sp.say("alpha bravo charlie delta echo")
-    assert moves(sp.say("foxtrot hotel")) == [("sentence", 1)]  # "golf" lost: echo foxtrot hotel
+    assert moves(sp.say("alpha bravo delta")) == [("sentence", 1)]  # "charlie" lost
     sp = Speaker(Follower(NOTES))
-    sp.say("alpha bravo charlie delta echo")
-    assert moves(sp.say("foxtrot gulp hotel")) == [("sentence", 1)]  # "golf" misheard
+    assert moves(sp.say("alpha bravo chorley delta")) == [("sentence", 1)]  # "charlie" misheard
     sp = Speaker(Follower(NOTES))
     sp.say("alpha bravo")
     assert sp.say("wait no kilo gosh darn lima") == []  # two odd words between: not a run
@@ -104,7 +106,7 @@ def test_moving_back_needs_five_words():
 def test_sections_never_move_back():
     sp = Speaker(Follower(NOTES))
     sp.say("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar")
-    sp.say("papa quebec romeo sierra")
+    sp.say("papa quebec romeo")
     assert sp.f.section == 1
     sp.say("alpha bravo charlie delta echo foxtrot golf hotel")
     assert (sp.f.section, sp.f.sentence) == (1, 3)

@@ -805,3 +805,25 @@ Not exercised live (automated tests only): analysis worker failure + retry, an e
 Next action: open decisions (cloud LLM provider, backward flick, left-handed layout, push/CI,
   evaluation data).
 ```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: follow-up to the release gate (user feedback: the highlight should move to the
+  next sentence as the previous one is being finished)
+Status: implemented; checked on a real recorded take (not yet in a live run)
+Files and behavior changed: palmcards/follow.py: the Follower hands the highlight on once the voice
+  is probably on the sentence's last word: the last confirmed word + (time since it ended x recent
+  speaking rate, 1.5-4 words/s) reaches the end, and at most FOLLOW.handoff_words (2) words are
+  still unconfirmed. Words finishing the old sentence after the handoff don't pull it back; the
+  guard ends once the new sentence is heard (a genuine re-read of 5 words still moves back).
+  Across a section's end the next section's first sentence is highlighted inside the faint
+  preview; the recorded section still changes only when its opening is confirmed. main.py keeps the
+  preview while the highlight is already in it; render.py draws the current sentence orange even
+  inside the preview.
+Tests: pytest -> 381 passed (follow tests updated to the new timing, harness lag 0.7 s = the measured
+  median; stalls, stray matches and pauses mid-sentence still don't jump).
+Check on real audio (LiveFollow + whisper-base, 20260925-101345 take 1 replayed through tap()):
+  the highlight moved 0.1-0.7 s after each previous sentence ended (before: about 1 s into the new
+  one); during the take's 18 s pause the next section's first sentence waited highlighted in the
+  preview, and the section itself changed at 34.6 s (speech resumed at 33.2 s).
+```

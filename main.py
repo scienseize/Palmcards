@@ -589,7 +589,10 @@ class Takes:
             self._follow_reported = True
         section = self.section_sentences()
         view.section = self.section
-        view.preview_next = view.current == section[-1] and self.section + 1 < len(self.notes.sections)
+        # The next section shows faint from its predecessor's last sentence on, and
+        # stays while the highlight has already been handed on into it.
+        handed_on = self.notes.sentences[view.current].section == self.section + 1
+        view.preview_next = (view.current == section[-1] or handed_on) and self.section + 1 < len(self.notes.sections)
         view.panel_scroll = overlay.panel_scroll_to(view, view.current)
 
     def _stop_recording(self) -> "TakeWriter | None":

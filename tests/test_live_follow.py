@@ -117,7 +117,8 @@ def test_live_follow_turns_words_into_moves_and_keeps_stats():
         time.sleep(0.02)
     assert follow.stream.fed == 1600  # 4800 samples at 48 kHz -> 16 kHz
     moves = [e for _ in range(4) for e in follow.poll()]
-    assert [(e.kind, e.index) for e in moves] == [("sentence", 1), ("section", 1), ("sentence", 2)]
+    # Each sentence hands on as it ends; the section follows once its opening is confirmed.
+    assert [(e.kind, e.index) for e in moves] == [("sentence", 1), ("sentence", 2), ("section", 1)]
     stats = follow.stop_take()
     assert (stats["state"], stats["words"], stats["engine"]) == ("following", 9, "mlx-whisper")
     assert stats["lag_median_s"] == pytest.approx(0.7)

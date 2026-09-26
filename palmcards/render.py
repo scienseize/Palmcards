@@ -636,6 +636,8 @@ class TextOverlay:
             return y_
 
         def unit_colors(si):
+            if current is not None and si == current:  # orange, even in the previewed section
+                return C.orange, C.orange_mark
             if preview_from is not None and si >= preview_from:
                 return C.faint, C.faint_mark
             if current is None:

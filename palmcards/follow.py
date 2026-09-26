@@ -14,6 +14,11 @@ earlier sentence), they are aligned again on their own.
 
   - a run of FOLLOW.forward_words ending in a later sentence of the section
     moves the highlight on to it,
+  - once the speaker is probably on the sentence's last word, the highlight
+    goes on to the next one: live words lag the voice, so where the voice
+    is now is estimated as the last confirmed word plus the lag times the
+    speaking rate (never more than FOLLOW.handoff_words early). The words
+    that finish the old sentence arrive after that and don't pull it back,
   - a run of FOLLOW.back_words ending in an earlier one moves it back
     (a re-read, more evidence needed as it's rarer),
   - a run with FOLLOW.forward_words in the next section's opening advances
@@ -53,6 +58,7 @@ class Run:
     first_word: int  # tail index of the run's first word
     after: int  # tail index just past the run's last word
     trailing: int  # words after the run that could have matched but didn't (not fillers)
+    last_word: int = 0  # the run's last note word, as a word index in its sentence
 
 
 class Follower:
@@ -62,6 +68,7 @@ class Follower:
         self.section = section
         self.sentence = self._first(section)
         self.tail: list[LiveWord] = []
+        self._handoff: tuple[int, int] | None = None  # (sentence handed on from, its word at that moment)
 
     def _first(self, section: int) -> int:
         return next((i for i, s in enumerate(self.sentences) if s.section >= section), len(self.sentences) - 1)
@@ -91,15 +98,15 @@ class Follower:
         tail = self.tail[offset:]
         words = [{"text": w.text, "start": w.start, "end": w.end, "probability": w.probability} for w in tail]
         al = align([[w.norm for w in self.sentences[i].words] for i in scope], words)
-        pairs = []  # (tail index, flat note index, sentence)
+        pairs = []  # (tail index, flat note index, sentence, word in the sentence)
         k = 0
         for entry, i in zip(al["sentences"], scope):
-            pairs += [(t, k + wi, i) for wi, t in enumerate(entry["words"]) if t is not None]
+            pairs += [(t, k + wi, i, wi) for wi, t in enumerate(entry["words"]) if t is not None]
             k += len(entry["words"])
         if not pairs:
             return None
         pairs.sort()
-        paired = {t for t, _, _ in pairs}
+        paired = {t for t, _, _, _ in pairs}
         fillers = set(ALIGN.fillers)
         # Words that don't break a run: fillers, words the aligner left out as
         # unsure or punctuation, and the second half of a split word.
@@ -110,7 +117,7 @@ class Follower:
         end = len(pairs) - 1
         start = end
         while start > 0:
-            (t0, k0, _), (t1, k1, _) = pairs[start - 1], pairs[start]
+            (t0, k0, _, _), (t1, k1, _, _) = pairs[start - 1], pairs[start]
             odd = sum(t not in skippable and t not in paired for t in range(t0 + 1, t1))
             if k1 - k0 - 1 > FOLLOW.run_gap or odd > FOLLOW.run_gap:
                 break
@@ -118,7 +125,8 @@ class Follower:
         run = pairs[start:end + 1]
         last = run[-1][0]
         trailing = sum(t not in skippable for t in range(last + 1, len(tail)))
-        return Run(len(run), tuple(s for _, _, s in run), offset + run[0][0], offset + last + 1, trailing)
+        return Run(len(run), tuple(s for _, _, s, _ in run), offset + run[0][0], offset + last + 1, trailing,
+                   run[-1][3])
 
     def update(self, words: list[LiveWord]) -> list[FollowEvent]:
         """Take newly confirmed live words; returns where the follow moved."""
@@ -130,21 +138,41 @@ class Follower:
             return []
         t = max(w.confirmed_at if w.confirmed_at is not None else w.end for w in words)
         s = run.sentences[-1]
+        if self._handoff is not None and s == self.sentence:
+            self._handoff = None  # the voice has reached the new sentence: the handoff is over
         section = self.sentences[s].section
         if section == self.section + 1:
             if sum(self.sentences[x].section == section for x in run.sentences) < FOLLOW.forward_words:
                 return []
-            self.section, self.sentence = section, s
+            moved = s != self.sentence
+            self.section, self.sentence, self._handoff = section, s, None
             self.tail = self.tail[run.first_word:]  # what came before belongs to the last section
-            return [FollowEvent("section", section, t), FollowEvent("sentence", s, t)]
+            return [FollowEvent("section", section, t)] + ([FollowEvent("sentence", s, t)] if moved else [])
         if s > self.sentence and run.length >= FOLLOW.forward_words:
-            self.sentence = s
+            self.sentence, self._handoff = s, None
             return [FollowEvent("sentence", s, t)]
-        if s < self.sentence and run.length >= FOLLOW.back_words:
-            self.sentence = s
+        finishing = self._handoff is not None and s == self._handoff[0] and run.last_word >= self._handoff[1]
+        if s < self.sentence and run.length >= FOLLOW.back_words and not finishing:
+            self.sentence, self._handoff = s, None
             self.tail = self.tail[run.first_word:]  # the later words were read before the re-read
             return [FollowEvent("sentence", s, t)]
+        # The voice is probably on the sentence's last word: the highlight goes on now.
+        last = len(self.sentences[s].words) - 1
+        ahead = self._words_ahead(t)
+        if s == self.sentence and run.length >= FOLLOW.forward_words and last - run.last_word <= FOLLOW.handoff_words \
+                and run.last_word + ahead >= last and s + 1 in self.scope():
+            self.sentence, self._handoff = s + 1, (s, run.last_word)
+            return [FollowEvent("sentence", s + 1, t)]
         return []
+
+    def _words_ahead(self, now: float) -> float:
+        """Words the voice has probably said since the newest confirmed one:
+        the time since it ended times the recent speaking rate."""
+        recent = self.tail[-6:]
+        rate = 2.5  # words per second when there's too little to tell
+        if len(recent) >= 3 and recent[-1].start > recent[0].start:
+            rate = min(4.0, max(1.5, (len(recent) - 1) / (recent[-1].start - recent[0].start)))
+        return max(0.0, now - self.tail[-1].end) * rate
 
     def flick(self, t: float) -> list[FollowEvent]:
         """The manual override: on to the next section's first sentence."""
@@ -152,7 +180,7 @@ class Follower:
             return []
         self.section += 1
         self.sentence = self._first(self.section)
-        self.tail = []
+        self.tail, self._handoff = [], None
         return [FollowEvent("section", self.section, t, "flick"), FollowEvent("sentence", self.sentence, t, "flick")]
 
 
@@ -268,6 +296,7 @@ class LiveFollow:
         """A manual move (keys): the follow carries on from there."""
         if self.follower is not None:
             self.follower.section, self.follower.sentence, self.follower.tail = section, sentence, []
+            self.follower._handoff = None
 
     def stop_take(self) -> dict:
         """Stop feeding; the take's live statistics, for session.json."""

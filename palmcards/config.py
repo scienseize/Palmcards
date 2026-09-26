@@ -244,6 +244,10 @@ class Follow:
     ahead_words: int = 8  # the next section's opening: whole sentences up to at least this many words
     forward_words: int = 3  # note words matched in a row to move on (next sentence or next section)
     back_words: int = 5  # ... to move back to an earlier sentence in the section
+    # The highlight moves to the next sentence when the voice is probably on
+    # the current one's last word (see Follower), but never while more than
+    # this many of its words are still unconfirmed.
+    handoff_words: int = 2
     run_gap: int = 1  # note words missing, or odd words heard, between two matches in a row
     tap_blocks: int = 256  # microphone blocks waiting for the feeder (~5 s at 48 kHz, 1024-frame blocks)
     feed_s: float = 0.1  # the feeder hands the live stream what arrived this often
