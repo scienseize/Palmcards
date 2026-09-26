@@ -307,10 +307,12 @@ class Metrics:
     move_max_gap_s: float = 0.2  # movement is summed between hand results at most this far apart
     # A face touch: a fingertip within touch_margin face widths of the face's outline, the hand
     # touch_scale_min..max times the face's width (at the face's depth, not in front of it),
-    # for touch_min_s or longer (gaps up to touch_gap_s bridged). Starting values.
+    # for touch_min_s or longer (gaps up to touch_gap_s bridged). One scripted take (2026-09-26,
+    # one person): 3 touches at a scale of 0.42-0.55, hands held nearer the camera 0.78-0.94;
+    # touch_scale_max is set between them (was 1.0). Not yet checked on another take.
     touch_margin: float = 0.05
     touch_scale_min: float = 0.3
-    touch_scale_max: float = 1.0
+    touch_scale_max: float = 0.7
     touch_min_s: float = 0.3
     touch_gap_s: float = 0.2
     # Posture against the calibration's baseline: readings with the nose and shoulders visible.

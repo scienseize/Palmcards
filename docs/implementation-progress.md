@@ -24,7 +24,7 @@ user runs them. They are never inferred from unit tests.
 | M7 stage 0 — Face/pose budget | Measured on hardware (2026-09-26) | CLAUDE.md milestone 7 rewritten to what's left, duplicate llm.py line removed; `BODY` config; palmcards/vision.py (face and pose trackers, not in the app yet); scripts/bench_vision.py | 388 passed; five benchmark runs by the user (sessions/bench-vision*.json) | Cool: every rate keeps 30 fps. Warm (after 2.5-3.5 min): every rate costs frames, and hands-only also slows (see log). Rates set to face every 6th, pose every 15th frame; Stage 1 decides on backing off when frames run late |
 | M7 stage 1 — Capture and calibration | Checked on hardware (2026-09-26) | Face, pose and hand features during every take (take-NN.face.npz with provenance); the eye calibration in the session's first count-in (dot, then the orange line; `e` redoes it), kept in session.json (schema 3); face/pose wait for a later frame when one is late | 413 passed; the user's session 20260926-115417: calibration ok, `e` redid it, a covered camera failed it with its reason; takes at 5/s face, 2/s pose, 30/s hands, face found 100% | The two calibration targets barely differ (see log); a face-box overlap is not a face touch in a close-up frame; stage 2 (gaze) |
 | M7 stage 2 — Gaze | Screen vs away validated on held-out checks (one person); camera vs notes not | palmcards/gaze.py (classes against the calibration, the take's gaze metric while speaking, per sentence), the gaze check (`main.py --gaze-check`, `scripts/evaluate.py --gaze [--sweep]`) | 424 passed; on the user's last real take the defaults gave 70% away while speaking: not believable | A gaze-check take to tune `GAZE`, a second to confirm |
-| M7 stage 3 — Posture and movement | Implemented, validation pending | Posture against the calibration; hand movement and face touches from the take's features, no --trace; features v2 (fingertip to the face outline, hand size against the face) | 433 passed; earlier real takes: posture near the calibration, wrist 0.5-3.1 palms/s | A take with counted face touches and hands in front of the face |
+| M7 stage 3 — Posture and movement | Checked on one scripted take (touches 3/3, head drop and tilt found) | Posture against the calibration; hand movement and face touches from the take's features, no --trace; features v2 (fingertip to the face outline, hand size against the face) | 433 passed; earlier real takes: posture near the calibration, wrist 0.5-3.1 palms/s | A take with counted face touches and hands in front of the face |
 
 ## Log
 
@@ -1016,6 +1016,21 @@ Unverified assumptions and remaining risks: the touch settings (margin, 0.3-1.0 
   touch early.
 Next action: the user records a take with counted face touches and hands held in front of the face
   without touching; compare the counts; then stage 4.
+Scripted take (the user, session 20260926-132125-sample_notes-306f4b, 54 s, features v2): asked for
+  3 face touches, 2 hands held in front of the face, a head drop and a shoulder tilt of ~3 s each.
+  touches: 3 counted (3.3-5.1, 6.4-8.6, 10.0-12.5 s; 6.5 s in all), hand scale 0.42-0.55 (p10-p90),
+    fingertips inside the outline. No false touch.
+  hands in front of the face: not counted, but mostly because nothing was measured: at 24-26 s the
+    face was lost (0-2 of 5 readings) and the hand tracker saw no hand but one result (scale 0.78);
+    at 52-54 s a hand near the face measured 0.86-0.91, inside the old 0.3-1.0 range, and missed a
+    touch only by staying just off the outline. touch_scale_max lowered to 0.7 (between the two
+    groups); the take still gives 3 touches. One take, one person.
+  head drop: readings over 0.08 below the baseline at 34.1-37.1 s (plus one at 24.6); face lost
+    meanwhile (gaze unclear there). Shoulder tilt: over 5 deg at 42.6-46.1 s (plus single readings at
+    15.1, 18.1, 24.1 and during the head drop). Take metrics: tilted 13.3%, head dropped 7.6% of 105
+    pose readings; hand in view 15%, wrist 0.98 and fingertips 1.8 palms/s.
+  Limits seen: a hand close to the camera in front of the face can hide the face and not be tracked
+    as a hand, so hand metrics miss it; looking down at the lap loses the face.
 ```
 
 ## Decisions (2026-09-26, by the user)
