@@ -2,6 +2,19 @@
 
 The unit tests check that the code does what it says: they use synthetic tones for stress and intonation, and made-up word timings for pauses and pace. They do not show that a verdict matches what a listener would say. That needs real, consented takes labelled by people. **None have been collected yet**, so every accuracy claim is pending. Collection starts after milestone 8's LLM work, with real people.
 
+## Study and hypotheses
+
+The study (design note, Evaluation tab): each participant rehearses two passages of similar length and difficulty, one with PalmCards and one the usual way (reading from paper or a screen and recording on a phone), with passage and condition order counterbalanced. The final delivery of each passage is recorded for blind rating.
+
+| | Hypothesis | Measure |
+| --- | --- | --- |
+| H1 | Cue adherence rises from the first to the last take with PalmCards, because each take shows which planned marks were missed | Share of planned marks hit per take (`marks`) |
+| H2 | Blind listeners rate final takes made with PalmCards higher on expressiveness than final takes made the usual way | Listener rating, 1 to 5 |
+| H3 | While speaking, people look at the screen more and away less with PalmCards, because the notes sit next to the camera instead of on a desk | Share of speaking time looking at the screen (camera or notes) against away: `gaze_screen_share` and `gaze_away_share` in the take table |
+| H4 | False triggers during takes stay rare enough that participants don't report them as a problem, which tests the command zone directly | `gestures.per_minute` |
+
+H3 originally measured eye contact, the share of speaking time spent looking at the camera. Milestone 7 couldn't reliably tell the camera from the notes (see [Limitations](#limitations)), so H3 now compares screen with away and makes no claim about looking into the lens. For the comparison to be fair, the usual-way delivery has to be measured the same way: filmed by the Mac's camera after a PalmCards calibration.
+
 ## Collecting takes
 
 - **Consent.** Every speaker agrees in writing to being recorded and to the recordings being used for evaluation. The labels file records `"consent": true`; `scripts/evaluate.py` refuses files without it. Recordings stay on the machine they were made on unless the speaker agrees otherwise.
@@ -59,7 +72,7 @@ Each gaze-check take calibrates in its count-in, then shows `GAZE.check_each` pr
 | Metric | Meaning |
 | --- | --- |
 | `screen.agreement`, `screen.kappa`, `screen.recall` | Screen (camera or notes) against away, what the take metric reports: how often the class is the prompt, Cohen's kappa (agreement beyond what the class frequencies alone give), and per side the share of its readings given its class |
-| `agreement`, `kappa`, `recall` | The same with camera, notes and away apart (not validated) |
+| `agreement`, `kappa`, `recall` | The same with camera, notes and away kept apart (not validated, see [Limitations](#limitations)) |
 | `unclear_share` | Readings with no face, a blink, or a missing value |
 | `confusion` | Prompt × class counts |
 | `medians` | Each prompt's median head yaw, pitch and iris position: what the settings have to separate |
@@ -76,7 +89,7 @@ One CSV row per take, every session under the data folder unless RUNs are given:
 
 ## Measured so far
 
-**Gaze** (2026-09-26, one person, MacBook Air, window not full screen; five gaze-check takes in three sessions; `docs/implementation-progress.md` has the details). Screen vs away, the settings in `GAZE` chosen on the first two takes: kappa 0.84 and 0.87 there, and 0.65, 0.79, 0.72 on the three recorded after (screen recall 0.95, away 0.82 over all five). Camera vs notes on the takes recorded after: 0.36, 0.45 (tuning take), 0.62. Head pitch read 3-9° differently in the calibration than moments later, silent readings included; with the notes below the camera, that is the whole difference. So the take metric reports screen vs away only.
+**Gaze** (2026-09-26, one person, MacBook Air, window not full screen; five gaze-check takes in three sessions; `docs/implementation-progress.md` has the details). Screen vs away (what H3 measures), with the `GAZE` settings chosen on the first two takes: kappa 0.84 and 0.87 on those two, and **held-out kappa 0.65 to 0.79** (0.65, 0.79 and 0.72) on the three recorded afterwards. Over all five, screen recall was 0.95 and away recall 0.82. Camera vs notes didn't hold up; see [Limitations](#limitations).
 
 **Alignment speed** (`scripts/profile_align.py`, 2026-09-26, MacBook Air, Apple silicon). Synthetic scripts with 5% misheard words, 3% fillers and a restart every 100 words, with the fill compiled (numba):
 
@@ -92,3 +105,12 @@ Before compiling, 600 words took 15.3 s and 1200 words 67.7 s. A script that rep
 **Live follow** (`scripts/bench_live.py`, recorded takes replayed in real time): median live-word lag 0.63–0.75 s with Whisper base read every 0.3 s. The camera frame rate held at 30 fps. No wrong section jumps.
 
 **Verdict accuracy against people**: not measured yet.
+
+## Limitations
+
+**Gaze: camera vs notes (milestone 7).** Gaze was first built with three classes (camera, notes and away) so that H3 could measure eye contact. That split didn't hold up across sessions:
+
+- **Calibration drift.** In every gaze-check session, head pitch during the prompts read 3-9° higher than in the calibration's camera step. This happened in silent readings too, so jaw movement from speaking isn't the cause, and it was already there in a take's first 2 s. When the notes sit below the camera, the whole camera-to-notes difference is only 2.4-4° of pitch and 1.6-1.8° of yaw, which is smaller than the drift. The cause is unknown, and it can't be investigated from the recordings because the calibration's raw readings aren't saved.
+- **Held-out agreement.** Camera, notes and away as three classes scored kappa 0.36 and 0.62 on held-out takes (0.45 on a tuning take). One calibration couldn't separate camera from notes at all (separation 1.9999, needs 2.0).
+
+So the take metric keeps the camera and notes counts separately but reports only screen vs away (`split.validated: false`). Review says ON SCREEN / AWAY, never "eye contact", and H3 measures screen vs away. Screen vs away was measured on one person, one Mac, and prompted takes. Prompted gaze is easier than a real talk, so that result shows the classifier can tell the targets apart, not how often it is right while someone speaks.
