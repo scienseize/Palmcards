@@ -860,6 +860,12 @@ Hardware check (2026-09-26, the user; session 20260926-115417-sample_notes-0dad8
     notes step says "NOW READ THE ORANGE SENTENCE", and the first 0.8 s of each step (was 0.4 s) is
     left out, to read the instruction. c1 of that session stays on record but was made with the old
     wording; the next session calibrates with the new one.
+  Re-run with the new wording (session 20260926-120945-sample_notes-3f8353, window not full screen):
+    c1 ok, face in 24 + 18 frames. Camera vs notes: yaw -2.1 vs -8.5 deg (12x the larger MAD),
+    iris_x 0.536 vs 0.499 (4.5x), pitch -1.7 vs -0.3 (2.5x), iris_y -0.077 vs -0.084 (2.1x). The
+    targets now separate, mostly sideways (the notes are left of the camera at about its height);
+    the vertical cues are weak. A 35 s take: face found 100%, yaw -6.6..-1.2 (10th-90th
+    percentile), between the two baselines.
 ```
 
 ## Decisions (2026-09-26, by the user)
