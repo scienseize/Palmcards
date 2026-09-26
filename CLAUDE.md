@@ -28,7 +28,7 @@ Full design note: https://claude.ai/artifact/2mB94zAhFAKUNK7GnCsqSc
 | Prosody | librosa: `pyin` for pitch, RMS for loudness |
 | Notes parsing | python-docx, markdown-it-py |
 | Script alignment | rapidfuzz (fuzzy match transcript words to note words) |
-| LLM | any chat API, or local via Ollama; behind one small interface |
+| LLM | Anthropic (`claude-haiku-4-5`, `main.py --llm anthropic`) or local via Ollama (`--llm ollama`); behind one small interface (`palmcards/llm.py`) |
 | Storage | JSON files per session |
 
 MediaPipe `.task` model files live in `models/` and are downloaded by a setup script, not committed.
@@ -88,8 +88,8 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 - Preferences (`palmcards/prefs.py`, `prefs.json` in the data directory, apart from the sessions): hand reach (hand box size), fist and palm hold times, high contrast (`c`), hand box shown, tutorial seen. `python -m palmcards.prefs set KEY VALUE`. No left-handed layout: decided unnecessary.
 
 ### What the screen promises
-- Prepare offers only what works: the options ring holds the original word, **stress** / **unstress** (a real edit: a new notes revision, `palmcards/edit.py`) and **hear it** (speaks the sentence with the word stressed, via `palmcards/tts.py`); `u` undoes the last edit (the session's current revision steps back to its parent; nothing is deleted). Word alternatives, tone and length need the optional LLM: without one, tone and length preview their controls and say "not available yet"; a commit never claims a change it didn't make.
-- The optional LLM (`palmcards/llm.py`, off unless `LLM.provider` is set; "ollama" runs a model on the Mac; a cloud provider comes with milestone 8): opening the options ring asks for word alternatives (the word's glyphs scramble while it waits, then they join the ring); committing a tone or length change asks for a rewrite; `m` on a focused sentence asks for delivery marks. Rewrites and marks come back as a *proposal*, shown under the unit when it is focused again: pinch + lift uses it (a new revision, `u` undoes), dropping the hand discards it. Only explicit actions send anything; only the unit's text goes, inside `<notes>` tags with a system prompt that treats it as data; answers are validated; an answer for notes that changed since is dropped. Without a provider these say so and nothing is sent.
+- Prepare offers only what works: the options ring holds the original word, **stress** / **unstress** (a real edit: a new notes revision, `palmcards/edit.py`) and **hear it** (speaks the sentence with the word stressed, via `palmcards/tts.py`); `u` undoes the last edit (the session's current revision steps back to its parent; nothing is deleted). Word alternatives, tone and length need the optional LLM: without one, tone and length preview their controls and say they need it; a commit never claims a change it didn't make.
+- The optional LLM (`palmcards/llm.py`, off unless chosen with `main.py --llm ollama|anthropic`, default `LLM.provider`; "ollama" runs a model on the Mac; "anthropic" is the cloud, `LLM.cloud_model` = `claude-haiku-4-5`, with the key from `ANTHROPIC_API_KEY` in the environment or the gitignored `.env`, never logged or saved; its answers are held to a JSON schema; each attempt times out after `LLM.cloud_timeout_s`, one retry after a timeout, a dropped connection, 408/409/429 or 5xx, never after a wait longer than `cloud_retry_wait_max_s`): a **CLOUD LLM** chip sits bottom left whenever the cloud is on ("SENDING" while a request is out). Opening the options ring asks for word alternatives (the word's glyphs scramble while it waits, then they join the ring); committing a tone or length change asks for a rewrite; `m` on a focused sentence asks for delivery marks. Rewrites and marks come back as a *proposal*, shown under the unit when it is focused again: pinch + lift uses it (a new revision, `u` undoes), dropping the hand discards it. Only explicit actions send anything; only the unit's text goes, inside `<notes>` tags with a system prompt that treats it as data; answers are validated; an answer for notes that changed since is dropped. A failed request changes nothing and says why in the label (`ALTERNATIVES FAILED: TIMED OUT, NOTHING CHANGED`); a rejected key stays on the alert line. Without a provider these say so and nothing is sent. Every call's tokens (action, provider, model, input and output tokens, outcome; never the text) go to the session's `llm-usage.jsonl`, including calls whose answer was dropped and, at exit, calls still in flight (`abandoned at exit`, after `LLM.close_wait_s`); `python -m palmcards.llm usage [RUN ...]` sums them by action with a cost estimate. Tests never see a real key and can't reach the API (`tests/conftest.py`).
 - Edits never touch the imported file. Takes keep the revision they were recorded with; Review places older takes on the current notes by sentence id, so an edited sentence starts without verdicts. Sentence ids are unique across the whole session, including branches after an undo.
 - The focus panel is a viewport over the whole unit: never under the label, never off the frame; long sections and long verdict lists scroll (scrollbar, more-above/below markers). In Rehearse the current sentence is orange and kept in view. A focused Review panel too tall for the frame pages itself every few seconds.
 - Verdicts carry a symbol as well as a colour (✓ hit, ✗ missed, ? unclear, – skipped), and counts are given separately ("4 HIT, 3 MISSED, 2 UNCLEAR"): unclear is too little evidence, not a miss.
@@ -173,6 +173,8 @@ sessions/
 │   ├── take-01.prosody.npz          # pitch and loudness per 10 ms frame (cache; verdicts are recomputed from it)
 │   ├── take-01.face.npz             # face, pose and hand features per result during the take (the only record: no video)
 │   ├── take-01.verdicts.json        # a verdict per delivery mark
+│   ├── llm-usage.jsonl              # one line per LLM call: action, model, tokens, outcome; never the text
+│   │                                #   (a call before any take or edit makes the folder, like an edit)
 │   └── take-02.wav
 ├── gesture-logs/
 │   ├── 20260925-101345.jsonl        # every pose and event, one JSON object per line
@@ -327,7 +329,7 @@ palmcards/
 │   ├── data.py          # list / export / delete / prune recordings (python -m palmcards.data)
 │   ├── playback.py      # Review: play a sentence of a take
 │   ├── edit.py          # edits to the notes (stress, alternatives, rewrites, marks), each a new Notes
-│   ├── llm.py           # the optional LLM: providers (fake, Ollama), checked answers, background requests
+│   ├── llm.py           # the optional LLM: providers (fake, Ollama, Anthropic), checked answers, requests, usage
 │   ├── prefs.py         # preferences (reach, holds, contrast), apart from session evidence
 │   ├── tutorial.py      # the first-run gesture tutorial
 │   └── export.py        # a notes revision back out as .txt / .md / .docx (python -m palmcards.export)

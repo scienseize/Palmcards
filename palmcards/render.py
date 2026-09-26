@@ -9,10 +9,11 @@ column range; hit_test() maps a point back to (sentence, word), and
 cursor_to_text() maps the relative hand-box cursor to such a point.
 
 On top of the text: the two-line state label (Kat's `BROWSE BY WORD`), and
-Prepare's operations: the options ring (the original word and "hear it";
-word alternatives come with milestone 8, so they are not shown), and the
-tone gauge and stretch line, which preview a control that does not edit
-yet and say so.
+Prepare's operations: the options ring (the original word, its alternatives
+when the optional LLM is on, stress and "hear it"), and the tone gauge and
+stretch line; without the LLM these two only preview, and say so. While the
+cloud LLM is on, a CLOUD LLM chip sits at the bottom left ("SENDING" while a
+request is out).
 
 In Rehearse the current section is shown in the focus panel, the current
 sentence in orange and the rest dimmed, with the command zone (top right),
@@ -76,11 +77,17 @@ BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
 HEAR_IT, STRESS, UNSTRESS = "hear it", "stress", "unstress"  # ring nodes after the original word (and alternatives)
 SCRAMBLE = "abcdefghijklmnopqrstuvwxyz#%&@$"
-FOCUS_HINTS = {
+FOCUS_HINTS = {  # without the optional LLM
     "word": "OPEN PALM: STRESS, HEAR IT  /  DROP HAND: BACK",
     "sentence": "L-HAND, THEN TILT: TONE (PREVIEW ONLY)  /  DROP HAND: BACK",
     "paragraph": "TWO L-HANDS: LENGTH (PREVIEW ONLY)  /  DROP HAND: BACK",
 }
+FOCUS_HINTS_LLM = {
+    "word": "OPEN PALM: ALTERNATIVES, STRESS, HEAR IT  /  DROP HAND: BACK",
+    "sentence": "L-HAND, THEN TILT: TONE  /  DROP HAND: BACK",
+    "paragraph": "TWO L-HANDS: LENGTH  /  DROP HAND: BACK",
+}
+NEEDS_LLM = "(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)"
 VERDICT_SYMBOL = {"hit": "✓", "missed": "✗", "unclear": "?", "skipped": "–"}
 KEYS_HELP = (
     "KEYS (WHEN GESTURES WON'T DO)",
@@ -158,6 +165,8 @@ class ViewState:
     alternatives: tuple[str, ...] = ()
     loading: bool = False
     proposal: str = ""
+    llm: str = ""  # the optional LLM in use: "cloud" (the text asked about leaves the Mac), "local", or ""
+    llm_busy: bool = False  # a request is out
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
 
@@ -441,14 +450,15 @@ class TextOverlay:
                     second = "KEEP THE WORD (NO CHANGE)" if ops.picked == 0 else f'PINCH + LIFT: USE "{picked.upper()}"'
         elif ops.kind == "tone":
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
-            second = f"SENTENCE TONE: {tone}  (PREVIEW ONLY, NOT AVAILABLE YET)"
+            second = f"SENTENCE TONE: {tone}  " + ("/  PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM)
         elif ops.kind == "stretch":
             change = "LONGER" if ops.stretch > 1.05 else "SHORTER" if ops.stretch < 0.95 else "SAME"
-            second = f"PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}  (PREVIEW ONLY, NOT AVAILABLE YET)"
+            second = f"PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}  " + \
+                ("/  PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM)
         elif state.mode == "focus" and state.app == "prepare" and state.proposal:
             second = "PINCH + LIFT: USE THE PROPOSAL  /  DROP HAND: DISCARD IT"
         elif state.mode == "focus" and state.app == "prepare":  # nothing started yet: say what the next shape does
-            second = FOCUS_HINTS.get(state.level, "")
+            second = (FOCUS_HINTS_LLM if state.llm else FOCUS_HINTS).get(state.level, "")
         elif state.mode == "focus":
             second = state.status or "DROP HAND: BACK"
         else:
@@ -917,11 +927,22 @@ class TextOverlay:
             _blend(frame, self.x + self.margin, min(bottom + self.pad // 2, self.frame_h - chip[0].shape[0]), *chip)
         if state.tutorial is not None:
             self._draw_tutorial(frame, *state.tutorial)
+        # Bottom left: the CLOUD LLM chip whenever the text asked about can leave the Mac, then the keys.
+        x, low = self.x + self.margin, self.frame_h - LABEL.min_top
+        size = round(self.font_size * ZONE.hint_scale)
+        if state.llm == "cloud":
+            text, fg = ("CLOUD LLM: SENDING", C.orange) if state.llm_busy else ("CLOUD LLM", C.dim)
+            chip = self._chip(text, size, fg, C.label_fill)
+            _blend(frame, x, low - chip[0].shape[0], *chip)
+            if state.keys_help:
+                low -= chip[0].shape[0]
+            else:
+                x += chip[0].shape[1] + self.pad // 2
         if state.keys_help:
-            self._draw_keys(frame)
+            self._draw_keys(frame, low)
         elif state.app in ("prepare", "count_in", "rehearse", "review"):
-            chip = self._chip("H: KEYS", round(self.font_size * ZONE.hint_scale), C.dim, C.label_fill)
-            _blend(frame, self.x + self.margin, self.frame_h - chip[0].shape[0] - LABEL.min_top, *chip)
+            chip = self._chip("H: KEYS", size, C.dim, C.label_fill)
+            _blend(frame, x, low - chip[0].shape[0], *chip)
         return frame
 
     def _draw_summary(self, frame: np.ndarray, lines: tuple[str, ...]) -> None:
@@ -946,10 +967,11 @@ class TextOverlay:
             h = chip[0].shape[0]
             self._blend_centered(frame, chip, self.frame_w / 2, self.frame_h - (2.4 - i * 1.1) * h - LABEL.min_top)
 
-    def _draw_keys(self, frame: np.ndarray) -> None:
+    def _draw_keys(self, frame: np.ndarray, low: int) -> None:
+        """The keyboard fallback, bottom left, ending at `low`."""
         size = round(self.font_size * ZONE.hint_scale)
         chips = [self._chip(line, size, C.node_text, C.dark_fill) for line in KEYS_HELP]
-        y = self.frame_h - sum(c[0].shape[0] for c in chips) - LABEL.min_top
+        y = low - sum(c[0].shape[0] for c in chips)
         for chip in chips:
             _blend(frame, self.x + self.margin, y, *chip)
             y += chip[0].shape[0]

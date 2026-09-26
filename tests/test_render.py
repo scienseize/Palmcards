@@ -111,9 +111,40 @@ def test_label_lines_follow_mode_and_operation():
     focus.ops = OpsView()
     assert ov.label_lines(focus)[1].startswith("OPEN PALM: STRESS, HEAR IT")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
-    assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "SENTENCE TONE: WARM  (PREVIEW ONLY, NOT AVAILABLE YET)")
+    assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "SENTENCE TONE: WARM  (PREVIEW ONLY: NEEDS THE OPTIONAL LLM)")
     tone.drop_progress = 0.4
     assert ov.label_lines(tone)[1] == "DROP HAND TO BACK OUT"
+
+
+def test_labels_promise_a_rewrite_only_when_an_llm_is_on():
+    ov = overlay()
+    for llm in ("cloud", "local"):
+        tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=-0.6),
+                         llm=llm)
+        assert ov.label_lines(tone)[1] == "SENTENCE TONE: COLD  /  PINCH + LIFT: ASK FOR A REWRITE"
+        stretch = ViewState(mode="focus", level="paragraph", focus=Hit(4, None), ops=OpsView(kind="stretch", stretch=1.5),
+                            llm=llm)
+        assert ov.label_lines(stretch)[1] == "PARAGRAPH LENGTH: LONGER  x1.50  /  PINCH + LIFT: ASK FOR A REWRITE"
+        word = ViewState(mode="focus", level="word", focus=Hit(0, 1), llm=llm)
+        assert ov.label_lines(word)[1].startswith("OPEN PALM: ALTERNATIVES, STRESS, HEAR IT")
+    stretch.llm = ""
+    assert ov.label_lines(stretch)[1].endswith("(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)")
+
+
+def test_the_cloud_chip_shows_while_the_cloud_llm_is_on():
+    ov = overlay()
+
+    def bottom_left(**kw):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, ViewState(**kw))
+        return frame[620:, :640]
+
+    off, local = bottom_left(), bottom_left(llm="local")
+    idle, busy = bottom_left(llm="cloud"), bottom_left(llm="cloud", llm_busy=True)
+    assert np.array_equal(off, local)  # a local model sends nothing off the Mac: no chip
+    assert not np.array_equal(off, idle) and not np.array_equal(idle, busy)
+    keys = bottom_left(keys_help=True)
+    assert not np.array_equal(keys, bottom_left(keys_help=True, llm="cloud"))  # also under the keys help
 
 
 def test_draw_focus_states_and_stubs():

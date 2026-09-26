@@ -36,3 +36,6 @@ pytest
 # Recognition permission for the terminal app)
 pyobjc-framework-Speech
 pyobjc-framework-AVFoundation
+
+# Milestone 8: the optional cloud LLM (main.py --llm anthropic; imported only then)
+anthropic

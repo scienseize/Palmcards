@@ -26,6 +26,7 @@ user runs them. They are never inferred from unit tests.
 | M7 stage 2 — Gaze | Screen vs away validated on held-out checks (one person); camera vs notes not | palmcards/gaze.py (classes against the calibration, the take's gaze metric while speaking, per sentence), the gaze check (`main.py --gaze-check`, `scripts/evaluate.py --gaze [--sweep]`) | 424 passed; on the user's last real take the defaults gave 70% away while speaking: not believable | A gaze-check take to tune `GAZE`, a second to confirm |
 | M7 stage 3 — Posture and movement | Checked on one scripted take (touches 3/3, head drop and tilt found) | Posture against the calibration; hand movement and face touches from the take's features, no --trace; features v2 (fingertip to the face outline, hand size against the face) | 433 passed; earlier real takes: posture near the calibration, wrist 0.5-3.1 palms/s | A take with counted face touches and hands in front of the face |
 | M7 stage 4 — Review and export | Implemented, validation pending | Gaze line per focused sentence, take summary card in Review, per-take CSV (`scripts/evaluate.py --table`) | 438 passed; rendered offline from the user's scripted take; the table over all 30 takes | The user sees it in the app |
+| M8 stage 1 — Cloud LLM | Implemented, validation pending | Anthropic provider (`claude-haiku-4-5`, `main.py --llm anthropic`, key from the environment or .env), JSON-schema answers, 10 s timeout + one bounded retry, CLOUD LLM chip, truthful tone/length labels, per-call token log (`llm-usage.jsonl`) and `python -m palmcards.llm usage` | 454 passed; the provider tested through the real SDK against a stand-in server on 127.0.0.1; no test sees a key or can reach the API | The user's first real calls; stage 2 (open palm for marks) |
 
 ## Log
 
@@ -1174,4 +1175,49 @@ Fix: palmcards/asr.py resolves the pinned snapshot inside the reader (_read_wind
   raising while the app starts the follow, and tests never touch model files.
 Checks: pytest with an empty, offline Hugging Face cache (CI's conditions) -> 381 passed; normally ->
   381 passed; real live stream: ready in 1.1 s; with no model: failed in 0.9 s with the message.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: milestone 8 stage 1, cloud LLM provider (decisions by the user: switched on per run
+  with --llm; token counts in the session folder)
+Status: implemented, validation pending (no real API call made here: the first ones are the user's)
+Files and behavior changed:
+  palmcards/llm.py: providers return a Reply (text, input/output tokens, model, request id, attempts,
+    problem) instead of a bare string. AnthropicProvider (anthropic SDK 1.8.0, imported only when
+    chosen): claude-haiku-4-5, system prompt + the <notes> user turn as before, answers held to a
+    per-task JSON schema (output_config.format), LLM.cloud_timeout_s per attempt, one retry after a
+    timeout, a dropped connection, 408/409/429 or 5xx, done here with max_retries=0 on the SDK: the SDK
+    sleeps for as long as a 429's retry-after says, so a wait longer than cloud_retry_wait_max_s (3 s)
+    is not retried. A refusal or a cut-off answer is a failure whose tokens still count. The key:
+    ANTHROPIC_API_KEY from the environment, else the repo's .env; never printed, logged or saved, or
+    put into os.environ; repr() leaves it out. get_provider(name) raises LLMUnavailable (no key, no
+    package). Assistant records a Usage per call (also for answers later cancelled or dropped as
+    stale) and gives a short reason for the screen (TIMED OUT, NO CONNECTION, RATE LIMITED, SERVICE
+    BUSY, API KEY REJECTED, DECLINED, CUT OFF, BAD ANSWER). `python -m palmcards.llm usage [RUN ...]`
+    sums calls, failures and tokens by provider and action, with a cost estimate at
+    LLM.cloud_price_usd_per_mtok. OllamaProvider returns prompt_eval_count/eval_count as tokens.
+  palmcards/config.py: LLM.cloud_* settings, close_wait_s. palmcards/session.py: log_llm_call appends
+    to llm-usage.jsonl (making the folder, as an edit does).
+  main.py: --llm off|ollama|anthropic (also with --open); a start-up line saying what is used and
+    where the key came from; failures say "<WHAT> FAILED: <REASON>, NOTHING CHANGED" for 3 s; a
+    rejected key stays on the alert line in Prepare and Review; at exit, calls in flight get up to
+    3 s, then are logged as "abandoned at exit".
+    Bug found by the new tests and fixed: logging the first call's tokens makes the session folder and
+    so the imported revision's id, which made answers asked for before it look stale ("THE NOTES
+    CHANGED"). Requests on the imported notes are now always marked "imported" (Takes._llm_revision).
+  palmcards/render.py: CLOUD LLM chip bottom left while the cloud is on (orange "SENDING" while a
+    request is out; above the keys help when that is shown); tone/length labels and focus hints say
+    "PINCH + LIFT: ASK FOR A REWRITE" with an LLM, "(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)" without.
+  tests/conftest.py (autouse): no ANTHROPIC_API_KEY/AUTH_TOKEN/PROFILE, ANTHROPIC_BASE_URL to a closed
+    local port, llm.ENV_FILE unreadable.
+  requirements: anthropic (+ pydantic, pydantic-core, jiter, docstring-parser, annotated-types,
+    typing-inspection, sniffio); the lock diff is additions only.
+Tests run and exact outcome: pytest (full) -> 454 passed. New: key from environment/.env and never in
+  repr; cloud off without a key; the request against a stand-in Messages API through the real SDK
+  (model, system prompt, <notes>, schema, x-api-key only there); retry once on 500/529/0 s 429, not on
+  400/401 or a 30 s retry-after; a timeout after two attempts; declined/cut off keep their tokens; the
+  usage log (tokens, never the text) and the command; a failure changes nothing; a rejected key on the
+  alert line; calls in flight at exit; the folder-making regression; the chip and the labels.
+Not checked: a real call to the Anthropic API (the user's stage-1 test).
 ```

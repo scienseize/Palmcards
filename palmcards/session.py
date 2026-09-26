@@ -11,6 +11,7 @@
       take-01.verdicts.json     (milestone 6: a verdict per delivery mark, palmcards.cues)
       take-01.face.npz          (milestone 7: face, pose and hand features, palmcards.features)
       take-02.wav
+      llm-usage.jsonl           (milestone 8: each LLM call's tokens, never its text; palmcards.llm)
 
 Take times (`t_start`, and the gesture log's `t`) share one clock: seconds
 since the app started. Section marks are seconds into the take.
@@ -64,6 +65,7 @@ SILENT_PEAK = 1e-3  # a take whose loudest sample is below this is silence
 SCHEMA = 3
 TAKE_WAV = re.compile(r"take-(\d+)\.wav$")
 TAKE_FILE = re.compile(r"take-(\d+)\.(?:wav|wav\.part|recording\.json)$")
+LLM_USAGE = "llm-usage.jsonl"
 STATUSES = ("saved", "interrupted", "failed")
 
 
@@ -336,6 +338,15 @@ class Session:
         self.current = parent
         self.save()
         return parent
+
+    def log_llm_call(self, entry: dict) -> None:
+        """One LLM call's cost (action, provider, model, tokens, outcome),
+        appended to llm-usage.jsonl; never the text sent, never the API key.
+        The folder is made now if no take or edit has made it yet: the call
+        was made, and paid for, in this session."""
+        self._ensure_written()
+        with (self.dir / LLM_USAGE).open("a") as f:
+            f.write(json.dumps(entry) + "\n")
 
     # --- calibration -----------------------------------------------------------
 

@@ -355,14 +355,23 @@ class Review:
 
 @dataclass(frozen=True)
 class Llm:
-    # The optional LLM (palmcards.llm): off unless provider is set. "ollama"
-    # runs a model on this Mac (install Ollama, `ollama pull <model>`).
+    # The optional LLM (palmcards.llm): off unless chosen, with `main.py --llm`
+    # or here. "ollama" runs a model on this Mac (install Ollama, `ollama pull
+    # <model>`); "anthropic" is the cloud (ANTHROPIC_API_KEY in the environment or .env).
     provider: str | None = None
-    model: str = "llama3.1:8b"
+    model: str = "llama3.1:8b"  # Ollama's
     url: str = "http://localhost:11434"
-    timeout_s: float = 20.0
+    timeout_s: float = 20.0  # Ollama: a local model can take a while to load
     max_chars: int = 1200  # the most text a request carries
     max_alternatives: int = 3  # word alternatives on the options ring
+    cloud_model: str = "claude-haiku-4-5"
+    cloud_timeout_s: float = 10.0  # per attempt
+    cloud_retries: int = 1  # after a timeout, a dropped connection, 408/409/429 or a 5xx
+    cloud_retry_wait_s: float = 0.5
+    cloud_retry_wait_max_s: float = 3.0  # a server asking to wait longer than this is not retried
+    cloud_max_tokens: int = 2048  # answers are short JSON; a length rewrite is the longest
+    cloud_price_usd_per_mtok: tuple[float, float] = (1.0, 5.0)  # input, output: only for `llm usage`'s estimate
+    close_wait_s: float = 3.0  # at exit, calls in flight get this long to finish so their tokens are logged
 
 
 @dataclass(frozen=True)

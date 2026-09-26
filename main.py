@@ -1,12 +1,16 @@
 """PalmCards entry point.
 
-  python main.py [NOTES_FILE] [--lang xx] [--trace] [--no-follow]
+  python main.py [NOTES_FILE] [--lang xx] [--trace] [--no-follow] [--llm off|ollama|anthropic]
   python main.py --open RUN      reopen a saved session (a folder, or its name under sessions/) in Review
   python main.py --gaze-check    every take is a gaze check: timed prompts (camera, notes, away), then it
                                  stops itself; scripts/evaluate.py --gaze RUN compares them with the classifier
       NOTES_FILE: .txt, .md or .docx; defaults to the sample
       --lang: language spoken in the takes, for Whisper (default en)
       --trace: also record every hand result's landmarks, for offline replay
+      --llm: the optional LLM for word alternatives, rewrites and suggested marks (default: off,
+             or config LLM.provider). "anthropic" is the cloud: the sentence or paragraph you ask
+             about leaves the Mac (ANTHROPIC_API_KEY from the environment or .env); a CLOUD LLM
+             chip shows while it is on. Each call's tokens: python -m palmcards.llm usage
 
 Mirrored webcam feed with the notes overlaid in the demo style. Prepare mode
 follows Kat's gesture grammar (see CLAUDE.md). Hold your hand in the box on
@@ -17,12 +21,14 @@ the right of the frame; it steers the highlight in the text on the left.
   top or bottom of the box scroll
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
                            focus
-  open palm (word)         options ring: the word, stress/unstress it, "hear it"; turn an L-hand like a knob to pick
-  L-hand tilt (sentence)   tone dial, warm to the right, cold to the left (preview only)
-  two L-hands (paragraph)  length stretch (preview only)
-  pinch + lift             commit: stress/unstress makes a new notes revision (u undoes it);
+  open palm (word)         options ring: the word, alternatives (with --llm), stress/unstress it, "hear it";
+                           turn an L-hand like a knob to pick
+  L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
+  two L-hands (paragraph)  length stretch
+  pinch + lift             commit: stress/unstress or an alternative makes a new notes revision (u undoes it);
                            "hear it" speaks the sentence with the word stressed;
-                           tone and length say they are not available yet (they need the optional LLM)
+                           tone and length ask the LLM for a rewrite, shown as a proposal when the unit
+                           is focused again (pinch + lift uses it); without --llm they say they need it
   drop the hand for 1 s    back out
   fist raised into view, held 1 s
                            start a take after a 3-2-1 count-in. The session's first
@@ -53,8 +59,8 @@ chip coloured by its verdict (green hit, red missed, grey unclear):
   open palm held 1.5 s in the command zone
                            back to Prepare, to edit before the next take
 
-Word alternatives, tone and length edits come with milestone 8; until then
-they preview and say so, and never report a change. Poses and events are
+Without --llm, tone and length preview their controls and say they need the
+optional LLM; nothing is ever sent unless you ask. Poses and events are
 logged to sessions/gesture-logs/; each take is saved as a WAV in its session
 folder under sessions/, with its transcript, pitch and verdicts and
 session.json.
@@ -63,7 +69,8 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   t start a take, x stop it (or cancel the count-in), n next section, b previous section,
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
-  a play the focused sentence (Review), u undo the last edit (Prepare), r retry failed analysis,
+  a play the focused sentence (Review), u undo the last edit (Prepare), m ask for suggested marks
+  (a focused sentence, with --llm), r retry failed analysis,
   e calibrate the eyes again at the next take,
   g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit.
 Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
@@ -87,7 +94,7 @@ import cv2
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import ANALYSIS, BODY, FOLLOW, RECORDING, REHEARSE, SPEECH
+from palmcards.config import ANALYSIS, BODY, FOLLOW, LLM, RECORDING, REHEARSE, SPEECH
 from palmcards import features, gaze
 from palmcards import prefs as preferences
 from palmcards import render
@@ -95,8 +102,8 @@ from palmcards.gestures import FIST, OPEN, GestureEvent, GestureLog, Grammar, Ha
 from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.edit import add_marks, is_stressed, replace_text, replace_word, toggle_stress
-from palmcards.llm import Assistant, alternatives_request, get_provider, marks_request, parse_alternatives, \
-    parse_marks, parse_rewrite, rewrite_request
+from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
+    marks_request, parse_alternatives, parse_marks, parse_rewrite, rewrite_request
 from palmcards.render import (
     HEAR_IT, STRESS, UNSTRESS, Hit, OpsView, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
@@ -119,6 +126,7 @@ SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = SESSIONS_DIR / "screens"
 WINDOW = "PalmCards"
 NOTE_S = 1.5  # how long a commit message stays in the label
+LLM_NOTE_S = 3.0  # an LLM answer or failure arrives while you're doing something else: it stays longer
 PLAY_HOLD_S = 0.6  # open palm held on a focused sentence in Review: play it
 HINT_EVERY_S = 6.0  # a hint about a gesture that didn't act is shown at most this often
 ENTER = 13
@@ -226,7 +234,15 @@ class Takes:
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
         self.player = None  # Review playback, made at the first play
         self.notes_version = 0  # bumped when an edit or undo changes the notes
-        provider = self.devices.llm()
+        self.llm_off = ""  # why the chosen LLM can't be used, if it can't
+        self.llm_alert = ""  # an LLM problem that won't go away by itself (a rejected key)
+        try:
+            provider = self.devices.llm()
+        except LLMUnavailable as exc:
+            provider, self.llm_off = None, str(exc)
+            print(f"LLM off: {exc}", file=sys.stderr)
+        if provider is not None:
+            print(describe(provider))
         self.assistant = Assistant(provider) if provider is not None else None
         self.alternatives: dict[tuple[int, int], tuple[str, ...]] = {}  # (sentence, word) -> words, this revision
         self.proposals: dict[tuple[int, ...], tuple[str, object, str]] = {}  # unit -> (kind, value, text shown)
@@ -326,7 +342,30 @@ class Takes:
 
     # --- the optional LLM: requests from explicit actions, answers as previews ---
 
-    NO_LLM = "NEED THE OPTIONAL LLM (NOT SET UP, SEE README): NOTHING SENT"
+    LLM_WHAT = {"alternatives": "ALTERNATIVES", "tone": "TONE REWRITE", "length": "LENGTH REWRITE",
+                "marks": "MARK SUGGESTIONS"}
+
+    @property
+    def no_llm(self) -> str:
+        return f"NEED THE OPTIONAL LLM ({'SEE TERMINAL' if self.llm_off else 'NOT SET UP, SEE README'}): NOTHING SENT"
+
+    @property
+    def llm(self) -> str:
+        """The optional LLM in use: "cloud" (the text asked about leaves the Mac), "local", or ""."""
+        if self.assistant is None:
+            return ""
+        return "cloud" if self.assistant.cloud else "local"
+
+    def _llm_revision(self) -> str:
+        """What a request is made on, to drop answers about notes that changed
+        since: the current revision's id, but the imported notes are always
+        "imported", whether or not the session folder (and so that revision's
+        id) exists yet: logging a call's tokens can make the folder."""
+        rid = self.session.current_revision
+        first = self.session.revisions[0] if self.session.revisions else None
+        if rid is None or (first is not None and rid == first["id"] and first["provenance"] == "imported"):
+            return "imported"
+        return rid
 
     def ask_alternatives(self, sentence: int, word: int) -> None:
         """Opening the options ring on a word: ask once for alternatives."""
@@ -335,25 +374,25 @@ class Takes:
             return
         s = self.notes.sentences[sentence]
         text = s.words[word].text
-        self.assistant.ask("alternatives", key, self.session.current_revision or "imported",
+        self.assistant.ask("alternatives", key, self._llm_revision(),
                            alternatives_request(s.text, text), lambda reply: parse_alternatives(reply, text))
         self.log(time.perf_counter() - self.t0, "llm", ask="alternatives", sentence=sentence, word=word)
 
     def ask_rewrite(self, kind: str, unit: tuple[int, ...], amount: float) -> str:
         what = "TONE" if kind == "tone" else "LENGTH"
         if self.assistant is None:
-            return f"{what} EDITS {self.NO_LLM}"
+            return f"{what} EDITS {self.no_llm}"
         text = " ".join(self.notes.sentences[i].text for i in unit)
-        self.assistant.ask(kind, unit, self.session.current_revision or "imported",
+        self.assistant.ask(kind, unit, self._llm_revision(),
                            rewrite_request(kind, text, amount), lambda reply: parse_rewrite(reply, text, kind, amount))
         self.log(time.perf_counter() - self.t0, "llm", ask=kind, sentences=list(unit), amount=amount)
         return f"ASKING FOR A {'WARMER' if kind == 'tone' and amount > 0 else 'COOLER' if kind == 'tone' else 'LONGER' if amount > 1 else 'SHORTER'} VERSION..."
 
     def ask_marks(self, sentence: int) -> str:
         if self.assistant is None:
-            return f"MARK SUGGESTIONS {self.NO_LLM}"
+            return f"MARK SUGGESTIONS {self.no_llm}"
         words = [w.text for w in self.notes.sentences[sentence].words]
-        self.assistant.ask("marks", (sentence,), self.session.current_revision or "imported",
+        self.assistant.ask("marks", (sentence,), self._llm_revision(),
                            marks_request(words), lambda reply: parse_marks(reply, len(words)))
         self.log(time.perf_counter() - self.t0, "llm", ask="marks", sentence=sentence)
         return "ASKING FOR MARK SUGGESTIONS..."
@@ -365,14 +404,18 @@ class Takes:
 
         if self.assistant is None:
             return ""
+        answers = self.assistant.poll()
+        self._log_llm_usage()  # after: a call's usage is queued before its answer, so these answers' are in
         note = ""
-        for a in self.assistant.poll():
-            if a.revision != (self.session.current_revision or "imported"):
+        for a in answers:
+            if a.revision != self._llm_revision():
                 note = "THE NOTES CHANGED: SUGGESTION DROPPED"
                 continue
             if a.error:
                 print(f"LLM {a.kind}: {a.error}", file=sys.stderr)
-                note = "SUGGESTION FAILED (SEE TERMINAL)"
+                if a.reason == "API KEY REJECTED":
+                    self.llm_alert = "CLOUD LLM: API KEY REJECTED (SEE TERMINAL)"
+                note = f"{self.LLM_WHAT.get(a.kind, a.kind.upper())} FAILED: {a.reason}, NOTHING CHANGED"
                 continue
             if a.kind == "alternatives":
                 self.alternatives[a.key] = tuple(a.value)
@@ -384,6 +427,25 @@ class Takes:
             self.proposals[a.key] = (a.kind, a.value, preview)
             note = "PROPOSAL READY: FOCUS IT AGAIN TO SEE IT"
         return note
+
+    def _log_llm_usage(self, abandoned: bool = False) -> None:
+        """Every finished call's tokens into the session (llm-usage.jsonl), and
+        with `abandoned`, the calls still in flight as unknown."""
+        entries = [{"t": round(u.started - self.t0, 3), "action": u.kind, "provider": u.provider, "model": u.model,
+                    "input_tokens": u.input_tokens, "output_tokens": u.output_tokens, "ok": u.ok, "error": u.error,
+                    "seconds": u.seconds, "attempts": u.attempts, "request_id": u.request_id,
+                    "revision": u.revision} for u in self.assistant.spent()]
+        if abandoned:
+            p = self.assistant.provider
+            entries += [{"t": round(time.perf_counter() - self.t0, 3), "action": kind, "provider": p.name,
+                         "model": p.model, "input_tokens": None, "output_tokens": None, "ok": False,
+                         "error": "abandoned at exit"} for kind, _ in self.assistant.pending.values()]
+        for entry in entries:
+            entry["at"] = datetime.now().isoformat(timespec="seconds")
+            try:
+                self.session.log_llm_call(entry)
+            except (OSError, SessionError) as exc:
+                print(f"could not log an LLM call's tokens: {exc}", file=sys.stderr)
 
     def _save_edit(self, notes: Notes, what: str, **log) -> str:
         try:
@@ -445,6 +507,8 @@ class Takes:
         """Persistent trouble (recording, analysis, voice follow), shown until it is dealt with."""
         if self.alert:
             return self.alert
+        if self.llm_alert and mode in ("prepare", "review"):
+            return self.llm_alert
         if mode in ("count_in", "rehearse") and self.follow is not None and self.follow.state == "failed" \
                 and self.drill is None:
             return "VOICE FOLLOW OFF (SEE TERMINAL)  /  FLICK OR N: NEXT SECTION"
@@ -784,6 +848,16 @@ class Takes:
                 print(f"take {writer.number} is still being written; it will be recovered at the next start",
                       file=sys.stderr)
         self.finalizing = []
+        if self.assistant is not None:  # calls in flight get a moment, so their tokens are logged
+            deadline = time.monotonic() + (0.0 if self.interrupted else LLM.close_wait_s)
+            try:
+                while self.assistant.pending and time.monotonic() < deadline:
+                    self.poll_llm()
+                    time.sleep(0.05)
+            except KeyboardInterrupt:
+                pass
+            self.poll_llm()
+            self._log_llm_usage(abandoned=True)
         # Bounded: wait a while for analysis already running, then leave it for later.
         if self.analysis.pending and not self.interrupted:
             print(f"finishing analysis of take {', '.join(map(str, self.analysis.pending))} "
@@ -849,6 +923,9 @@ def main() -> int:
     ap.add_argument("--open", metavar="RUN", help="reopen a saved session in Review")
     ap.add_argument("--gaze-check", action="store_true",
                     help="every take is a gaze check (timed prompts), for scripts/evaluate.py --gaze")
+    ap.add_argument("--llm", choices=PROVIDERS, default=LLM.provider or "off",
+                    help="the optional LLM: off, ollama (on this Mac) or anthropic (the cloud: what you ask "
+                         "about leaves the Mac; ANTHROPIC_API_KEY from the environment or .env)")
     args = ap.parse_args()
     for line in recover_all():
         print(f"recovered: {line}")
@@ -865,7 +942,7 @@ def main() -> int:
         print(f"warning: {warning}", file=sys.stderr)
     try:
         return run(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow,
-                   gaze_check=args.gaze_check)
+                   gaze_check=args.gaze_check, devices=Devices(llm=lambda: get_provider(args.llm)))
     except CameraError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -893,7 +970,8 @@ def reopen(args) -> int:
     notes = from_snapshot(session.snapshot(session.current_revision))
     try:
         return run(session.notes, notes, b"", lang=session.language, trace=args.trace, follow=not args.no_follow,
-                   session=session, gaze_check=args.gaze_check)
+                   session=session, gaze_check=args.gaze_check,
+                   devices=Devices(llm=lambda: get_provider(args.llm)))
     except CameraError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -997,7 +1075,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if note := takes.poll_analysis():
             view.note, note_until = note, start + NOTE_S
         if note := takes.poll_llm():
-            view.note, note_until = note, start + NOTE_S
+            view.note, note_until = note, start + LLM_NOTE_S
         if note := takes.poll():
             view.note, note_until = note, start + NOTE_S
         takes.recording_problem()
@@ -1016,6 +1094,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if until is not None:
                 note_until = until
         view.app = modes.mode
+        view.llm = takes.llm
+        view.llm_busy = bool(takes.assistant and takes.assistant.pending)
         view.title = "GAZE CHECK" if takes.gaze_check and modes.mode in ("count_in", "rehearse") \
             and takes.drill is None else ""
         view.calibration = takes.vision.phase(start - t0) \
