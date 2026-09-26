@@ -57,7 +57,7 @@ class Body:
     closed_eye: float = 0.15  # lid gap / eye width below this: a blink, left out of the calibration
     min_visibility: float = 0.5  # pose: nose and shoulders at least this visible to count
     hand_match_palms: float = 3.0  # a hand this close to one in the previous result is the same hand
-    face_box_max_age_s: float = 0.5  # hand_tip_face uses a face box no older than this
+    face_max_age_s: float = 1.5  # hand_tip_face/_tip_oval use a face seen no longer ago (a hand over it can hide it)
 
 
 @dataclass(frozen=True)
@@ -302,6 +302,21 @@ class Metrics:
     min_words: int = 10  # fewer words: no pace
     min_take_s: float = 10.0  # a shorter take: no fillers per minute
     long_pause_s: float = 1.5  # a silence this long that no pause mark asked for
+    # Hands, from the take's features (palmcards.features), without --trace.
+    min_hand_s: float = 1.0  # less time with a hand in view: no movement rate
+    move_max_gap_s: float = 0.2  # movement is summed between hand results at most this far apart
+    # A face touch: a fingertip within touch_margin face widths of the face's outline, the hand
+    # touch_scale_min..max times the face's width (at the face's depth, not in front of it),
+    # for touch_min_s or longer (gaps up to touch_gap_s bridged). Starting values.
+    touch_margin: float = 0.05
+    touch_scale_min: float = 0.3
+    touch_scale_max: float = 1.0
+    touch_min_s: float = 0.3
+    touch_gap_s: float = 0.2
+    # Posture against the calibration's baseline: readings with the nose and shoulders visible.
+    min_pose_readings: int = 10  # fewer: no posture (pose runs about 2 a second)
+    tilt_deg: float = 5.0  # shoulder line this far from the baseline: tilted
+    head_drop: float = 0.08  # head this much lower than the baseline, in shoulder widths: dropped
 
 
 @dataclass(frozen=True)

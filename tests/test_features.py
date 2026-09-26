@@ -148,3 +148,20 @@ def test_the_feature_file_round_trips_with_its_provenance(tmp_path):
     assert arrays["face_yaw"][0] == pytest.approx(3.0, abs=1e-4) and math.isnan(arrays["face_yaw"][1])
     assert arrays["face_box"].shape == (2, 4) and len(arrays["pose_t"]) == 0
     assert arrays["hand_n"].tolist() == [1] and not list(tmp_path.glob("*.tmp"))
+
+
+def test_fingertips_against_the_face_outline_and_the_hand_scale():
+    face = {"oval": np.array([(560, 250), (720, 250), (720, 470), (560, 470)], np.float32), "width": 160.0}
+    inside = hand_row([hand(640, 500)], [], face_box=None, frame_h=720, face=face)  # fingertips at y 400
+    assert inside["tip_oval"] == 0.0 and inside["scale"] == pytest.approx(50 / 160)
+    outside = hand_row([hand(900, 600)], [], face_box=None, frame_h=720, face=face)  # tips at (900, 500)
+    assert outside["tip_oval"] == pytest.approx(math.hypot(900 - 720, 500 - 470) / 160, rel=1e-3)
+    # Two hands: the one nearest the face gives the scale.
+    both = hand_row([hand(900, 600, palm=100), hand(640, 500)], [], face_box=None, frame_h=720, face=face)
+    assert both["tip_oval"] == 0.0 and both["scale"] == pytest.approx(50 / 160)
+    assert math.isnan(hand_row([hand(640, 500)], [], None, 720)["tip_oval"])  # no face seen
+
+
+def test_a_face_row_keeps_its_outline_and_width():
+    row = face_row(face_points(), rotation())
+    assert row["oval"].shape == (len(features.FACE_OVAL), 2) and row["width"] >= 0.0

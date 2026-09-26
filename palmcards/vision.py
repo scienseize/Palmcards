@@ -204,7 +204,7 @@ class Watcher:
         self.t0 = 0.0  # when the calibration or take began
         self.rows = features.Rows()
         self.size: tuple[int, int] | None = None  # frame size, pixels
-        self._face_box: tuple[float, tuple] | None = None  # (t, box) of the last face seen
+        self._face: tuple[float, dict] | None = None  # (t, row) of the last face seen
         self._previous_hands: list[np.ndarray] = []
         self._counts0: dict = {}
 
@@ -225,7 +225,7 @@ class Watcher:
     def _begin(self, state: str, t: float, face_every: int, pose_every: int) -> None:
         self.state, self.t0, self.rows = state, t, features.Rows()
         self.face.every, self.pose.every = face_every, pose_every
-        self._face_box, self._previous_hands = None, []
+        self._face, self._previous_hands = None, []
         self._counts0 = self._counts()
 
     def begin_calibration(self, t: float) -> None:
@@ -285,8 +285,9 @@ class Watcher:
         if self.state != "take" or self.size is None or t < self.t0:
             return
         pts = [np.asarray(h.points, dtype=np.float64) for h in hands]
-        box = self._face_box[1] if self._face_box and t - self._face_box[0] <= BODY.face_box_max_age_s else None
-        self.rows.add_hand(t, features.hand_row(pts, self._previous_hands, box, self.size[1]))
+        face = self._face[1] if self._face and t - self._face[0] <= BODY.face_max_age_s else None
+        self.rows.add_hand(t, features.hand_row(pts, self._previous_hands, face["box"] if face else None,
+                                                self.size[1], face))
         self._previous_hands = pts
 
     def _drain(self) -> None:
@@ -302,7 +303,7 @@ class Watcher:
                 pts = np.array([(p.x * w, p.y * h) for p in result.face_landmarks[0]], dtype=np.float64)
                 matrices = getattr(result, "facial_transformation_matrixes", None)
                 row = features.face_row(pts, np.asarray(matrices[0]) if matrices else None)
-                self._face_box = (t, row["box"])
+                self._face = (t, row)
             self.rows.add_face(t, row)
         if (got := self.pose.poll()) is not None and got[1] >= self.t0:
             result, t = got

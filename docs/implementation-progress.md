@@ -24,6 +24,7 @@ user runs them. They are never inferred from unit tests.
 | M7 stage 0 — Face/pose budget | Measured on hardware (2026-09-26) | CLAUDE.md milestone 7 rewritten to what's left, duplicate llm.py line removed; `BODY` config; palmcards/vision.py (face and pose trackers, not in the app yet); scripts/bench_vision.py | 388 passed; five benchmark runs by the user (sessions/bench-vision*.json) | Cool: every rate keeps 30 fps. Warm (after 2.5-3.5 min): every rate costs frames, and hands-only also slows (see log). Rates set to face every 6th, pose every 15th frame; Stage 1 decides on backing off when frames run late |
 | M7 stage 1 — Capture and calibration | Checked on hardware (2026-09-26) | Face, pose and hand features during every take (take-NN.face.npz with provenance); the eye calibration in the session's first count-in (dot, then the orange line; `e` redoes it), kept in session.json (schema 3); face/pose wait for a later frame when one is late | 413 passed; the user's session 20260926-115417: calibration ok, `e` redid it, a covered camera failed it with its reason; takes at 5/s face, 2/s pose, 30/s hands, face found 100% | The two calibration targets barely differ (see log); a face-box overlap is not a face touch in a close-up frame; stage 2 (gaze) |
 | M7 stage 2 — Gaze | Screen vs away validated on held-out checks (one person); camera vs notes not | palmcards/gaze.py (classes against the calibration, the take's gaze metric while speaking, per sentence), the gaze check (`main.py --gaze-check`, `scripts/evaluate.py --gaze [--sweep]`) | 424 passed; on the user's last real take the defaults gave 70% away while speaking: not believable | A gaze-check take to tune `GAZE`, a second to confirm |
+| M7 stage 3 — Posture and movement | Implemented, validation pending | Posture against the calibration; hand movement and face touches from the take's features, no --trace; features v2 (fingertip to the face outline, hand size against the face) | 433 passed; earlier real takes: posture near the calibration, wrist 0.5-3.1 palms/s | A take with counted face touches and hands in front of the face |
 
 ## Log
 
@@ -972,6 +973,49 @@ The user chose to report screen vs away. palmcards/gaze.py VERSION 2: the take m
   screen vs away first (agreement, kappa, recall), then the three classes (not validated); --sweep
   ranks by the screen-vs-away kappa. The user's rehearsal take (20260926-120945 take 1): screen
   92.8%, away 7.2% of 153 readings while speaking.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Milestone 7, stage 3 (posture and movement)
+Status: implemented, validation pending (face touches against a person)
+Current HEAD / optional commit ID: b58527d -> stage 3 commit (see git log)
+Pre-existing changes preserved: yes.
+Checked first (read-only, 10 takes with calibrations): median shoulder tilt during takes within
+  1.3 deg of the calibration's; head height 0.01-0.07 shoulder widths lower during takes (more in
+  rehearsals than in gaze checks). Unlike gaze pitch, the posture baseline holds, so posture is
+  measured against the calibration as asked.
+Files and behavior changed:
+  palmcards/features.py (VERSION 2): face rows keep the face outline (FACE_OVAL) and the
+    cheek-to-cheek width; hand rows add tip_oval (nearest fingertip to the outline, face widths, 0
+    inside) and scale (palm size / face width, ~0.6-0.7 at the face's depth). The stage 1 face-box
+    test counted every raised hand in a close-up; the outline plus the hand's size is meant to tell a
+    touch from a hand in front of the face.
+  palmcards/vision.py: the watcher keeps the last face row (BODY.face_max_age_s 1.5 s, was a 0.5 s
+    face box) for the hand rows.
+  palmcards/metrics.py (VERSION 3): hands from the features when the take has them (in view share,
+    wrist and fingertip movement per second with a hand in view, face touches: count and seconds;
+    trace otherwise); posture (median shoulder tilt and head height change against the calibration,
+    shares over METRICS.tilt_deg / head_drop); None + reason for takes before milestone 7, features
+    version 1 (touches), no calibration, too few readings.
+  palmcards/config.py: METRICS touch, movement and posture settings (starting values).
+  CLAUDE.md, README.md.
+  Tests: tests/test_metrics.py (+5: movement, touches with a bridged break, a hand in front of the
+    face and a brush, the reasons; posture shares and medians, the reasons), tests/test_features.py
+    (+2: outline distance, scale, two hands).
+Migration / compatibility implications: new takes have features version 2; version 1 files still
+  load (touches say why they're missing). Metrics version 3.
+Tests run and exact outcome: pytest (full) -> 433 passed.
+Manual / hardware checks performed (read-only, the user's earlier takes): 0dad82 take 1: hand in
+  view 19%, wrist 2.9 palms/s, fingertips 6.1; posture tilt +0.6 deg, head -0.029. Take 2: wrist
+  0.5, head -0.067 with 32% of readings dropped. 3f8353 take 1: wrist 3.1; posture within the
+  baseline. Touches: "recorded before face-touch features".
+Unverified assumptions and remaining risks: the touch settings (margin, 0.3-1.0 scale, 0.3 s) are
+  starting values never checked against a person; landmark jitter adds to movement (a still hand is
+  not 0 palms/s; not measured); a hand covering the face for over 1.5 s can lose the face and end the
+  touch early.
+Next action: the user records a take with counted face touches and hands held in front of the face
+  without touching; compare the counts; then stage 4.
 ```
 
 ## Decisions (2026-09-26, by the user)

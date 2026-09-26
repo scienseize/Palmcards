@@ -31,7 +31,15 @@ during calibration and takes; take-NN.face.npz keeps them:
               if no hand was in both results)
   hand_tip_face
               nearest fingertip to the face box, in palm sizes, 0 inside it
-              (NaN without a hand or a face box from the last 0.5 s)
+              (NaN without a hand or a face seen in the last BODY.face_max_age_s)
+  hand_tip_oval
+              nearest fingertip to the face's outline (the face oval
+              landmarks), in face widths, 0 inside it (version 2)
+  hand_scale  that hand's palm size / the face's width (cheek to cheek): about
+              0.6-0.7 when the hand is as far from the camera as the face,
+              larger when it is nearer (gesturing in front of the face), so a
+              hand over the face in the picture is not taken for a touch
+              (version 2)
   hand_y      highest wrist, fraction of the frame height from the top
   provenance  JSON: how the rows were made (see vision.Watcher.provenance)
 
@@ -49,11 +57,15 @@ import numpy as np
 
 from palmcards.config import BODY
 
-VERSION = 1  # bump when a feature's definition changes
+VERSION = 2  # bump when a feature's definition changes; 2: hand_tip_oval, hand_scale
 
 # Face Landmarker indices: each eye's corners and lids, and the iris centres.
 EYES = ((33, 133, 159, 145), (362, 263, 386, 374))
 IRISES = (468, 473)
+# The face's outline (MediaPipe's FACE_OVAL, in order around the face) and its cheek points.
+FACE_OVAL = (10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176,
+             149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109)
+CHEEKS = (234, 454)
 # Pose Landmarker indices.
 NOSE, LEFT_SHOULDER, RIGHT_SHOULDER = 0, 11, 12
 # Hand landmark indices (palmcards.gestures).
@@ -61,7 +73,7 @@ WRIST, TIPS = 0, (4, 8, 12, 16, 20)
 
 FACE_KEYS = ("yaw", "pitch", "roll", "iris_x", "iris_y", "eye_open")
 POSE_KEYS = ("tilt", "width", "head", "vis")
-HAND_KEYS = ("n", "wrist_move", "tip_move", "tip_face", "y")
+HAND_KEYS = ("n", "wrist_move", "tip_move", "tip_face", "y", "tip_oval", "scale")
 NAN = float("nan")
 
 
@@ -98,7 +110,9 @@ def face_row(points: np.ndarray, matrix: np.ndarray | None) -> dict:
     mean = lambda v: float(np.mean(v)) if v else NAN  # noqa: E731
     return {"yaw": yaw, "pitch": pitch, "roll": roll, "iris_x": mean(xs), "iris_y": mean(ys),
             "eye_open": mean(opens), "box": (float(pts[:, 0].min()), float(pts[:, 1].min()),
-                                             float(pts[:, 0].max()), float(pts[:, 1].max()))}
+                                             float(pts[:, 0].max()), float(pts[:, 1].max())),
+            "oval": pts[list(FACE_OVAL)].astype(np.float32),
+            "width": float(np.linalg.norm(pts[CHEEKS[0]] - pts[CHEEKS[1]]))}
 
 
 # --- pose ----------------------------------------------------------------------
@@ -128,9 +142,18 @@ def box_distance(p: np.ndarray, box: tuple[float, float, float, float]) -> float
     return math.hypot(max(x0 - p[0], 0.0, p[0] - x1), max(y0 - p[1], 0.0, p[1] - y1))
 
 
-def hand_row(hands: list[np.ndarray], previous: list[np.ndarray], face_box, frame_h: float) -> dict:
-    """Features of one hand-tracking result. `hands`, `previous`: (21, 2) landmark arrays in pixels."""
-    wrist_move = tip_move = tip_face = NAN
+def oval_distance(p: np.ndarray, oval: np.ndarray) -> float:
+    """Distance from a point to the face outline, 0 inside it."""
+    import cv2
+
+    return max(0.0, -cv2.pointPolygonTest(oval.reshape(-1, 1, 2), (float(p[0]), float(p[1])), True))
+
+
+def hand_row(hands: list[np.ndarray], previous: list[np.ndarray], face_box, frame_h: float,
+             face: dict | None = None) -> dict:
+    """Features of one hand-tracking result. `hands`, `previous`: (21, 2) landmark arrays in pixels;
+    `face`: the latest face row ("oval", "width"), or None."""
+    wrist_move = tip_move = tip_face = tip_oval = scale = NAN
     for pts in hands:
         palm = _palm(pts)
         if previous:
@@ -143,8 +166,13 @@ def hand_row(hands: list[np.ndarray], previous: list[np.ndarray], face_box, fram
         if face_box is not None:
             d = min(box_distance(pts[i], face_box) for i in TIPS) / palm
             tip_face = d if math.isnan(tip_face) else min(tip_face, d)
+        if face is not None and face["width"] > 1e-6:
+            d = min(oval_distance(pts[i], face["oval"]) for i in TIPS) / face["width"]
+            if math.isnan(tip_oval) or d < tip_oval:  # the hand nearest the face gives the scale
+                tip_oval, scale = d, palm / face["width"]
     y = min(float(p[WRIST][1]) for p in hands) / frame_h if hands else NAN
-    return {"n": len(hands), "wrist_move": wrist_move, "tip_move": tip_move, "tip_face": tip_face, "y": y}
+    return {"n": len(hands), "wrist_move": wrist_move, "tip_move": tip_move, "tip_face": tip_face, "y": y,
+            "tip_oval": tip_oval, "scale": scale}
 
 
 # --- rows ----------------------------------------------------------------------
