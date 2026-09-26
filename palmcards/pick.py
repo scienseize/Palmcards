@@ -8,7 +8,7 @@ After an L, the grammar publishes how far the index fingertip has moved
 point starts on the item picked when pointing starts and moves with the
 fingertip at `scale` pixels per hand-box unit (main: the ring and marks at
 OPS.point_gain px per px of fingertip, the take chips at the scale of
-browsing). `at` is where the point is on screen (drawn as a dot). The
+browsing). `at` is where the point is on screen (not drawn: the pick shows it). The
 nearest item is picked, but only once the point is nearer to it than to the
 current one by OPS.pick_margin of the gap between the two, so the pick
 doesn't flicker between neighbours. When a pinch rewinds the point, rewind()

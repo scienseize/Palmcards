@@ -1254,8 +1254,6 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if word_key and grammar.state.op == "ring":  # the knob turns the ring (its nodes come from here)
                 grammar.set_ring_labels(start - t0, overlay.ring_labels(view))
                 overlay.follow_ring(view, grammar.state.ring_pick, grammar.state.ring_turn)
-            marks = view.mode == "focus" and grammar.state.op == "marks" and grammar.state.pointing
-            view.point_at = takes.pickers["marks"].at if marks else None
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)

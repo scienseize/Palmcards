@@ -1525,3 +1525,13 @@ Tests: pytest (full) -> 507 passed (test_knob: hysteresis at a boundary, the dea
   thumb drifting in, the pinch keeping the node, dropping the hand; render: the turn to 12 o'clock and
   its easing, the short way round, the scramble in the sentence and label, the empty box, the dim border).
 ```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: no pointer dot on the suggested marks (user's request)
+Changes: the yellow dot drawn where the point is while choosing is gone (ViewState.point_at, its
+  drawing, HANDS.point_r). It was left only on the suggested marks since the ring became a knob; the
+  outlined mark shows the pick. Choosing the marks by pointing is unchanged (Picker.at is still
+  computed, just not drawn).
+Tests: pytest (full) -> 506 passed (the test that drew the dot removed).
+```
