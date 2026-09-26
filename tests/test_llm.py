@@ -17,7 +17,7 @@ import pytest
 import main
 from palmcards import llm
 from palmcards.config import LLM
-from palmcards.edit import add_marks, replace_text, replace_word
+from palmcards.edit import replace_text, replace_word
 from palmcards.gestures import GestureLog
 from palmcards.llm import Assistant, FakeProvider, OllamaProvider
 from palmcards.notes import Mark, MarkKind, parse_text
@@ -70,16 +70,6 @@ def test_a_rewrite_is_given_a_word_count_and_room_above_it():
     system, _ = llm.rewrite_request("length", thirteen, 0.67)
     assert "shorter, to about 9 words" in system
     assert llm.rewrite_words("length", 13, 1.8) == (23, 50)
-
-
-def test_suggested_marks_must_fit_the_words():
-    reply = json.dumps({"marks": [{"kind": "stress", "word": 1}, {"kind": "stress", "word": 9},
-                                  {"kind": "shout", "word": 0}, {"kind": "long_pause", "word": 3},
-                                  {"kind": "rise", "word": 2}]})
-    assert llm.parse_marks(reply, 3) == [("stress", 1), ("long_pause", 3), ("rise", None)]
-    with pytest.raises(ValueError):
-        llm.parse_marks(json.dumps({"marks": [{"kind": "stress", "word": 5}]}), 3)
-
 
 def wait_for(assistant, n=1, timeout=3.0):
     out, deadline = [], time.time() + timeout
@@ -316,8 +306,6 @@ def test_edits_from_answers():
     rewritten = replace_text(notes, [1, 2], "We're so glad you came along.")
     assert [s.text for s in rewritten.sentences] == ["Thank you for being here tonight.", "We're so glad you came along."]
     assert rewritten.sentences[1].marks == [] and rewritten.sentences[1].index == 1
-    marked = add_marks(notes, 1, [("long_pause", 2), ("slow", None)])
-    assert Mark(MarkKind.LONG_PAUSE, 2) in marked.sentences[1].marks and marked.sentences[1].pace == "slow"
 
 
 # --- in the app --------------------------------------------------------------------
@@ -373,7 +361,6 @@ def test_without_a_provider_nothing_is_sent_and_it_says_so(tmp_path, monkeypatch
     takes = takes_with(tmp_path, monkeypatch, None)
     assert takes.assistant is None
     assert "NEED THE OPTIONAL LLM" in takes.ask_rewrite("tone", (0,), 0.5)
-    assert "NEED THE OPTIONAL LLM" in takes.ask_marks(0)
     takes.ask_alternatives(0, 1)  # silently nothing: the ring just has no alternatives
     assert takes.alternatives == {} and takes.poll_llm() == ""
 
@@ -381,7 +368,7 @@ def test_without_a_provider_nothing_is_sent_and_it_says_so(tmp_path, monkeypatch
 def test_the_cloud_without_a_key_is_off_and_says_so(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, None, make=lambda: llm.get_provider("anthropic"))
     assert takes.assistant is None and takes.llm == "" and "ANTHROPIC_API_KEY" in takes.llm_off
-    assert "NEED THE OPTIONAL LLM (SEE TERMINAL): NOTHING SENT" in takes.ask_marks(0)
+    assert "NEED THE OPTIONAL LLM (SEE TERMINAL): NOTHING SENT" in takes.ask_rewrite("tone", (0,), 0.5)
 
 
 def usage_lines(takes):
@@ -482,6 +469,7 @@ def test_the_usage_command_sums_every_session(tmp_path, monkeypatch, capsys):
     from palmcards import session as session_module
 
     root = tmp_path / "data"
+    # "marks": an action from before suggested marks were removed; old logs still count.
     for i, rows in enumerate(([("alternatives", 100, 20, True), ("marks", 200, 40, True)],
                               [("alternatives", 50, 10, True), ("tone", None, None, False)])):
         folder = root / f"20260926-10000{i}-talk-abc12{i}"
@@ -500,138 +488,6 @@ def test_the_usage_command_sums_every_session(tmp_path, monkeypatch, capsys):
     assert "from 1 session" in capsys.readouterr().out
 
 
-MARKS = json.dumps({"marks": [{"kind": "long_pause", "word": 2}, {"kind": "stress", "word": 1},
-                              {"kind": "fall", "word": None}]})
-
-
-def test_spread_marks_are_asked_once_shown_and_added_together(tmp_path, monkeypatch):
-    from palmcards.gestures import GestureEvent
-    from palmcards.render import Hit, TextOverlay, ViewState
-
-    provider = FakeProvider(MARKS, usage=(80, 20))
-    takes = takes_with(tmp_path, monkeypatch, provider)
-    assert takes.suggestion_view(0)[0] == "asking"  # the frame the palm opens, before the request
-    for _ in range(3):  # the frame loop asks every frame while the palm is open
-        assert takes.ask_marks(0) == ""
-    assert takes.suggestion_view(0)[0] == "asking"
-    poll_until(takes, lambda: 0 in takes.mark_suggestions)
-    assert len(provider.calls) == 1 and provider.schemas == [llm.SCHEMAS["marks"]]
-    state, preview, states, current = takes.suggestion_view(0)
-    # "[fall]" is there already: two new ones, shown in the sentence where they go, none accepted yet,
-    # the first (in reading order) outlined.
-    assert state == "ready" and [m for m, st in zip(preview.marks, states) if st] == \
-        [Mark(MarkKind.STRESS, 1), Mark(MarkKind.LONG_PAUSE, 2)]
-    assert set(states) == {"", "suggested"} and preview.marks[current] == Mark(MarkKind.STRESS, 1)
-    before = parse_text(TEXT, "md").sentences[0].marks
-    assert takes.notes.sentences[0].marks == before  # nothing changed yet
-
-    view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None))
-    overlay = TextOverlay(takes.notes.sentences, (1280, 720))
-
-    def event(kind, op="marks"):
-        main.apply_event(GestureEvent(kind, 1.0, "sentence", op), view, overlay, GestureLog(), takes=takes)
-
-    event("commit")  # nothing accepted: nothing added
-    assert view.note == "NO MARKS ACCEPTED: NOTHING CHANGED" and takes.notes.sentences[0].marks == before
-    view.focus = Hit(0, None)
-    event("focus")
-    takes.ask_marks(0)  # open the palm again: the same suggestions, no second call
-    assert len(provider.calls) == 1 and takes.suggestion_view(0)[0] == "ready"
-
-    point_at(takes, 1)  # the pause
-    event("toggle")
-    assert view.focus is not None  # a toggle keeps the focus
-    _, preview, states, current = takes.suggestion_view(0)
-    assert preview.marks[current] == Mark(MarkKind.LONG_PAUSE, 2) and states[current] == "accepted"
-    event("commit")
-    assert view.note == "ADDED 1 MARK  /  U: UNDO"
-    marks = takes.notes.sentences[0].marks
-    assert Mark(MarkKind.LONG_PAUSE, 2) in marks and Mark(MarkKind.STRESS, 1) not in marks  # only the accepted
-    assert [r["provenance"] for r in takes.session.revisions] == ["imported", "edited"]  # one revision
-    assert takes.mark_suggestions == {}  # they were for the old notes
-    assert takes.undo() == "UNDONE" and takes.notes.sentences[0].marks == before
-
-
-THREE = json.dumps({"marks": [{"kind": "slow", "word": None}, {"kind": "long_pause", "word": 2},
-                              {"kind": "stress", "word": 1}]})
-
-
-def spread(tmp_path, monkeypatch):
-    takes = takes_with(tmp_path, monkeypatch, FakeProvider(THREE))
-    takes.ask_marks(0)
-    poll_until(takes, lambda: 0 in takes.mark_suggestions)
-    return takes
-
-
-def picked(takes):
-    _, preview, states, current = takes.suggestion_view(0)
-    return preview.marks[current], [m for m, st in zip(preview.marks, states) if st == "accepted"]
-
-
-def point_at(takes, k):
-    """Point at suggestion k (as the frame loop does from the pointer)."""
-    takes.pickers["marks"].index = k
-
-
-def test_the_outline_follows_the_pointer_to_the_nearest_mark(tmp_path, monkeypatch):
-    takes = spread(tmp_path, monkeypatch)  # in reading order: [slow], *you*, // before "for"
-    _, preview, _, _ = takes.suggestion_view(0)
-    where = takes._suggest_view[1][1]  # suggestion -> its index among the sentence's marks
-    positions = {i: (100.0 + 100 * k, 200.0) for k, i in enumerate(where)}  # on screen, 100 px apart
-    scale = (500.0, 400.0)
-    takes.point_marks(0.0, 0, (0.0, 0.0), positions, scale)
-    assert picked(takes)[0] == Mark(MarkKind.SLOW)  # starts on the first
-    takes.point_marks(0.1, 0, (0.2, 0.0), positions, scale)  # 100 px right
-    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
-    takes.point_marks(0.2, 0, (0.4, 0.0), positions, scale)
-    assert picked(takes)[0] == Mark(MarkKind.LONG_PAUSE, 2)
-    takes.rewind_pick(0.15)  # a pinch took the pointer back to 0.15 s
-    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
-    takes.point_marks(0.3, 0, (0.0, 0.0), {}, scale)  # not on screen: left alone
-    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
-
-def test_accept_two_of_three_then_one_revision_and_dropping_discards(tmp_path, monkeypatch):
-    from palmcards.gestures import GestureEvent
-    from palmcards.render import Hit, TextOverlay, ViewState
-
-    takes = spread(tmp_path, monkeypatch)
-    view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None))
-    overlay = TextOverlay(takes.notes.sentences, (1280, 720))
-
-    def event(kind):
-        main.apply_event(GestureEvent(kind, 1.0, "sentence", "marks"), view, overlay, GestureLog(), takes=takes)
-
-    event("toggle")  # [slow]
-    point_at(takes, 1)
-    event("toggle")  # *you*
-    event("toggle")  # *you* again: rejected
-    point_at(takes, 2)
-    event("toggle")  # the pause
-    assert set(picked(takes)[1]) == {Mark(MarkKind.SLOW), Mark(MarkKind.LONG_PAUSE, 2)}
-
-    event("back")  # dropping the hand discards every choice
-    view.focus = Hit(0, None)
-    event("focus")
-    assert picked(takes) == (Mark(MarkKind.SLOW), [])
-    before = takes.notes.sentences[0].marks
-
-    event("toggle")
-    point_at(takes, 2)
-    event("toggle")
-    event("commit")
-    assert view.note == "ADDED 2 MARKS  /  U: UNDO"
-    marks = takes.notes.sentences[0].marks
-    assert set(marks) - set(before) == {Mark(MarkKind.SLOW), Mark(MarkKind.LONG_PAUSE, 2)}
-    assert [r["provenance"] for r in takes.session.revisions] == ["imported", "edited"]
-    assert takes.undo() == "UNDONE" and takes.notes.sentences[0].marks == before
-
-
-def test_no_new_marks_says_so(tmp_path, monkeypatch):
-    takes = takes_with(tmp_path, monkeypatch, FakeProvider(json.dumps({"marks": [{"kind": "fall", "word": None}]})))
-    takes.ask_marks(0)
-    notes = poll_until(takes, lambda: 0 in takes.mark_suggestions)
-    assert notes == ["NO NEW MARKS SUGGESTED FOR THIS SENTENCE"] and takes.suggestion_view(0)[0] == "empty"
-    assert takes.use_suggested_marks(0) == "NO MARKS TO ADD: NOTHING CHANGED"
 
 
 def test_a_failed_request_is_not_sent_again_until_a_new_focus(tmp_path, monkeypatch):
@@ -640,14 +496,13 @@ def test_a_failed_request_is_not_sent_again_until_a_new_focus(tmp_path, monkeypa
 
     provider = FakeProvider("not json")
     takes = takes_with(tmp_path, monkeypatch, provider)
-    for _ in range(3):  # the palm stays open over many frames
-        takes.ask_marks(0)
+    for _ in range(3):  # the ring stays open over many frames
         takes.ask_alternatives(0, 1)
         poll_until(takes, lambda: not takes.assistant.pending)
-    assert len(provider.calls) == 2 and takes.suggestion_view(0)[0] == "failed"
+    assert len(provider.calls) == 1 and ("alternatives", (0, 1)) in takes.llm_failed
     view = ViewState(app="prepare", mode="browse", level="sentence", hover=Hit(0, None))
     main.apply_event(GestureEvent("focus", 1.0, "sentence"), view, TextOverlay(takes.notes.sentences, (1280, 720)),
                      GestureLog(), takes=takes)
-    takes.ask_marks(0)  # focused again: asking again is the user's choice
-    assert len(provider.calls) == 3
+    takes.ask_alternatives(0, 1)  # focused again: asking again is the user's choice
+    assert len(provider.calls) == 2
 

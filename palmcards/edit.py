@@ -3,8 +3,6 @@
     toggle_stress(notes, sentence, word) -> Notes
     replace_word(notes, sentence, word, text) -> Notes      (an LLM alternative)
     replace_text(notes, sentences, text) -> Notes            (a tone or length rewrite)
-    add_marks(notes, sentence, marks) -> Notes               (suggested marks)
-    new_marks(sentence, marks) -> [Mark]                     (the suggestions that would add something)
 
 An edited sentence is written out as marked-up text and parsed again, so
 its words and marks are exactly what the file format would give (marks in
@@ -15,9 +13,7 @@ notes revision (palmcards.session: edit, undo).
 from __future__ import annotations
 
 from palmcards.export import marked
-from palmcards.notes import (
-    ENDING_KINDS, PACE_KINDS, Mark, MarkKind, Notes, Sentence, normalize, parse_sentence, reading_place,
-)
+from palmcards.notes import Mark, MarkKind, Notes, normalize, parse_sentence
 from palmcards.revisions import from_snapshot, to_snapshot
 
 
@@ -90,45 +86,3 @@ def replace_text(notes: Notes, sentences: list[int], text: str) -> Notes:
     for i, s in enumerate(new.sentences):
         s.index = i
     return new
-
-
-def add_marks(notes: Notes, sentence: int, marks: list) -> Notes:
-    """Suggested marks added to a sentence (ones it has already are kept once)."""
-    s = _copy(notes).sentences[sentence]
-    for kind, word in marks:
-        kind = MarkKind(kind)
-        if kind in (MarkKind.SLOW, MarkKind.FAST, MarkKind.RISE, MarkKind.FALL):
-            pair = (MarkKind.SLOW, MarkKind.FAST) if kind in (MarkKind.SLOW, MarkKind.FAST) else \
-                (MarkKind.RISE, MarkKind.FALL)
-            s.marks = [m for m in s.marks if m.kind not in pair]
-        if Mark(kind, word) not in s.marks:
-            s.marks.append(Mark(kind, word))
-            if kind == MarkKind.STRESS:
-                s.words[word].stressed = True
-    s.raw = ""
-    return _replace(notes, sentence, s)
-
-
-def new_marks(sentence: Sentence, marks: list) -> list[Mark]:
-    """The suggested marks that would add something to the sentence, in the
-    order they read (pace, then word by word, the ending last). Left out:
-    marks it has already, a second pause in the same gap, stress on a word
-    already stressed, and a pace or ending that would replace its own
-    (suggestions only add)."""
-    pauses = {m.word for m in sentence.pauses()}
-    out: list[Mark] = []
-    for kind, word in marks:
-        mark = Mark(MarkKind(kind), word)
-        if mark in sentence.marks or mark in out:
-            continue
-        if mark.kind in (MarkKind.SHORT_PAUSE, MarkKind.LONG_PAUSE):
-            if word in pauses:
-                continue
-            pauses.add(word)
-        elif mark.kind in PACE_KINDS and (sentence.pace or any(m.kind in PACE_KINDS for m in out)):
-            continue
-        elif mark.kind in ENDING_KINDS and (sentence.ending or any(m.kind in ENDING_KINDS for m in out)):
-            continue
-        out.append(mark)
-    return sorted(out, key=lambda m: reading_place(m, len(sentence.words)))
-

@@ -52,14 +52,3 @@ def test_the_picker_knows_where_the_point_is_while_pointing():
     assert p.at == (ROW[1][0] + 0.1 * SCALE[0], ROW[1][1])
     p.update(0.2, None, ROW, SCALE)
     assert p.at is None
-
-
-def test_the_ring_and_marks_point_at_the_gain_the_same_both_ways():
-    import main
-    from palmcards.gestures import Grammar
-
-    g = Grammar((1280, 720))
-    x0, y0, x1, y1 = g.cursor.box
-    sx, sy = main.point_scale(g)
-    # a fingertip move of d px moves the point OPS.point_gain * d px, across and up/down alike
-    assert sx / (x1 - x0) == sy / (y1 - y0) == OPS.point_gain == 2.0

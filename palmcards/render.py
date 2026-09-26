@@ -13,9 +13,7 @@ Prepare's operations: the options ring (the original word, its alternatives
 when the optional LLM is on, stress and "hear it"; an L-hand turns it like a
 knob, the picked node at 12 o'clock, its word scrambling into the sentence),
 and the tone gauge and stretch line; without the LLM these two only preview,
-and say so. An open palm on a focused sentence spreads the LLM's suggested
-marks in it, faded (style COLORS.suggest_mark), where they would go; the one
-pointed at is outlined, and the ones accepted with a pinch are solid. While the
+and say so. While the
 cloud LLM is on, a CLOUD LLM chip sits at the bottom left ("SENDING" while a
 request is out).
 
@@ -61,7 +59,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from palmcards.config import CURSOR, KNOB, REHEARSE
 from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
-from palmcards.notes import MarkKind, Sentence, reading_place
+from palmcards.notes import MarkKind, Sentence
 from palmcards.style import (
     CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
 )
@@ -89,7 +87,7 @@ FOCUS_HINTS = {  # without the optional LLM
 }
 FOCUS_HINTS_LLM = {
     "word": "OPEN PALM: ALTERNATIVES, STRESS, HEAR IT  /  DROP HAND: BACK",
-    "sentence": "OPEN PALM: SUGGEST MARKS  /  L-HAND: TONE  /  DROP HAND: BACK",
+    "sentence": "L-HAND: TONE  /  DROP HAND: BACK",
     "paragraph": "TWO L-HANDS: LENGTH  /  DROP HAND: BACK",
 }
 NEEDS_LLM = "(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)"
@@ -100,7 +98,6 @@ KEYS_HELP = (
     "N B  NEXT / PREVIOUS SECTION     U  UNDO EDIT",
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
     "A  PLAY SENTENCE     P  BACK TO PREPARE",
-    "M  SUGGEST MARKS (FOCUSED SENTENCE)",
     "E  CALIBRATE EYES AT THE NEXT TAKE",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
 )
@@ -142,7 +139,7 @@ class Hit:
 class OpsView:
     """What the operation stubs show; filled from the gesture state."""
 
-    kind: str | None = None  # ring | tone | marks | stretch
+    kind: str | None = None  # ring | tone | stretch
     picked: int = 0  # ring node (ring_labels order), 0 = original word
     pointing: bool = False  # choosing: pointing at the marks, turning the ring
     # The ring turned like a knob (follow_ring): its rotation in nodes, unwrapped
@@ -210,13 +207,6 @@ class ViewState:
     proposal: str = ""
     llm: str = ""  # the optional LLM in use: "cloud" (the text asked about leaves the Mac), "local", or ""
     llm_busy: bool = False  # a request is out
-    # Prepare, marks spread on a focused sentence: "off" (no LLM), "asking",
-    # "failed", "empty" or "ready"; when ready, the sentence with every
-    # suggestion added, and per mark of it "suggested" or "" (as written).
-    suggest: str = ""
-    suggest_sentence: Sentence | None = None
-    suggest_marks: tuple[str, ...] = ()  # per mark of suggest_sentence: "suggested", "accepted" or ""
-    suggest_current: int | None = None  # the mark (of suggest_sentence) pointed at: outlined
     # Review, a focused sentence: the takes that said it, as chips beside it to
     # point at (an L, then the fingertip), and which one it shows.
     takes: tuple[str, ...] = ()
@@ -231,7 +221,6 @@ class Panel:
     color: np.ndarray
     inv: np.ndarray
     rows: dict[int, tuple[int, int]]  # sentence -> (top, bottom) of its enlarged rows, px into the content
-    marks: dict[int, tuple[float, float, float, float]] = field(default_factory=dict)  # suggested mark -> box
 
 
 @dataclass(frozen=True)
@@ -276,17 +265,6 @@ def sentence_units(s: Sentence) -> list[list[Span]]:
     if s.ending:
         units.append([Span(f"[{s.ending}]", "mark", mark=_mark_index(s, s.ending))])
     return units
-
-
-def mark_label(s: Sentence, i: int) -> str:
-    """A mark of the sentence in a few words for the label: [SLOW], *YOU*, // BEFORE "BEING"."""
-    m = s.marks[i]
-    if m.kind in (MarkKind.SHORT_PAUSE, MarkKind.LONG_PAUSE):
-        where = f'BEFORE "{s.words[m.word].text.upper()}"' if m.word < len(s.words) else "AT THE END"
-        return f"{PAUSE_TEXT[m.kind]} {where}"
-    if m.kind is MarkKind.STRESS:
-        return f"*{s.words[m.word].text.upper()}*"
-    return f"[{m.kind.upper()}]"
 
 
 def _mark_index(s: Sentence, kind: MarkKind) -> int | None:
@@ -517,15 +495,6 @@ class TextOverlay:
         elif ops.kind == "tone":
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
             second = f"SENTENCE TONE: {tone}  " + ("/  PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM)
-        elif ops.kind == "marks":
-            second = {
-                "off": "MARK SUGGESTIONS NEED THE OPTIONAL LLM: NOTHING SENT",
-                "asking": "SUGGESTING MARKS" + "." * (int(time.time() * 2) % 4),
-                "failed": "NO SUGGESTIONS  /  DROP HAND, FOCUS AGAIN TO RETRY",
-                "empty": "NO NEW MARKS SUGGESTED  /  DROP HAND: BACK",
-            }.get(state.suggest, "")
-            if state.suggest == "ready":
-                second = self._pick_line(state)
         elif ops.kind == "stretch":
             change = "LONGER" if ops.stretch > 1.05 else "SHORTER" if ops.stretch < 0.95 else "SAME"
             second = f"PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}  " + \
@@ -539,21 +508,6 @@ class TextOverlay:
         else:
             second = state.status
         return first, second
-
-    def _pick_line(self, state: ViewState) -> str:
-        """Spread marks: which one the knob is on, whether it is accepted, what a
-        pinch and a pinch + lift would do."""
-        s = state.suggest_sentence
-        picks = sorted((i for i, st in enumerate(state.suggest_marks) if st),
-                       key=lambda i: reading_place(s.marks[i], len(s.words)))  # the knob's order
-        if not picks:
-            return ""
-        accepted = sum(1 for st in state.suggest_marks if st == "accepted")
-        cur = state.suggest_current if state.suggest_current in picks else picks[0]
-        on = state.suggest_marks[cur] == "accepted"
-        where = f"{picks.index(cur) + 1}/{len(picks)} {mark_label(state.suggest_sentence, cur)}"
-        commit = f"PINCH + LIFT: ADD {accepted}" if accepted else "L-HAND, THEN POINT: ANOTHER"
-        return f"{where}: {'ACCEPTED' if on else 'NOT ACCEPTED'}  /  PINCH: {'REJECT' if on else 'ACCEPT'}  /  {commit}"
 
     def ring_words(self, state: ViewState) -> int:
         """How many of ring_labels are words (the word itself and its
@@ -732,23 +686,18 @@ class TextOverlay:
         return None
 
     def _focus_panel(self, unit: tuple[int, ...], detail: tuple[tuple[str, str], ...] = (),
-                     verdicts: tuple = (), current: int | None = None, preview_from: int | None = None,
-                     suggest: tuple | None = None) -> Panel:
+                     verdicts: tuple = (), current: int | None = None, preview_from: int | None = None) -> Panel:
         """The unit's sentences enlarged, then the detail lines (Review's
         verdicts), faint context rows around them when there is room.
-        With `suggest` (sentence, that sentence with the suggested marks added,
-        each mark's state, the outlined mark), it is drawn that way: the
-        suggestions faded, the accepted ones solid, the outlined one boxed.
 
         Laid out whole: when it is taller than the viewport, draw() shows a
         scrolled part of it. With `current`, that sentence is orange and the
         rest of the unit dimmed (Rehearse); sentences from `preview_from` on
         (the next section, previewed) are faint."""
-        key = (unit, detail, verdicts, current, preview_from, suggest)
+        key = (unit, detail, verdicts, current, preview_from)
         if self._panel_key == key:
             return self._panel
-        sents = [suggest[1] if suggest and i == suggest[0] else self.sentences[i] for i in unit]
-        states = suggest[2] if suggest else ()
+        sents = [self.sentences[i] for i in unit]
         dfont = self._get_font(round(self.font_size * DETAIL.scale))
         dlh = round(self.line_h * DETAIL.scale)
         bullet = dlh // 2
@@ -779,30 +728,14 @@ class TextOverlay:
         img = Image.new("RGBA", (self.box_w, panel_h), CLEAR)
         draw = ImageDraw.Draw(img)
         where: dict[int, tuple[int, int]] = {}
-        mark_boxes: dict[int, tuple[float, float, float, float]] = {}
 
         def draw_rows(rows_, font_, lh_, cw_, colors, y_, sentence_of=lambda r: r.sentence):
             for row in rows_:
                 si = sentence_of(row)
                 word_c, mark_c = colors(si)
-                picked = None  # the outlined suggestion's box on this row
                 for col, sp in row.spans:
-                    mc, xy = mark_c, (self.pad + col * cw_, y_)
-                    if suggest and si == suggest[0] and sp.mark is not None and sp.mark < len(states) \
-                            and states[sp.mark]:
-                        mc = C.accepted_mark if states[sp.mark] == "accepted" else C.suggest_mark
-                        box = draw.textbbox(xy, sp.text, font=font_)
-                        was = mark_boxes.get(sp.mark)
-                        mark_boxes[sp.mark] = box if was is None else (min(was[0], box[0]), min(was[1], box[1]),
-                                                                       max(was[2], box[2]), max(was[3], box[3]))
-                        if sp.mark == suggest[3]:
-                            picked = box if picked is None else (min(picked[0], box[0]), min(picked[1], box[1]),
-                                                                 max(picked[2], box[2]), max(picked[3], box[3]))
-                    self._draw_span(draw, xy, sp, font_, word_c, mc, self._verdict(verdicts, si, sp))
-                if picked is not None:
-                    pad = max(3, font_.size // 6)
-                    draw.rounded_rectangle((picked[0] - pad, picked[1] - pad, picked[2] + pad, picked[3] + pad),
-                                           radius=pad + 1, outline=C.pick_outline, width=4 if suggest[4] else 2)
+                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, word_c, mark_c,
+                                    self._verdict(verdicts, si, sp))
                 top, bottom = where.get(si, (y_, y_))
                 where[si] = (min(top, y_), max(bottom, y_ + lh_))
                 y_ += lh_
@@ -833,7 +766,7 @@ class TextOverlay:
                 y += dlh
         draw_rows(below, self.font, self.line_h, self.char_w, lambda si: (C.faint, C.faint_mark), y)
         color, inv = _premultiply(img)
-        self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y, mark_boxes)
+        self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y)
         return self._panel
 
     # --- the panel's viewport ------------------------------------------------
@@ -855,10 +788,8 @@ class TextOverlay:
         unit = self._panel_unit(state)
         if unit is None:
             return None
-        suggest = (state.focus.sentence, state.suggest_sentence, state.suggest_marks, state.suggest_current,
-                   state.ops.closing) if state.suggest_sentence is not None and state.focus is not None else None
         return self._focus_panel(unit, state.detail, state.mark_verdicts, self._panel_current(state, unit),
-                                 self._preview_from(state, unit), suggest)
+                                 self._preview_from(state, unit))
 
     def panel_view_h(self, panel: Panel) -> int:
         return min(panel.height, self.max_panel_h)
@@ -975,15 +906,6 @@ class TextOverlay:
         view_h = self.panel_view_h(panel)
         top = self._panel_top(view_h)
         return panel, self.x + self.margin, top - int(self.clamp_panel_scroll(state, state.panel_scroll)), top
-
-    def mark_points(self, state: ViewState) -> dict[int, tuple[float, float]]:
-        """Where each suggested mark of the focused sentence is on screen (by its
-        index among suggest_sentence's marks)."""
-        got = self._panel_origin(state)
-        if got is None:
-            return {}
-        panel, ox, oy, _ = got
-        return {m: (ox + (b[0] + b[2]) / 2, oy + (b[1] + b[3]) / 2) for m, b in panel.marks.items()}
 
     def _take_chips(self, state: ViewState) -> list[tuple[tuple[np.ndarray, np.ndarray], float, float]]:
         """Review: the focused sentence's takes as chips in a column right of the

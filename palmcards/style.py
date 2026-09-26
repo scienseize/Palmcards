@@ -38,9 +38,6 @@ class Colors:
     faint_mark: RGBA = (220, 220, 220, 25)
     focus_text: RGBA = (245, 245, 245, 255)  # enlarged unit in the focus panel
     focus_mark: RGBA = (245, 245, 245, 140)
-    suggest_mark: RGBA = (255, 215, 0, 95)  # a mark the LLM suggests, not yet in the notes: faded yellow
-    accepted_mark: RGBA = (255, 215, 0, 245)  # a suggestion accepted with a pinch: solid yellow
-    pick_outline: RGBA = (255, 215, 0, 255)  # around the suggestion the knob is on (thicker while pinching)
     backing: RGBA = (10, 10, 12, 150)  # soft dark box behind the text
     # Chips and nodes.
     chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node
@@ -265,7 +262,7 @@ COLORS = Colors()
 HIGH_CONTRAST = replace(COLORS, dim=(245, 245, 245, 200), dim_mark=(245, 245, 245, 150), faint=(235, 235, 235, 130),
                         faint_mark=(235, 235, 235, 100), backing=(0, 0, 0, 215), label_fill=(0, 0, 0, 230),
                         focus_mark=(255, 255, 255, 200), detail_text=(255, 255, 255, 255),
-                        suggest_mark=(255, 215, 0, 170), node_outline_dim=(245, 245, 245, 160))
+                        node_outline_dim=(245, 245, 245, 160))
 TEXT = Text()
 CHIPS = Chips()
 LABEL = Label()

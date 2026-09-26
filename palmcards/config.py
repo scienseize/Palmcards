@@ -109,18 +109,11 @@ class Cursor:
 @dataclass(frozen=True)
 class Ops:
     tone_range_deg: float = 45.0  # tilt from the start angle for full warm/cold
-    # Choosing by pointing (spread marks, Review's takes): after an L, the
-    # index fingertip moves a point from the item picked; the nearest item is
-    # picked, but only once the point is nearer to it than to the current one
-    # by pick_margin of the gap between them (no flicker between neighbours).
-    # It replaced turning a knob, which followed every wobble of the index
-    # angle (2026-09-26: 85 changes in 21 s on the ring). The word's options
-    # ring went back to a knob of its own (KNOB). The marks move the point
-    # point_gain screen px per px of fingertip, both ways: at the scale of
-    # browsing (0.65 up and down), a recorded session needed ~360 px of
-    # fingertip to cross the ring and found it too slow. Review's take chips
-    # keep the scale of browsing.
-    point_gain: float = 2.0
+    # Choosing by pointing (Review's takes): after an L, the index fingertip
+    # moves a point from the item picked, at the scale of browsing; the
+    # nearest item is picked, but only once the point is nearer to it than to
+    # the current one by pick_margin of the gap between them (no flicker
+    # between neighbours). The word's options ring is a knob (KNOB).
     pick_margin: float = 0.2
     stretch_min: float = 0.5  # length ratio clamp
     stretch_max: float = 2.0
@@ -131,8 +124,8 @@ class Ops:
     # registers, the dials (the ring's knob, tone, stretch) go back to their value from just
     # before the thumb started closing (the latest moment in the last
     # rewind_max_s with the thumb within rewind_plateau palms of its farthest
-    # out) and hold there until the thumb opens again. Pointing (the marks,
-    # the takes, browsing words) goes back the same way, but only when
+    # out) and hold there until the thumb opens again. Pointing (the takes,
+    # browsing words) goes back the same way, but only when
     # the pinch registers: pointing, the thumb often rests near the index tip. A steady L has the thumb 1.3-1.9 palms from the index
     # tip; a thumb drifting in while turning rarely (about 2% of the time)
     # comes within 0.9. On the 7 recorded L-to-pinch moments this left 1 knob

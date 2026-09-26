@@ -422,63 +422,18 @@ def prepare_sentence_focus():
     return g, t
 
 
-def test_open_palm_on_a_focused_sentence_spreads_marks():
+def test_an_open_palm_on_a_focused_sentence_changes_nothing():
     g, t = prepare_sentence_focus()
+    _, t = run(g, hold(open_palm, 0.3), t)
+    assert g.state.op is None  # no suggested marks any more
     _, t = run(g, hold(l_hand, 0.3, rotate=-10) + hold(l_hand, 0.3, rotate=12.5), t)
     assert g.state.op == "tone" and g.state.tone > 0.4
-    _, t = run(g, hold(open_palm, 0.3), t)  # an open palm switches to marks; the tone preview is dropped
-    assert g.state.op == "marks" and g.state.tone == 0.0
-    assert [e["op"] for e in g.log.entries if e["kind"] == "op"] == ["tone", "marks"]
-    _, t = run(g, hold(l_hand, 0.3, rotate=-30) + hold(l_hand, 0.3, rotate=30), t)
-    assert g.state.op == "marks" and g.state.tone == 0.0  # the L-hand no longer turns the tone dial
+    tone = g.state.tone
+    _, t = run(g, hold(open_palm, 0.3), t)
+    assert g.state.op == "tone" and g.state.tone == tone  # the tone preview stays
+    assert [e["op"] for e in g.log.entries if e["kind"] == "op"] == ["tone"]
     events, _ = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
-    assert [(e.kind, e.op) for e in events] == [("commit", "marks")]
-
-
-def marks_spread():
-    g, t = prepare_sentence_focus()
-    _, t = run(g, hold(open_palm, 0.3), t)
-    assert g.state.op == "marks"
-    return g, t
-
-
-def kinds_of(events):
-    return [e.kind for e in events]
-
-
-def test_pinch_and_lift_commits_without_toggling():
-    g, t = marks_spread()
-    events, _ = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H) + hold(pinch, 0.3, origin=(960, 600 - 0.2 * H))
-                    + hold(one, 0.3), t)
-    assert kinds_of(events) == ["commit"] and events[0].op == "marks"
-
-
-def test_the_focusing_fold_and_a_dropped_pinch_do_not_toggle():
-    g = Grammar((W, H))
-    _, t = run(g, hold(two, 0.3))
-    # A fold that ends pinched and stays pinched while the marks open: that pinch focused, it doesn't toggle.
-    events, t = run(g, lerp_frames(hand, TWO_TIPS, TWO_FOLDED, 6) + hold(pinch, 0.3), t)
-    assert kinds_of(events) == ["focus"]
-    g.open_marks(t)
-    events, t = run(g, hold(pinch, 0.3) + hold(open_palm, 0.3), t)
-    assert "toggle" not in kinds_of(events)
-    # A pinch taken out of view (not long enough to back out) and brought back open: no toggle.
-    events, t = run(g, hold(pinch, 0.3) + [None] * 10 + hold(open_palm, 0.3), t)
-    assert kinds_of(events) == [] and g.state.mode == "focus"
-
-
-def test_marks_open_only_on_a_focused_sentence_in_prepare():
-    g = Grammar((W, H))
-    assert not g.open_marks(0.0)  # nothing focused
-    g, t = prepare_sentence_focus()
-    g.operations = False  # Review
-    assert not g.open_marks(t) and g.state.op is None
-    _, t = run(g, hold(open_palm, 0.3), t)
-    assert g.state.op is None
-    g.operations = True
-    assert g.open_marks(t) and g.state.op == "marks"  # the m key
-    g2, t2 = ring_focus()  # a focused word: the open palm is the ring, as before
-    assert not g2.open_marks(t2) and g2.state.op == "ring"
+    assert [(e.kind, e.op) for e in events] == [("commit", "tone")]
 
 
 def test_paragraph_two_l_hands_stretch_relative_to_start():
@@ -787,14 +742,20 @@ def test_key_commands_make_the_same_transitions_as_the_gestures():
 
 # --- choosing by pointing (the marks, Review's takes) ------------------------------
 
+def takes_focus():
+    """Review, a sentence focused: an L points at its take chips."""
+    m, t = reviewing()
+    return m, sentence_focus(m, t)
+
+
 def test_the_pointer_starts_with_an_l_and_follows_the_fingertip():
-    g, t = marks_spread()
+    g, t = takes_focus()
     _, t = run(g, hold(one, 0.3), t)
     assert not g.state.pointing and g.state.point is None  # pointing alone doesn't start it: an L does
     _, t = run(g, hold(l_hand, 0.3), t)
     assert g.state.pointing and g.state.point == pytest.approx((0.0, 0.0), abs=0.01)
     _, t = run(g, hold(l_hand, 1.0, origin=(960 + 100, 600)), t)  # (smoothed like the browse cursor)
-    box_w = g.cursor.box[2] - g.cursor.box[0]  # px per hand-box width (the reach preference sets it)
+    box_w = g.grammar.cursor.box[2] - g.grammar.cursor.box[0]  # px per hand-box width (the reach preference sets it)
     assert g.state.point == pytest.approx((100 / box_w, 0.0), abs=0.01)  # the fingertip moved right
     _, t = run(g, hold(drifted, 0.5, origin=(960 + 100, 600 - 60)), t)  # thumb in: still pointing
     assert g.state.pointing and g.state.point[1] < -0.05
@@ -807,7 +768,7 @@ def test_the_pointer_starts_with_an_l_and_follows_the_fingertip():
 
 
 def test_a_pinch_takes_the_point_back_to_before_the_curl():
-    g, t = marks_spread()
+    g, t = takes_focus()
     _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.5, origin=(1000, 600)), t)
     before = g.state.point
     events, t = run(g, curl_into_pinch(drop=60, n=8)[:12], t)  # the index tip sinks as it curls
@@ -815,28 +776,7 @@ def test_a_pinch_takes_the_point_back_to_before_the_curl():
     (ev,) = [e for e in events if e.kind == "rewind"]
     assert ev.value < ev.t and g.state.point == pytest.approx(before, abs=0.02) and g.state.closing
     events, t = run(g, lift(0.4, 0.2 * H), t)
-    assert [(e.kind, e.op) for e in events] == [("commit", "marks")]
-
-
-def curl_into_pinch_from_l(n=6):
-    """An L closing into a pinch at rest (the thumb comes in onto the index tip)."""
-    return [hand({8: (-30, -200)}, thumb=tuple(np.add(np.multiply(THUMB_OUT, 1 - i / n),
-                                                      np.multiply((-27, -197), i / n)))) for i in range(1, n + 1)]
-
-
-def test_marks_a_pinch_without_a_lift_toggles_once_and_a_lift_commits():
-    g, t = marks_spread()
-    _, t = run(g, hold(l_hand, 0.3), t)
-    assert g.state.pointing
-    events, t = run(g, curl_into_pinch_from_l() + hold(pinch, 0.3), t)
-    assert "toggle" not in kinds(events) and g.state.closing  # held: nothing yet
-    events, t = run(g, hold(l_hand, 0.3), t)  # let go
-    assert kinds(events) == ["toggle"] and g.state.mode == "focus"
-    events, t = run(g, hold(pinch, 0.3) + hold(open_palm, 0.3), t)
-    assert kinds(events) == ["toggle"]
-    events, _ = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
-    assert [(e.kind, e.op) for e in events] == [("commit", "marks")]
-
+    assert ("commit", "take") in [(e.kind, e.op) for e in events]  # a drill of the sentence, from the take picked
 
 def test_review_an_l_starts_pointing_at_the_takes():
     m, t = reviewing()

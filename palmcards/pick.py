@@ -1,14 +1,13 @@
-"""Choosing among things on screen by pointing (the word's options ring, the
-suggested marks in a sentence, Review's take chips).
+"""Choosing among things on screen by pointing (Review's take chips beside a
+focused sentence).
 
     Picker.update(t, point, positions, scale) -> index
 
 After an L, the grammar publishes how far the index fingertip has moved
 (GestureState.point, hand-box units). The picker puts that on screen: the
 point starts on the item picked when pointing starts and moves with the
-fingertip at `scale` pixels per hand-box unit (main: the ring and marks at
-OPS.point_gain px per px of fingertip, the take chips at the scale of
-browsing). `at` is where the point is on screen (not drawn: the pick shows it). The
+fingertip at `scale` pixels per hand-box unit (main: the scale of browsing).
+`at` is where the point is on screen (not drawn: the pick shows it). The
 nearest item is picked, but only once the point is nearer to it than to the
 current one by OPS.pick_margin of the gap between the two, so the pick
 doesn't flicker between neighbours. When a pinch rewinds the point, rewind()

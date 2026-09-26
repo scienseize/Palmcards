@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import main
-from palmcards.edit import is_stressed, new_marks, toggle_stress
+from palmcards.edit import is_stressed, toggle_stress
 from palmcards.gestures import GestureLog
 from palmcards.notes import Mark, MarkKind, parse_text
 from palmcards.session import Session
@@ -81,15 +81,3 @@ def test_the_app_edits_and_undoes_and_rebuilds_its_board(tmp_path, monkeypatch):
     assert takes.undo() == "UNDONE" and not is_stressed(takes.notes, 0, 5) and takes.notes_version == 2
     data = json.loads((takes.session.dir / "session.json").read_text())
     assert data["current"] == data["revisions"][0]["id"] and len(data["revisions"]) == 2
-
-
-def test_suggested_marks_only_add_and_read_in_order():
-    s = parse_text("[slow] Thank you for *being* here / tonight.", "txt").sentences[0]
-    assert Mark(MarkKind.SHORT_PAUSE, 5) in s.marks  # "/" before "tonight."
-    got = new_marks(s, [("fall", None), ("stress", 3), ("fast", None), ("long_pause", 5), ("stress", 1),
-                        ("short_pause", 2), ("long_pause", 2), ("stress", 1), ("rise", None)])
-    # Dropped: stress on "being" (there), fast (it has a pace), a pause where there is one, a second
-    # pause in the same gap, the repeat, a second ending. The rest in reading order.
-    assert got == [Mark(MarkKind.STRESS, 1), Mark(MarkKind.SHORT_PAUSE, 2), Mark(MarkKind.FALL)]
-    assert new_marks(s, [("slow", None), ("stress", 3)]) == []
-

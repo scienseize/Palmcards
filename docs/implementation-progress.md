@@ -1535,3 +1535,19 @@ Changes: the yellow dot drawn where the point is while choosing is gone (ViewSta
   computed, just not drawn).
 Tests: pytest (full) -> 506 passed (the test that drew the dot removed).
 ```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: no delivery marks, stage 1 of 4: the LLM-suggested marks removed (user's request)
+Plan: stage 1 suggestions; 2 Review compares takes on metrics (verdicts and cues.py removed, a voice
+  metric from pitch and loudness); 3 the markup itself removed; 4 docs and the study's H1.
+Changes: an open palm (or m) on a focused sentence no longer asks for marks; on a focused sentence an
+  L-hand is only the tone dial. Gone: Grammar.open_marks, the toggle event (a pinch without a lift),
+  Takes.ask_marks / suggestion_view / point_marks / toggle_mark / use_suggested_marks, the marks
+  picker and OPS.point_gain (pointing is only Review's take chips now, at the scale of browsing),
+  llm.marks_request / parse_marks and the marks schema, edit.add_marks / new_marks, the suggestion
+  colours and drawing, the m key. Old llm-usage.jsonl lines with action "marks" still sum; revisions
+  made from accepted suggestions are ordinary revisions.
+Tests: pytest (full) -> 493 passed (the suggestion tests removed; the pointer tests moved to Review's
+  take chips; an open palm on a focused sentence changes nothing). Replays: 12 ok.
+```
