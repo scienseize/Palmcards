@@ -734,19 +734,13 @@ Reason for any departure from this plan: gaze, posture and face touching are not
 Next action: the end-to-end release gate on the target Mac (hardware; user).
 ```
 
-## Open decisions (need the user)
+## Decisions (2026-09-26, by the user)
 
-- **Cloud LLM provider.** Only a local Ollama provider is wired in (off by default). `ANTHROPIC_API_KEY`
-  is set in this environment, but sending notes off the Mac, and the cost, were never authorised, so
-  no cloud provider was implemented or called.
-- **Backward flick.** Asked on 2026-09-25, unanswered. The voice only advances; `b`, `j` and `k` correct
-  by hand for now.
-- **Left-handed layout.** Mirror the text, hand box and command zone? MediaPipe's handedness label is
-  too unreliable to switch on automatically.
-- **Push and CI.** `.github/workflows/tests.yml` has never run. Pushing publishes the repository, so it
-  waits for your go-ahead.
-- **Evaluation data.** Consented, labelled takes are needed before any accuracy claim (see
-  docs/evaluation.md).
+- **Cloud LLM provider:** part of milestone 8. Until then only the local Ollama provider exists, off by default.
+- **Backward flick:** not needed, now that the notes follow the voice live; `b` / `j` / `k` remain as keys.
+- **Left-handed layout:** not needed.
+- **Push and CI:** approved; pushed to origin/main to prepare for the next milestone.
+- **Evaluation data:** still open: consented, labelled takes are needed before any accuracy claim (docs/evaluation.md).
 
 ## End-to-end release gate (to run on the target Mac)
 
