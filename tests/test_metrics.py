@@ -61,8 +61,8 @@ def test_hands_from_the_gesture_log_and_the_trace(tmp_path):
 def test_gaze_and_posture_are_not_measured():
     al, words, _ = aligned("Good evening everyone thank you.")
     m = metrics.take_metrics(al, words, 0.0, 30.0)
-    assert m["gaze"]["value"] is None and "not measured" in m["gaze"]["reason"]
-    assert m["posture"]["value"] is None and m["version"] == 1
+    assert m["gaze"]["value"] is None and "no face features" in m["gaze"]["reason"]
+    assert m["posture"]["value"] is None and m["version"] == 2
 
 
 def test_the_analysis_stores_metrics_on_the_take(tmp_path):

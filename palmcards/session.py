@@ -104,6 +104,7 @@ class TakeRecord:
     live: dict | None = None  # voice follow during the take: engine, state, words, lag (display only)
     metrics: dict | None = None  # palmcards.metrics: observations about the take, once analysed
     vision: dict | None = None  # face/pose/hand features during the take: file, calibration, counts, state
+    gaze_check: dict | None = None  # main.py --gaze-check: {"seed", "t0" (app clock), "prompts"}
 
     @property
     def silent(self) -> bool:
@@ -509,6 +510,7 @@ class Session:
             duration_s=round(manifest["samples"] / rate, 3), sample_rate=rate, peak=manifest["peak"],
             sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
             status=status, capture=capture, live=manifest.get("live"), vision=manifest.get("vision"),
+            gaze_check=manifest.get("gaze_check"),
         )
         self.takes = [t for t in self.takes if t.number != take.number] + [take]
         self.takes.sort(key=lambda t: t.number)

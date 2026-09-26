@@ -23,6 +23,7 @@ user runs them. They are never inferred from unit tests.
 | End-to-end release gate | Passed on hardware (2026-09-26), 4 items covered by automated tests only | scripts/hardware_check.py; the user's 10-step smoke test | 2026-09-26: camera 29.9 fps, loop 30.2 fps, hands 12.8 ms, draw 3.2 ms; mic 48 kHz with device clock (adc), no overflows; click round trip 113.6 ms; live model ready 1.6 s; say ok ; smoke test steps 1-10 all passed, frame rate stable throughout (user) | Live checks of worker retry, truncated endings, editing the imported file, long sessions |
 | M7 stage 0 — Face/pose budget | Measured on hardware (2026-09-26) | CLAUDE.md milestone 7 rewritten to what's left, duplicate llm.py line removed; `BODY` config; palmcards/vision.py (face and pose trackers, not in the app yet); scripts/bench_vision.py | 388 passed; five benchmark runs by the user (sessions/bench-vision*.json) | Cool: every rate keeps 30 fps. Warm (after 2.5-3.5 min): every rate costs frames, and hands-only also slows (see log). Rates set to face every 6th, pose every 15th frame; Stage 1 decides on backing off when frames run late |
 | M7 stage 1 — Capture and calibration | Checked on hardware (2026-09-26) | Face, pose and hand features during every take (take-NN.face.npz with provenance); the eye calibration in the session's first count-in (dot, then the orange line; `e` redoes it), kept in session.json (schema 3); face/pose wait for a later frame when one is late | 413 passed; the user's session 20260926-115417: calibration ok, `e` redid it, a covered camera failed it with its reason; takes at 5/s face, 2/s pose, 30/s hands, face found 100% | The two calibration targets barely differ (see log); a face-box overlap is not a face touch in a close-up frame; stage 2 (gaze) |
+| M7 stage 2 — Gaze | Implemented, validation pending | palmcards/gaze.py (classes against the calibration, the take's gaze metric while speaking, per sentence), the gaze check (`main.py --gaze-check`, `scripts/evaluate.py --gaze [--sweep]`) | 424 passed; on the user's last real take the defaults gave 70% away while speaking: not believable | A gaze-check take to tune `GAZE`, a second to confirm |
 
 ## Log
 
@@ -866,6 +867,45 @@ Hardware check (2026-09-26, the user; session 20260926-115417-sample_notes-0dad8
     targets now separate, mostly sideways (the notes are left of the camera at about its height);
     the vertical cues are weak. A 35 s take: face found 100%, yaw -6.6..-1.2 (10th-90th
     percentile), between the two baselines.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Milestone 7, stage 2 (gaze and its validation)
+Status: implemented, validation pending (gaze-check takes)
+Current HEAD / optional commit ID: 5afdb89 -> stage 2 commit (see git log)
+Pre-existing changes preserved: yes.
+Files and behavior changed:
+  palmcards/gaze.py (new): classify() (camera / notes / away / unclear: the distance to each
+    calibration baseline over yaw, pitch, iris x/y, each divided by max(floor, 2 x the larger MAD);
+    nearest within its radius, else away; no face, a blink or a missing value: unclear; baselines
+    closer than GAZE.min_separation: everything unclear, said why), take_gaze() (readings while a
+    sentence is said, padded 0.2 s: shares of the judged, unclear share, counts, per sentence; None +
+    reason when there is too little), prompt_schedule(), check_agreement() (confusion, agreement,
+    Cohen's kappa, recall, per-target medians).
+  palmcards/metrics.py: gaze from the take's face file and calibration (VERSION 2); reasons for
+    takes before milestone 7, tracking off, a missing file.
+  palmcards/speech.py: the job carries the take's vision record, face file and calibration.
+  palmcards/analysis.py: the analysis-config hash covers METRICS and GAZE too.
+  main.py: --gaze-check (every full take calibrates, shows the prompts under "GAZE CHECK" and stops
+    itself after the last; the schedule is kept on the take). palmcards/render.py: a title
+    replaces only the first label line during takes. palmcards/session.py: take `gaze_check`.
+  scripts/evaluate.py: --gaze RUN [--take N] [--sweep] [--json OUT].
+  palmcards/config.py: GAZE. CLAUDE.md, README.md, docs/evaluation.md (a Gaze section).
+  Tests: tests/test_gaze.py (10), tests/test_calibration.py (+1: a gaze check through the app,
+    stopping itself, reported and swept), tests/test_metrics.py (reason text).
+Migration / compatibility implications: new analyses have metrics version 2 and a new config hash.
+Tests run and exact outcome: pytest (full) -> 424 passed.
+Manual / hardware checks performed: read-only, the user's take 1 of 20260926-120945 with its
+  calibration c1 (separation 4.96): while speaking, 153 readings judged: camera 7, notes 39, away
+  107 (70% away). Not believable for someone reading notes and looking up: the calibration steps
+  are steadier (MAD 0.15-0.5 deg) than a head while talking, so the scales sit on their floors, and
+  the notes baseline is one sentence where a take reads the whole panel. GAZE is left at its
+  starting values; the gaze check is there to set them.
+Unverified assumptions and remaining risks: the GAZE starting values; prompted gaze is easier than
+  a real talk; one person, one Mac, so far.
+Next action: the user records two gaze-check takes; tune GAZE on the first (--sweep), confirm on the
+  second; then stage 3.
 ```
 
 ## Decisions (2026-09-26, by the user)

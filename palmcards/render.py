@@ -130,7 +130,7 @@ class ViewState:
     note: str = ""  # transient second label line, e.g. after a commit
     status: str = ""  # second label line when there is nothing more pressing
     app: str = "prepare"  # prepare | count_in | rehearse | review | player
-    title: str = ""  # replaces the first label line (the take player)
+    title: str = ""  # replaces the first label line (the take player; "GAZE CHECK" in its takes)
     start_progress: float = 0.0  # fist held to start a take, 0..1
     section: int = 0  # count_in, rehearse: the section on screen
     count_in: int = 0  # 3, 2, 1
@@ -394,7 +394,7 @@ class TextOverlay:
 
     def label_lines(self, state: ViewState) -> tuple[str, str]:
         """Kat's two-line state label: mode and level, then the operation."""
-        if state.title:
+        if state.title and state.app not in ("count_in", "rehearse"):
             return state.title, state.note or state.status
         if state.app in ("count_in", "rehearse"):
             if state.hold_progress > 0:
@@ -409,7 +409,7 @@ class TextOverlay:
                 second = f"STARTING IN {state.count_in}"
             else:
                 second = state.status
-            return "DRILL" if state.drill is not None else "REHEARSE", second
+            return state.title or ("DRILL" if state.drill is not None else "REHEARSE"), second
 
         level = (state.level or "").upper()
         if state.mode == "focus":

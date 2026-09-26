@@ -2,6 +2,8 @@
 
   python main.py [NOTES_FILE] [--lang xx] [--trace] [--no-follow]
   python main.py --open RUN      reopen a saved session (a folder, or its name under sessions/) in Review
+  python main.py --gaze-check    every take is a gaze check: timed prompts (camera, notes, away), then it
+                                 stops itself; scripts/evaluate.py --gaze RUN compares them with the classifier
       NOTES_FILE: .txt, .md or .docx; defaults to the sample
       --lang: language spoken in the takes, for Whisper (default en)
       --trace: also record every hand result's landmarks, for offline replay
@@ -71,6 +73,7 @@ Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/scree
 import argparse
 import json
 import math
+import secrets
 import sys
 import time
 import traceback
@@ -85,7 +88,7 @@ import cv2
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import ANALYSIS, BODY, FOLLOW, RECORDING, REHEARSE, SPEECH
-from palmcards import features
+from palmcards import features, gaze
 from palmcards import prefs as preferences
 from palmcards import render
 from palmcards.gestures import FIST, OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
@@ -246,9 +249,16 @@ class Takes:
         self.vision: Watcher | None = None  # face and pose (milestone 7); run() opens it
         self.vision_off = "face and pose tracking not opened"  # why there is none
         self.calibrate_next = False  # e: calibrate the eyes again at the next count-in
+        self.gaze_check = False  # main.py --gaze-check: every full take is a gaze check
+        self.check: dict | None = None  # the gaze check being run: {"seed", "t0", "prompts"}
 
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown."""
+        if mode == "rehearse" and self.check is not None:
+            now = time.perf_counter() - self.t0 - self.check["t0"]
+            prompts = self.check["prompts"]
+            i = next((k for k, p in enumerate(prompts) if now < p["t1"]), len(prompts) - 1)
+            return f"{gaze.prompt_text(prompts[i])}  {i + 1}/{len(prompts)}"
         if mode in ("count_in", "rehearse") and self.drill is not None:
             return f"SENTENCE {self.drill + 1}"
         if mode in ("count_in", "rehearse"):
@@ -498,7 +508,8 @@ class Takes:
             view.panel_scroll, view.preview_next = 0.0, False
             if self.drill is None and self._ensure_follow():
                 self.follow.prepare()  # the model loads during the count-in
-            if self.vision is not None and (self.calibrate_next or self.session.calibration is None):
+            check = self.gaze_check and self.drill is None
+            if self.vision is not None and (self.calibrate_next or self.session.calibration is None or check):
                 # The count-in starts with looking into the camera; the orange sentence is the 3-2-1.
                 self.vision.begin_calibration(ev.t)
                 modes.count_in_end = ev.t + BODY.calib_camera_s + REHEARSE.count_in_s
@@ -538,6 +549,15 @@ class Takes:
             if self.vision is not None:
                 self.vision.begin_take(ev.t)
             self.log(ev.t, "take_start", take=number)
+            if self.gaze_check and self.drill is None:
+                if self.vision is None:
+                    print(f"gaze check: face tracking is off ({self.vision_off}); recording a plain take",
+                          file=sys.stderr)
+                    return "GAZE CHECK NEEDS FACE TRACKING (SEE TERMINAL)"
+                seed = secrets.randbelow(1 << 30)
+                self.check = {"seed": seed, "t0": round(ev.t, 3), "prompts": gaze.prompt_schedule(seed)}
+                self.writer.meta["gaze_check"] = self.check
+                self.log(ev.t, "gaze_check", take=number, seed=seed)
             return note
         if ev.kind == "next_section":
             if self.section + 1 >= len(self.notes.sections):
@@ -574,6 +594,11 @@ class Takes:
             view.scroll = overlay.scroll_to(view.current)
             return ""
         return ""
+
+    def check_over(self, t: float) -> bool:
+        """A gaze check stops its take after the last prompt."""
+        return self.check is not None and self.writer is not None and \
+            t >= self.check["t0"] + self.check["prompts"][-1]["t1"]
 
     def _finish_calibration(self, t: float) -> str:
         """Keep the calibration that just ended. Returns a label note if it didn't work."""
@@ -654,6 +679,7 @@ class Takes:
     def _stop_recording(self) -> "TakeWriter | None":
         """Stop the microphone; the take finishes writing in the background."""
         writer, self.writer = self.writer, None
+        self.check = None
         if writer is not None and (self.vision is None or self.vision.state == "take"):
             writer.meta["vision"] = self._save_vision(writer)
         if self.follow is not None and self.follow.follower is not None:
@@ -812,6 +838,8 @@ def main() -> int:
     ap.add_argument("--trace", action="store_true", help="record hand landmarks for offline replay")
     ap.add_argument("--no-follow", action="store_true", help="don't follow the voice during takes")
     ap.add_argument("--open", metavar="RUN", help="reopen a saved session in Review")
+    ap.add_argument("--gaze-check", action="store_true",
+                    help="every take is a gaze check (timed prompts), for scripts/evaluate.py --gaze")
     args = ap.parse_args()
     for line in recover_all():
         print(f"recovered: {line}")
@@ -827,7 +855,8 @@ def main() -> int:
     for warning in notes.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     try:
-        return run(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow)
+        return run(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow,
+                   gaze_check=args.gaze_check)
     except CameraError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -855,7 +884,7 @@ def reopen(args) -> int:
     notes = from_snapshot(session.snapshot(session.current_revision))
     try:
         return run(session.notes, notes, b"", lang=session.language, trace=args.trace, follow=not args.no_follow,
-                   session=session)
+                   session=session, gaze_check=args.gaze_check)
     except CameraError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -863,7 +892,7 @@ def reopen(args) -> int:
 
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
         devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled,
-        session: Session | None = None, prefs_file: Path | None = None) -> int:
+        session: Session | None = None, prefs_file: Path | None = None, gaze_check: bool = False) -> int:
     """Open everything, run the frame loop, close everything.
 
     Every resource is registered for cleanup as soon as it exists, so a
@@ -886,6 +915,7 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
             session = Session.create(path, root=sessions_root, gesture_log=log.path, language=lang, parsed=notes,
                                      source=source)
         takes = Takes(notes, session, log, devices, follow)
+        takes.gaze_check = gaze_check
         try:
             takes.vision = devices.vision()
         except Exception as exc:  # a model missing or failing to load: the takes go on without
@@ -951,6 +981,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         else:
             events = []
         events += modes.tick(start - t0)
+        if modes.mode == "rehearse" and takes.check_over(start - t0):  # a gaze check ends itself
+            modes.enter("review", start - t0)
+            events.append(GestureEvent("take_stop", start - t0))
         events, queued = queued + events, []
         if note := takes.poll_analysis():
             view.note, note_until = note, start + NOTE_S
@@ -974,6 +1007,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if until is not None:
                 note_until = until
         view.app = modes.mode
+        view.title = "GAZE CHECK" if takes.gaze_check and modes.mode in ("count_in", "rehearse") \
+            and takes.drill is None else ""
         view.calibration = takes.vision.phase(start - t0) \
             if takes.vision is not None and modes.mode == "count_in" else None
         zone = modes.zone

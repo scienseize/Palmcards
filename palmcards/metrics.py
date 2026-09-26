@@ -15,12 +15,12 @@ the speaker. One without enough to go on is None with the reason, like an
            hand was in view and how much it moved (the wrist, in palm widths
            per second). These are movement, not "fidgeting": what the
            movement means is for the speaker to judge.
-  gaze, posture
-           not measured yet: the face, pose and hand features are recorded
-           during every take (take-NN.face.npz, palmcards.features) against
-           the session's calibration; turning them into gaze and posture
-           observations, validated against people, is milestone 7's next
-           stages (docs/evaluation.md).
+  gaze     while a sentence was being said, the share of face readings
+           looking into the camera, at the notes, or away, against the
+           session's eye calibration, with how many were unclear, overall
+           and per sentence (palmcards.gaze; from take-NN.face.npz)
+  posture  not measured yet: pose features are recorded (take-NN.face.npz);
+           posture comes with milestone 7's stage 3.
 
 Computed after the take in the analysis worker (palmcards.speech), never
 on the camera loop; stored on the take in session.json.
@@ -32,10 +32,11 @@ import json
 import math
 from pathlib import Path
 
+from palmcards import features, gaze as gaze_mod
 from palmcards.config import METRICS
 from palmcards.notes import normalize
 
-VERSION = 1
+VERSION = 2  # 2: gaze
 
 
 def _none(reason: str) -> dict:
@@ -112,14 +113,28 @@ def hands(gesture_log: Path | None, trace: Path | None, t0: float, t1: float) ->
     return out
 
 
+def gaze(alignment: dict, vision: dict | None, face: Path | None, calibration: dict | None) -> dict:
+    """`vision`: the take's record of its face features; `face`: their file;
+    `calibration`: the one the take was recorded with."""
+    if vision is None:
+        return _none("no face features for this take (recorded before milestone 7)")
+    if vision.get("state") != "recorded":
+        return _none(f"face tracking was {vision.get('state')}: {vision.get('reason') or vision.get('error', '')}")
+    if face is None or not face.exists():
+        return _none("the face features file is missing")
+    arrays, _ = features.load(face)
+    return gaze_mod.take_gaze(arrays, calibration, alignment, vision.get("calibration"))
+
+
 def take_metrics(alignment: dict, words: list[dict], t_start: float, duration_s: float,
                  gesture_log: Path | None = None, trace: Path | None = None,
-                 planned_pauses: set[int] = frozenset()) -> dict:
+                 planned_pauses: set[int] = frozenset(), vision: dict | None = None, face: Path | None = None,
+                 calibration: dict | None = None) -> dict:
     return {
         "version": VERSION,
         "speech": speech(alignment, words, duration_s, planned_pauses),
         "hands": hands(gesture_log, trace, t_start, t_start + duration_s),
-        "gaze": _none("not measured yet: face features are recorded, the gaze classifier comes next (milestone 7)"),
+        "gaze": gaze(alignment, vision, face, calibration),
         "posture": _none("not measured yet: pose features are recorded, posture comes next (milestone 7)"),
     }
 

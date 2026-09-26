@@ -45,7 +45,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from palmcards.config import ALIGN, ANALYSIS, CUES, SPEECH
+from palmcards.config import ALIGN, ANALYSIS, CUES, GAZE, METRICS, SPEECH
 
 ROOT = Path(__file__).resolve().parent.parent
 TERMINAL = ("succeeded", "failed")
@@ -53,7 +53,8 @@ TERMINAL = ("succeeded", "failed")
 
 def analysis_config() -> str:
     """Short hash of every setting that shapes an analysis result."""
-    data = json.dumps([asdict(SPEECH), asdict(ALIGN), asdict(CUES)], sort_keys=True, default=str)
+    data = json.dumps([asdict(SPEECH), asdict(ALIGN), asdict(CUES), asdict(METRICS), asdict(GAZE)], sort_keys=True,
+                      default=str)
     return hashlib.sha256(data.encode()).hexdigest()[:12]
 
 

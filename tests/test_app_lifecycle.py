@@ -166,8 +166,9 @@ TAKE = {2: ("count_in", "count_in"), 3: ("take_start", "rehearse")}
 
 class Rig:
     def __init__(self, tmp_path, monkeypatch, script=TAKE, camera=None, tracker=None, keys=None,
-                 tracker_factory=None, live=None, vision=None):
+                 tracker_factory=None, live=None, vision=None, gaze_check=False):
         self.tmp = tmp_path
+        self.gaze_check = gaze_check
         self.camera = camera or FakeCamera()
         self.tracker = tracker or FakeTracker()
         self.recorders = []
@@ -206,7 +207,7 @@ class Rig:
 
     def run(self):
         return main.run(self.notes_path, notes_from_bytes(NOTES, self.notes_path), NOTES, devices=self.devices,
-                        sessions_root=self.tmp / "sessions", prefs_file=self.prefs_file)
+                        sessions_root=self.tmp / "sessions", prefs_file=self.prefs_file, gaze_check=self.gaze_check)
 
     @property
     def prefs_file(self):

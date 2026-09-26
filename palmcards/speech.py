@@ -169,6 +169,10 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
         "gaps": capture_gaps(take),
         "duration_s": take.duration_s,
         "gesture_log": str(session.dir.parent / session.gesture_log) if session.gesture_log else None,
+        "vision": take.vision,
+        "face": str(session.dir / take.vision["file"]) if take.vision and take.vision.get("file") else None,
+        "calibration": next((c for c in session.calibrations
+                             if take.vision and c["id"] == take.vision.get("calibration")), None),
         "realign": realign,
     }
 
@@ -242,7 +246,8 @@ def run_job(job: dict) -> dict:
     log = Path(job["gesture_log"]) if job.get("gesture_log") else None
     measured_take = metrics.take_metrics(
         alignment, data["words"], job["t_start"], job.get("duration_s", 0.0), log,
-        log.with_suffix(".trace.jsonl") if log else None, metrics.planned_pause_words(alignment, job["marks"]))
+        log.with_suffix(".trace.jsonl") if log else None, metrics.planned_pause_words(alignment, job["marks"]),
+        job.get("vision"), Path(job["face"]) if job.get("face") else None, job.get("calibration"))
     return {
         **_identity(job),
         "ok": True,

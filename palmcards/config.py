@@ -301,6 +301,29 @@ class Metrics:
 
 
 @dataclass(frozen=True)
+class Gaze:
+    # Each face reading is compared with the calibration's two baselines
+    # (palmcards.gaze): a distance over head yaw, pitch and iris position, each
+    # feature divided by its scale (mad_scale x the larger of the two steps'
+    # MADs, at least its floor). Starting values; tune with the gaze check
+    # (main.py --gaze-check, scripts/evaluate.py --gaze).
+    floor_yaw: float = 1.5  # degrees
+    floor_pitch: float = 1.5  # degrees
+    floor_iris_x: float = 0.012  # eye widths
+    floor_iris_y: float = 0.010  # eye widths
+    mad_scale: float = 2.0
+    camera_radius: float = 3.0  # nearer the camera baseline than the notes' and within this: camera
+    notes_radius: float = 4.0  # ... the notes' (wider: the notes are more than one line)
+    min_separation: float = 2.0  # baselines closer than this can't tell camera from notes: all unclear
+    min_frames: int = 20  # judged readings while speaking needed for a take's shares
+    speech_pad_s: float = 0.2  # a sentence's time, widened by this on each side
+    # The gaze check: timed prompts, each target check_each times, shuffled.
+    check_each: int = 3
+    check_step_s: float = 4.0
+    check_settle_s: float = 1.0  # the first second of a prompt is left out (reading it, moving the eyes)
+
+
+@dataclass(frozen=True)
 class Llm:
     # The optional LLM (palmcards.llm): off unless provider is set. "ollama"
     # runs a model on this Mac (install Ollama, `ollama pull <model>`).
@@ -336,3 +359,4 @@ FOLLOW = Follow()
 VOICE = Voice()
 LLM = Llm()
 METRICS = Metrics()
+GAZE = Gaze()

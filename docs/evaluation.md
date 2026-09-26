@@ -45,6 +45,27 @@ Two labellers per take where possible. Report their agreement with each other ne
 | `words.median_error_s` / `p90_error_s` | Alignment timing error of labelled words; `unaligned` counts words PalmCards missed |
 | `gestures.per_minute` | False triggers per minute of use |
 
+## Gaze
+
+Gaze (milestone 7) is checked with prompted takes rather than labels: the prompt is the reference.
+
+```sh
+.venv/bin/python main.py --gaze-check          # raise a fist; follow the prompts; the take stops itself
+.venv/bin/python scripts/evaluate.py --gaze RUN [--take N] [--sweep] [--json OUT]
+```
+
+Each gaze-check take calibrates in its count-in, then shows `GAZE.check_each` prompts of each target (look into the camera, read the notes, look away in a named direction) for `GAZE.check_step_s` each, shuffled. The report compares each prompt with the class of every face reading inside it, leaving out the first `GAZE.check_settle_s` (reading the prompt, moving the eyes):
+
+| Metric | Meaning |
+| --- | --- |
+| `agreement`, `kappa` | Over readings judged camera / notes / away: how often the class is the prompt, and Cohen's kappa (agreement beyond what the class frequencies alone give) |
+| `recall` | Per prompt: the share of its judged readings given its class |
+| `unclear_share` | Readings with no face, a blink, or a missing value |
+| `confusion` | Prompt × class counts |
+| `medians` | Each prompt's median head yaw, pitch and iris position: what the settings have to separate |
+
+`--sweep` scores the take again over a grid of `GAZE` scale floors and radii. Tune on one check take and confirm on another, recorded after the change; a setting chosen on a take always looks better on that take. Prompted gaze is easier than a real talk (the eyes go where they are told and stay), so a check shows the classifier can tell the targets apart, not how often it is right while someone speaks. Takes from other people need their consent, as for labelled takes.
+
 ## Measured so far
 
 **Alignment speed** (`scripts/profile_align.py`, 2026-09-26, MacBook Air, Apple silicon). Synthetic scripts with 5% misheard words, 3% fillers and a restart every 100 words, with the fill compiled (numba):

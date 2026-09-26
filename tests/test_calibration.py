@@ -8,10 +8,12 @@ import pytest
 
 import main
 import palmcards.features
+import palmcards.gaze
 import palmcards.vision
 from palmcards import features
-from palmcards.config import BODY
+from palmcards.config import BODY, GAZE
 from tests.test_app_lifecycle import Rig
+from tests.test_evaluate import evaluate_module
 from tests.test_vision import watcher
 
 # A short calibration, face on every frame: the scripted count-in lasts 78 frames of at least 10 ms.
@@ -90,3 +92,25 @@ def test_a_face_model_that_fails_to_load_leaves_the_takes_working(tmp_path, monk
     assert rig.run() == 0
     take = rig.session().take(1)
     assert take.status == "saved" and take.vision["state"] == "off" and "missing" in take.vision["reason"]
+
+
+def test_a_gaze_check_take_prompts_then_stops_itself(tmp_path, monkeypatch, quick):
+    monkeypatch.setattr(palmcards.gaze, "GAZE", replace(GAZE, check_each=1, check_step_s=0.15, check_settle_s=0.0))
+    evaluate = evaluate_module()
+    rig = Rig(tmp_path, monkeypatch, script={2: ("count_in", "count_in"), 80: ("take_start", "rehearse")},
+              keys={160: ord("q")}, vision=watcher, gaze_check=True)
+    assert rig.run() == 0
+    session = rig.session()
+    take = session.take(1)
+    assert take.status == "saved" and take.duration_s < 1.0  # it stopped after its 3 prompts, not at quitting
+    prompts = take.gaze_check["prompts"]
+    assert sorted(p["target"] for p in prompts) == ["away", "camera", "notes"]
+    assert "gaze_check" in log_kinds(rig)
+    r = evaluate.gaze_check(session.dir)
+    assert r["take"] == 1 and r["calibration"] == "c1" and r["readings"] > 0
+    # The fake face never moves, so its calibration can't tell camera from notes: all unclear, and said so.
+    assert "can't tell camera from notes" in r["calibration_usable"] and r["judged"] == 0
+    assert "agreement None" in evaluate.gaze_report(r)
+    sweep = evaluate.gaze_sweep(session.dir)
+    assert len(sweep) == 8 and all(row["kappa"] is None and not row["usable"] for row in sweep)
+    assert palmcards.gaze.GAZE.check_step_s == 0.15  # the sweep puts the settings back
