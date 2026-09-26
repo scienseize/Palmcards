@@ -9,6 +9,7 @@
       take-01.transcript.json   (milestone 5, see palmcards.speech)
       take-01.prosody.npz       (milestone 6: pitch and loudness, palmcards.prosody)
       take-01.verdicts.json     (milestone 6: a verdict per delivery mark, palmcards.cues)
+      take-01.face.npz          (milestone 7: face, pose and hand features, palmcards.features)
       take-02.wav
 
 Take times (`t_start`, and the gesture log's `t`) share one clock: seconds
@@ -33,6 +34,8 @@ Schema history:
      marked "legacy-unverified" as it may differ from what was rehearsed.
      The first save as schema 2 keeps the old file as session.v1.json.
   2  revisions, source, take revisions, id.
+  3  calibrations (gaze and posture baselines) and each take's `vision`.
+     A schema-2 file is read as is and rewritten as 3.
 """
 
 from __future__ import annotations
@@ -58,7 +61,7 @@ from palmcards.paths import data_dir
 
 SESSIONS_DIR = data_dir()  # palmcards.paths: $PALMCARDS_DATA, the checkout's sessions/, or Application Support
 SILENT_PEAK = 1e-3  # a take whose loudest sample is below this is silence
-SCHEMA = 2
+SCHEMA = 3
 TAKE_WAV = re.compile(r"take-(\d+)\.wav$")
 TAKE_FILE = re.compile(r"take-(\d+)\.(?:wav|wav\.part|recording\.json)$")
 STATUSES = ("saved", "interrupted", "failed")
@@ -100,6 +103,7 @@ class TakeRecord:
     capture: dict | None = None  # clock, gaps, overflows: see Session.finish_take
     live: dict | None = None  # voice follow during the take: engine, state, words, lag (display only)
     metrics: dict | None = None  # palmcards.metrics: observations about the take, once analysed
+    vision: dict | None = None  # face/pose/hand features during the take: file, calibration, counts, state
 
     @property
     def silent(self) -> bool:
@@ -119,6 +123,10 @@ class TakeRecord:
     @property
     def verdicts_name(self) -> str:
         return self._sibling(".verdicts.json")
+
+    @property
+    def face_name(self) -> str:
+        return self._sibling(".face.npz")
 
 
 TAKE_FIELDS = {f.name for f in fields(TakeRecord)}
@@ -147,6 +155,7 @@ class Session:
     schema: int = SCHEMA
     orphans: list[str] = field(default_factory=list)  # files found on load that no take claims
     current: str | None = None  # the notes revision in use (None: the latest); undo moves it back
+    calibrations: list[dict] = field(default_factory=list)  # gaze/posture baselines, oldest first
     _loaded_schema: int = SCHEMA
     _parsed: Notes | None = None  # notes of the pending first revision, until the folder exists
     _source_bytes: bytes | None = None
@@ -204,7 +213,8 @@ class Session:
         session = cls(
             Path(data["notes"]), folder, data.get("gesture_log"), takes, data.get("language", "en"),
             id=data.get("id", ""), source=data.get("source"), revisions=data.get("revisions", []),
-            schema=SCHEMA, current=data.get("current"), _loaded_schema=schema,
+            schema=SCHEMA, current=data.get("current"), calibrations=data.get("calibrations", []),
+            _loaded_schema=schema,
         )
         session.orphans = session._find_orphans()
         return session
@@ -325,6 +335,20 @@ class Session:
         self.current = parent
         self.save()
         return parent
+
+    # --- calibration -----------------------------------------------------------
+
+    def add_calibration(self, summary: dict) -> str:
+        """Keep a calibration (any status; only "ok" ones are used). Saved with
+        the session's next write. Returns its id ("c1", "c2", ...)."""
+        cid = f"c{len(self.calibrations) + 1}"
+        self.calibrations.append({"id": cid, "created": datetime.now().isoformat(timespec="seconds"), **summary})
+        return cid
+
+    @property
+    def calibration(self) -> dict | None:
+        """The latest calibration that worked, or None."""
+        return next((c for c in reversed(self.calibrations) if c.get("status") == "ok"), None)
 
     def current_notes(self) -> Notes:
         return revisions.from_snapshot(self.snapshot(self.current_revision))
@@ -484,7 +508,7 @@ class Session:
             number=manifest["take"], wav=manifest["wav"], started=manifest["started"], t_start=round(t_start, 3),
             duration_s=round(manifest["samples"] / rate, 3), sample_rate=rate, peak=manifest["peak"],
             sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
-            status=status, capture=capture, live=manifest.get("live"),
+            status=status, capture=capture, live=manifest.get("live"), vision=manifest.get("vision"),
         )
         self.takes = [t for t in self.takes if t.number != take.number] + [take]
         self.takes.sort(key=lambda t: t.number)
@@ -520,7 +544,7 @@ class Session:
     def save(self) -> None:
         self.acquire()
         path = self.dir / "session.json"
-        if self._loaded_schema < SCHEMA and path.exists() and not (self.dir / "session.v1.json").exists():
+        if self._loaded_schema == 1 and path.exists() and not (self.dir / "session.v1.json").exists():
             shutil.copy2(path, self.dir / "session.v1.json")  # the old file, before its first rewrite
         data = {
             "schema": SCHEMA,
@@ -531,6 +555,7 @@ class Session:
             "current": self.current,
             "gesture_log": self.gesture_log,
             "language": self.language,
+            "calibrations": self.calibrations,
             # Fields a take doesn't have yet are left out, not written as null.
             "takes": [{k: v for k, v in asdict(t).items() if v is not None} for t in self.takes],
         }

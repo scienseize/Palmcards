@@ -42,7 +42,7 @@ def test_add_take_writes_wav_and_json(tmp_path):
     assert not list(session.dir.glob("*.tmp"))  # published, not left half-written
 
     data = json.loads((session.dir / "session.json").read_text())
-    assert data["schema"] == 2 and data["id"]
+    assert data["schema"] == 3 and data["id"]
     assert data["gesture_log"] == "gesture-logs/20260925-120000.jsonl"
     assert data["takes"][0]["sections"] == [{"section": 0, "t": 0.0}, {"section": 1, "t": 1.25}]
     assert data["takes"][0]["revision"] == data["revisions"][0]["id"]
@@ -216,6 +216,35 @@ def test_rebinding_needs_the_notes_file(tmp_path):
     with pytest.raises(SessionError, match="does not exist"):
         Session.load(folder).rebind_legacy()
     assert not (folder / "session.v1.json").exists()
+
+
+def test_calibrations_and_take_vision_round_trip(tmp_path):
+    session = Session.create(notes_file(tmp_path), root=tmp_path)
+    take = session.add_take(silence(), 8000, 0.0, datetime.now(), [(0.0, 0)])
+    assert session.calibration is None
+    assert session.add_calibration({"status": "failed", "reason": "no face"}) == "c1"
+    assert session.add_calibration({"status": "ok", "camera": {"n": 12}}) == "c2"
+    take.vision = {"state": "recorded", "file": "take-01.face.npz", "calibration": "c2"}
+    session.save()
+    session.release()
+    loaded = Session.load(session.dir)
+    assert [c["id"] for c in loaded.calibrations] == ["c1", "c2"] and loaded.calibration["id"] == "c2"
+    assert loaded.take(1).vision["calibration"] == "c2" and loaded.take(1).face_name == "take-01.face.npz"
+
+
+def test_a_schema_2_session_is_read_and_rewritten_as_3_without_a_v1_copy(tmp_path):
+    session = Session.create(notes_file(tmp_path), root=tmp_path)
+    session.add_take(silence(), 8000, 0.0, datetime.now(), [(0.0, 0)])
+    session.release()
+    path = session.dir / "session.json"
+    data = json.loads(path.read_text())
+    data["schema"] = 2
+    del data["calibrations"]
+    path.write_text(json.dumps(data))
+    loaded = Session.load(session.dir)
+    assert loaded.calibrations == [] and loaded.take(1).vision is None
+    loaded.save()
+    assert json.loads(path.read_text())["schema"] == 3 and not (session.dir / "session.v1.json").exists()
 
 
 def test_a_newer_schema_is_refused(tmp_path):

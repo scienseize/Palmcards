@@ -4,14 +4,16 @@ Run once after installing requirements:  python scripts/download_models.py [--al
 
 Required today:
   models/gesture_recognizer.task   MediaPipe hands and gestures
+  models/face_landmarker.task      face and eyes during takes (milestone 7; without it,
+  models/pose_landmarker_lite.task and shoulders, takes are recorded without them)
   SPEECH.model, SPEECH.live_model  Whisper for each take (~1.6 GB) and for
                                    following the voice live (small), at the
                                    revisions pinned in palmcards/config.py,
                                    into the Hugging Face cache
                                    (~/.cache/huggingface) where mlx-whisper
                                    looks for them
-Optional (--all): the MediaPipe hand, face and pose landmarkers, for
-milestone 7's gaze and posture metrics.
+Optional (--all): the MediaPipe hand landmarker (the gesture recognizer
+already includes it).
 
 MediaPipe files come from versioned URLs and are checked against their
 SHA-256; a file on disk that doesn't match is reported (and replaced with
@@ -34,9 +36,9 @@ MODELS = {
     "hand_landmarker.task": (f"{BASE}/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
                              "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1", False),
     "face_landmarker.task": (f"{BASE}/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-                             "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff", False),
+                             "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff", True),
     "pose_landmarker_lite.task": (f"{BASE}/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-                                  "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a", False),
+                                  "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a", True),
 }
 WHISPER = {SPEECH.model: SPEECH.model_revision, SPEECH.live_model: SPEECH.live_model_revision}
 

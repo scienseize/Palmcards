@@ -22,6 +22,7 @@ user runs them. They are never inferred from unit tests.
 | 8 — Product completion | Implemented, validation pending | Six slices: reopen + playback; export; stress edits + undo; optional LLM (off by default); tutorial, hints, preferences; take metrics (speech, hands; gaze/posture not measured) | 381 passed | Hardware checks; decisions: cloud LLM provider, left-handed layout, backward flick; gaze/posture need models + calibration |
 | End-to-end release gate | Passed on hardware (2026-09-26), 4 items covered by automated tests only | scripts/hardware_check.py; the user's 10-step smoke test | 2026-09-26: camera 29.9 fps, loop 30.2 fps, hands 12.8 ms, draw 3.2 ms; mic 48 kHz with device clock (adc), no overflows; click round trip 113.6 ms; live model ready 1.6 s; say ok ; smoke test steps 1-10 all passed, frame rate stable throughout (user) | Live checks of worker retry, truncated endings, editing the imported file, long sessions |
 | M7 stage 0 — Face/pose budget | Measured on hardware (2026-09-26) | CLAUDE.md milestone 7 rewritten to what's left, duplicate llm.py line removed; `BODY` config; palmcards/vision.py (face and pose trackers, not in the app yet); scripts/bench_vision.py | 388 passed; five benchmark runs by the user (sessions/bench-vision*.json) | Cool: every rate keeps 30 fps. Warm (after 2.5-3.5 min): every rate costs frames, and hands-only also slows (see log). Rates set to face every 6th, pose every 15th frame; Stage 1 decides on backing off when frames run late |
+| M7 stage 1 — Capture and calibration | Implemented, validation pending | Face, pose and hand features during every take (take-NN.face.npz with provenance); the eye calibration in the session's first count-in (dot, then the orange line; `e` redoes it), kept in session.json (schema 3); face/pose wait for a later frame when one is late | 412 passed; the real models run on the camera (calibration ok, 24 frames per step; take rows at 5/s face, 2/s pose) | The calibration and a take in the app, by the user; stage 2 (gaze) |
 
 ## Log
 
@@ -787,6 +788,55 @@ Reason for any departure from this plan: the plan expected one matrix run to nam
   interleaved runs followed.
 Next action: stage 1 (capture and calibration) with BODY face every 6th frame (5/s) and pose every
   15th (2/s); decide there whether face and pose back off when frames run late.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Milestone 7, stage 1 (capture and calibration)
+Status: implemented, validation pending (the app on hardware)
+Current HEAD / optional commit ID: 4c51cb5 -> stage 1 commit (see git log)
+Pre-existing changes preserved: yes.
+Files and behavior changed:
+  palmcards/features.py (new): per-result rows (face: head yaw/pitch/roll from the transformation
+    matrix, iris position along and across the eye-corner line, eye openness, face box; pose:
+    shoulder tilt, width, head height, visibility; hands: count, wrist and fingertip movement in
+    palm sizes, nearest fingertip to the face box, highest wrist), calibrate() (median and MAD per
+    step, blinks and the first 0.4 s of each step left out, ok/failed/incomplete with a reason),
+    save/load of take-NN.face.npz (atomic, provenance).
+  palmcards/vision.py: Watcher (calibration and take states, rows from results polled on the
+    frame loop, counts, provenance with model SHA-256); trackers submit when N frames have passed
+    since the last run and never on a late frame (BODY.late_ms), counted as deferred; mediapipe is
+    imported when a tracker is made (its first import took ~0.8 s, which would have eaten the
+    calibration's first step).
+  palmcards/session.py: schema 3: `calibrations` (all attempts; Session.calibration is the latest
+    ok one), take `vision`; schema 2 read as is; session.v1.json only for schema 1.
+  main.py: the face/pose watcher opened at start (a missing model or failure: takes go on, their
+    `vision` says off and why); the first count-in (or after `e`) starts with the dot for
+    BODY.calib_camera_s, then the 3-2-1 on the orange line; the calibration is kept at take start;
+    the features are written when the take stops; hand results fed to the watcher.
+  palmcards/render.py, style.py: the dot (top centre, a ring closing in), the calibration label
+    lines, the count digit hidden during calibration, `E` in the keys help.
+  palmcards/config.py: BODY calibration and capture settings.
+  palmcards/metrics.py: gaze/posture reasons say the features are recorded, the metrics come next.
+  scripts/download_models.py: face and pose landmarkers now fetched by default (required).
+  CLAUDE.md: Rehearse (calibration), keys (`e`), session files (take-NN.face.npz, calibrations,
+    schema 3, take `vision`), gesture log kinds, code layout (features.py), milestone 7.
+  Tests: tests/test_features.py (10), tests/test_vision.py (+6), tests/test_calibration.py (5, the
+    app with fake devices: calibrate once, `e` again, no face -> failed twice, off, model failing),
+    tests/test_session.py (+2), tests/test_render.py (+1).
+Migration / compatibility implications: sessions are written as schema 3; schema 1 and 2 load.
+  An older PalmCards refuses a schema-3 session (as designed).
+Tests run and exact outcome: pytest (full) -> 412 passed.
+Manual / hardware checks performed: the real Watcher with the real camera and models (no window,
+  no images kept): a 4.2 s calibration -> ok, face in 63/63 results (24 per step after settling),
+  pose 25/25; a 5 s take -> 25 face and 11 pose results (5/s and 2/s as set), all found, 151 hand
+  results; iris_x 0.36-0.64, eye_open 0.26-0.42. The person was not looking at a target, so the
+  values only show the conversion works.
+Unverified assumptions and remaining risks: the dot is drawn at the frame's top centre, under the
+  camera only when the window fills the screen; iris position at 640 px wide is coarse (an eye is
+  ~30 px); a take cut short by a crash (kill -9) has no feature file.
+Next action: the user runs the calibration and a take in the app; then stage 2 (gaze classes and
+  the prompted validation take).
 ```
 
 ## Decisions (2026-09-26, by the user)

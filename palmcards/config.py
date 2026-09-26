@@ -36,6 +36,22 @@ class Body:
     min_detection: float = 0.5
     min_presence: float = 0.5
     min_tracking: float = 0.5
+    # A frame shown later than this after the previous one puts face and pose
+    # off to a later frame, so they never add to a frame that is already late.
+    late_ms: float = 45.0
+    # Calibration, inside the first count-in of a session: look at the dot by
+    # the camera, then at the orange line (during the 3-2-1). Face and pose run
+    # faster meanwhile; the first calib_settle_s of each step are left out.
+    calib_camera_s: float = 2.0
+    calib_notes_s: float = 2.0  # at most REHEARSE.count_in_s
+    calib_settle_s: float = 0.4
+    calib_face_every: int = 2
+    calib_pose_every: int = 5
+    calib_min_frames: int = 8  # face frames needed in each step
+    closed_eye: float = 0.15  # lid gap / eye width below this: a blink, left out of the calibration
+    min_visibility: float = 0.5  # pose: nose and shoulders at least this visible to count
+    hand_match_palms: float = 3.0  # a hand this close to one in the previous result is the same hand
+    face_box_max_age_s: float = 0.5  # hand_tip_face uses a face box no older than this
 
 
 @dataclass(frozen=True)

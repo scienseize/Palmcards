@@ -166,7 +166,7 @@ TAKE = {2: ("count_in", "count_in"), 3: ("take_start", "rehearse")}
 
 class Rig:
     def __init__(self, tmp_path, monkeypatch, script=TAKE, camera=None, tracker=None, keys=None,
-                 tracker_factory=None, live=None):
+                 tracker_factory=None, live=None, vision=None):
         self.tmp = tmp_path
         self.camera = camera or FakeCamera()
         self.tracker = tracker or FakeTracker()
@@ -199,7 +199,7 @@ class Rig:
         self.devices = main.Devices(
             camera=lambda: self.camera, tracker=tracker_factory or (lambda: self.tracker), recorder=recorder,
             log=lambda: GestureLog(tmp_path / "log.jsonl"), named_window=lambda *a: None, show=lambda *a: None,
-            live=live or (lambda language, clock, hints: FakeLive()),
+            live=live or (lambda language, clock, hints: FakeLive()), vision=vision or (lambda: None),
             wait_key=wait_key, window_open=lambda name: True, destroy_windows=destroy)
         self.notes_path = tmp_path / "talk.md"
         self.notes_path.write_bytes(NOTES)

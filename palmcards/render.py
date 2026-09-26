@@ -57,7 +57,7 @@ from palmcards.config import CURSOR, REHEARSE
 from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
 from palmcards.notes import MarkKind, Sentence
 from palmcards.style import (
-    CHIPS, COLORS, COUNT_IN, DEBUG, DETAIL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
+    CALIBRATION, CHIPS, COLORS, COUNT_IN, DEBUG, DETAIL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
 )
 
 if TYPE_CHECKING:
@@ -88,6 +88,7 @@ KEYS_HELP = (
     "N B  NEXT / PREVIOUS SECTION     U  UNDO EDIT",
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
     "A  PLAY SENTENCE     P  BACK TO PREPARE",
+    "E  CALIBRATE EYES AT THE NEXT TAKE",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
 )
 
@@ -133,6 +134,7 @@ class ViewState:
     start_progress: float = 0.0  # fist held to start a take, 0..1
     section: int = 0  # count_in, rehearse: the section on screen
     count_in: int = 0  # 3, 2, 1
+    calibration: str | None = None  # count_in: the calibration step, "camera" (look at the dot) or "notes"
     rec_s: float = 0.0  # length of the take so far
     mic: float = 0.0  # microphone level, 0..1
     zone_active: bool = False  # a hand is in the command zone
@@ -399,6 +401,10 @@ class TextOverlay:
                 second = f"{'CANCEL' if state.app == 'count_in' else 'STOP'}: HOLD  {_bar(state.hold_progress)}"
             elif state.note:
                 second = state.note
+            elif state.calibration == "camera":
+                second = "LOOK AT THE DOT BY THE CAMERA"
+            elif state.calibration == "notes":
+                second = f"NOW LOOK AT THE ORANGE LINE  {state.count_in}"
             elif state.app == "count_in":
                 second = f"STARTING IN {state.count_in}"
             else:
@@ -896,7 +902,9 @@ class TextOverlay:
             cv2.line(frame, a, b, bgr(C.stretch_line), HANDS.stretch_stroke, cv2.LINE_AA)
         if state.app in ("count_in", "rehearse", "review"):
             self._draw_zone(frame, state)
-        if state.app == "count_in" and state.count_in > 0:
+        if state.app == "count_in" and state.calibration == "camera":
+            self._draw_calibration_dot(frame)
+        if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
             # In the clear space between the notes and the right edge, below the zone.
             chip = self._chip(str(state.count_in), round(self.font_size * COUNT_IN.scale), C.orange, None)
             right = self.x + self.margin + self.box_w
@@ -914,6 +922,14 @@ class TextOverlay:
             chip = self._chip("H: KEYS", round(self.font_size * ZONE.hint_scale), C.dim, C.label_fill)
             _blend(frame, self.x + self.margin, self.frame_h - chip[0].shape[0] - LABEL.min_top, *chip)
         return frame
+
+    def _draw_calibration_dot(self, frame: np.ndarray) -> None:
+        """The calibration's target: a dot under the camera, a ring closing in on it."""
+        c = (self.frame_w // 2, round(self.frame_h * CALIBRATION.dot_y))
+        phase = (time.perf_counter() / CALIBRATION.pulse_s) % 1.0
+        ring = round(CALIBRATION.dot_r + (CALIBRATION.ring_r - CALIBRATION.dot_r) * (1.0 - phase))
+        cv2.circle(frame, c, ring, bgr(C.orange), 2, cv2.LINE_AA)
+        cv2.circle(frame, c, CALIBRATION.dot_r, bgr(C.orange), -1, cv2.LINE_AA)
 
     def _draw_tutorial(self, frame: np.ndarray, step: int, of: int, text: str) -> None:
         """One gesture at a time, bottom centre, with where it is in the steps."""

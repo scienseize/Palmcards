@@ -61,6 +61,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 
 ### Rehearse (locked except inside a command zone, top-right of the frame)
 - Closed fist raised and held 1 s: start take after 3-2-1 count-in
+- Eye calibration (milestone 7), in the session's first count-in, so it needs no gesture of its own: a dot under the camera (top centre) and "LOOK AT THE DOT BY THE CAMERA" for 2 s, then the 3-2-1 with "NOW LOOK AT THE ORANGE LINE" (the count-in is 2 s longer that once). Face and pose run faster meanwhile. Too few face frames in a step (`BODY.calib_min_frames`, blinks and the first 0.4 s of each step left out) = `failed`, and it runs again at the next count-in; `e` asks for it again. Kept in `session.json` (`calibrations`).
 - Flick inside zone: next section (a sideways swing of the hand, usually from the wrist). From milestone 6b the notes follow your voice on their own and the flick is the manual override.
 - Voice follow (6b, `palmcards/follow.py` `LiveFollow`): the microphone callback hands each block to the live stream through a bounded deque (never blocking); confirmed live words move the orange sentence and scroll the panel, handing it on to the next sentence as the current one is being finished (the voice's position is estimated as the last confirmed word plus the live lag times the speaking rate; `FOLLOW.handoff_words` caps how early); while the last sentence of a section is being said, the next section shows faint underneath (display only). The recorded section changes only when the voice confirms the next section's opening (3 words), or by hand: a flick or `n` (next), `b` (previous, keys only; no backward flick gesture: with the voice following live it isn't needed), `j`/`k` (sentence; the voice carries on from there). A live stream that fails to load or dies turns the follow off (alert line) and never stops the recording. No follow in drills. `main.py --no-follow` turns it off.
 - Open palm inside zone held 1.5 s: stop take (goes to Review)
@@ -77,7 +78,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 - `main.py --open RUN` reopens a saved session in Review: its current notes revision, every judged take on the board (takes from an earlier revision are placed by sentence id; edited sentences are left out), and takes whose analysis never finished are submitted again. New takes join the same session.
 
 ### Keyboard fallback (supplements the gestures; works with no hand tracked)
-`ModeMachine.command` runs the same transitions as the gestures, logged as `key` events. `t` start a take (count-in), `x` stop it or cancel the count-in, `n` next section, `p` back to Prepare from Review, `space`/`j` and `k` next/previous sentence (in Rehearse within the section; in a focused panel they scroll it), `r` retry failed analysis, `h` show the keys, `q` quit. No text editing.
+`ModeMachine.command` runs the same transitions as the gestures, logged as `key` events. `t` start a take (count-in), `x` stop it or cancel the count-in, `n` next section, `p` back to Prepare from Review, `space`/`j` and `k` next/previous sentence (in Rehearse within the section; in a focused panel they scroll it), `r` retry failed analysis, `e` calibrate the eyes again at the next count-in, `h` show the keys, `q` quit. No text editing.
 
 ### Guidance and preferences
 - First run: a tutorial card teaches one gesture at a time (hand in the box, one finger, two fingers, fold to focus, drop to come back, fist to start); each step advances when it is done; Enter skips a step, `g` shows or hides it (`palmcards/tutorial.py`).
@@ -169,6 +170,7 @@ sessions/
 │   │                                #   worker generation) and their inputs (<id>.input.json)
 │   ├── take-01.transcript.json      # Whisper's words, written after the take stops
 │   ├── take-01.prosody.npz          # pitch and loudness per 10 ms frame (cache; verdicts are recomputed from it)
+│   ├── take-01.face.npz             # face, pose and hand features per result during the take (the only record: no video)
 │   ├── take-01.verdicts.json        # a verdict per delivery mark
 │   └── take-02.wav
 ├── gesture-logs/
@@ -187,7 +189,7 @@ sessions/
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "id": "9c1f0e7a2b4d6e8f",
   "notes": "/abs/path/to/notes.md",
   "source": {"file": "source/notes.md", "sha256": "…", "size": 1234},
@@ -195,6 +197,11 @@ sessions/
                  "parent": null, "created": "2026-09-25T10:13:45", "provenance": "imported"}],
   "gesture_log": "gesture-logs/20260925-101345.jsonl",
   "language": "en",
+  "calibrations": [{"id": "c1", "created": "2026-09-25T10:14:30", "status": "ok", "reason": "", "version": 1,
+                    "t": 44.1, "frame_size": [1280, 720], "dot": [640, 25],
+                    "camera": {"n": 21, "yaw": [2.1, 0.8], "pitch": [-3.0, 0.6], "iris_x": [0.51, 0.02], "iris_y": [0.01, 0.01]},
+                    "notes": {"n": 22, "…": "…"}, "posture": {"n": 17, "tilt": [1.2, 0.4], "width": [0.31, 0.0], "head": [0.9, 0.02]},
+                    "counts": {"face": {"results": 49, "found": 49, "deferred": 0, "skipped": 0}, "…": "…"}}],
   "takes": [
     {
       "number": 1,
@@ -236,6 +243,7 @@ sessions/
 | `peak` | loudest absolute sample, 0..1; below 0.001 the take is treated as silent (usually missing Microphone permission) |
 | `sections` | section indices (0-based, as in `Notes.sections`) with the time into the take each one came up and its `source`: `start` (the first, `t = 0`), `voice`, `flick` or `key` |
 | `metrics` | `palmcards/metrics.py`, observations with what each rests on (None + reason when there is too little): `speech` (pace_wpm, fillers_per_min, unplanned_long_pauses, restarts, ad_libs), `hands` (shape_changes_per_min; with `--trace` also in_view_share and movement_palms_s), `gaze` and `posture` (not measured yet: face/pose models, calibration and validation needed) |
+| `vision` | face, pose and hand features during the take: `state` (`recorded`; `off` with the `reason`, e.g. a model missing; `failed` with the `error` when the file couldn't be written), `file` (`take-NN.face.npz`), `calibration` (the id of the session's latest `ok` calibration when the take stopped, or null), `counts` per tracker (`results`, `found`, `deferred`: put off because the frame was late, `skipped`: the model was busy) and `hands.results` |
 | `live` | the voice follow during the take (display only, never the record): `engine`, `model`, `state` (`following` / `failed` ...), `words` confirmed, `lag_median_s` / `lag_p90_s` (confirmed after the word's end), `dropped_blocks`, `error` |
 | `transcript` | the take's transcript file; absent until transcription finishes |
 | `alignment` | the transcript matched to the notes (`palmcards/align.py`); word numbers index the transcript's `words` |
@@ -253,6 +261,10 @@ sessions/
 | `unsure` | words Whisper gave a probability below 0.1 (usually hallucinations in noise), left out of the alignment |
 
 `take-01.transcript.json`: `{"take", "wav", "model", "asr": {"backend", "model", "revision"}, "language", "t_start", "offset_s", "text", "words": [{"text", "start", "end", "probability"}]}` (`revision`: the model's Hugging Face snapshot commit, where known). `offset_s` is the leading silence trimmed before Whisper ran; word times are already on the app clock (`t_start + offset_s + Whisper's time`).
+
+`calibrations` (schema 3; a schema-2 file is read as is and rewritten as 3): every calibration attempt, oldest first, `ok` / `failed` (with the `reason`) / `incomplete` (the take started before it was over). `camera` and `notes` are `[median, median absolute deviation]` of head yaw/pitch and iris position over the face frames of each step, with `n`; `posture` is shoulder tilt, width and head height over both steps. `frame_size` and `dot` say where the target was drawn. Only the latest `ok` one is used (`Session.calibration`).
+
+`take-01.face.npz` (`palmcards/features.py`, written when the take stops; a take cut short by a crash has none): per face result `face_t` (app clock, the frame's capture time), `face_found` (0: no face, the frame is unclear and every other value NaN), `face_yaw` / `face_pitch` / `face_roll` (degrees, from the face's transformation matrix), `face_iris_x` (iris along the eye-corner line, 0..1 from the frame-left corner, both eyes averaged), `face_iris_y` (below the line, in eye widths), `face_eye_open` (lid gap / eye width), `face_box` (x0, y0, x1, y1 px); per pose result `pose_t`, `pose_found`, `pose_tilt` (shoulder line, degrees, + when the frame-right shoulder is lower), `pose_width` (shoulder width / frame width), `pose_head` (nose above the shoulders' midpoint, in shoulder widths), `pose_vis`; per hand-tracking result `hand_t`, `hand_n`, `hand_wrist_move` / `hand_tip_move` (since the previous result, palm sizes), `hand_tip_face` (nearest fingertip to the face box, palm sizes, 0 inside), `hand_y` (highest wrist, fraction of frame height); and `provenance` (JSON: feature version, MediaPipe version, SHA-256 of both models, every `BODY` setting, frame size, mirrored, take, calibration). Unlike the prosody cache it cannot be made again: there is no video.
 
 `take-01.prosody.npz`: arrays `t` (frame centres, app clock), `f0` (Hz, NaN where pyin found no voice), `rms_db` (dBFS), and `provenance` (JSON: WAV sha256, t_start, rate, extractor and librosa versions, every extraction setting, the actual frame hop). Made once per take in the transcription worker, alongside Whisper; the loudness gate and semitones are applied when it is read, so tuning verdict thresholds never re-runs pyin. A cache made differently (another WAV, other extraction settings) is measured again; `--realign` reuses it, reporting it `stale` (or `unknown` for a cache from before provenance). The hop always comes from the cache, never from today's `CUES`.
 
@@ -274,7 +286,7 @@ sessions/
 
 Later milestones add their results to each take (metrics) rather than inventing new files.
 
-Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `key` (command, mode, acted), `hear` (sentence, word), `section` (section, source), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
+Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `key` (command, mode, acted), `hear` (sentence, word), `section` (section, source), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `calibration_start`, `calibration` (id, status, reason), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
 
 ## Code layout
 
@@ -296,6 +308,7 @@ palmcards/
 │   ├── audio.py         # 16 kHz resampling, silence trimming
 │   ├── tts.py           # text to speech interface; macOS say
 │   ├── prosody.py       # pitch (pyin) and loudness per take, cached
+│   ├── features.py      # face, pose and hand features per frame, the calibration, take-NN.face.npz
 │   ├── align.py         # transcript <-> notes alignment
 │   ├── follow.py        # live words -> where the speaker is in the notes (6b)
 │   ├── player.py        # debug player: a take's audio with the notes highlighted as they're said
@@ -350,10 +363,10 @@ palmcards/
     - Highlight the current sentence inside the section panel (teleprompter-style). Show the next section when its predecessor's last sentence *starts*, to hide the lag.
     - Going off script stalls the follow (correct); a flick moves on by hand and corrects a wrong jump.
     - The live match is display only; the full transcription after the take stays the record. Each `sections` entry in `session.json` notes whether it came from the voice or a flick.
-7. **Metrics:** done: speech (pace, fillers, unplanned long pauses, restarts, ad-libs) and hand-shape changes (`palmcards/metrics.py`). Left:
-    - Gaze: Face Landmarker (head pose + iris), calibrated inside the count-in (the dot by the camera, then the highlighted line), each frame classed camera / notes / away / unclear, counted only while speaking, validated with prompted takes (`scripts/evaluate.py`).
+7. **Metrics:** done: speech (pace, fillers, unplanned long pauses, restarts, ad-libs) and hand-shape changes (`palmcards/metrics.py`); face, pose and hand features recorded during every take (`take-NN.face.npz`) with the eye calibration in the first count-in (stage 1). Left:
+    - Gaze: each frame classed camera / notes / away / unclear against the calibration, counted only while speaking, validated with prompted takes (`scripts/evaluate.py`).
     - Posture: Pose Landmarker, shoulder tilt and head drop against the calibration.
-    - Hand movement and face touches on every take, not only with `--trace`.
+    - Hand movement and face touches from the recorded features, not only with `--trace`.
     - Face and pose run only during calibration and takes, never in Prepare or Review, at the frame strides the stage-0 benchmark set (`BODY` in `config.py`, `scripts/bench_vision.py`). Observations only, None + reason when the evidence is thin.
 8. **Edit gestures + LLM:** Operate and Commit in Prepare: word options ring (LLM synonyms, stress node, hear-it node via macOS `say`) with L-hand preview, sentence tone dial, faded LLM-suggested delivery marks toggled by L-hand, two-L-hand length stretch; pinch + lift commits; glyph-scramble while the LLM works.
 9. **Export:** revised notes back to the original format. Done as `python -m palmcards.export RUN [--revision ID] [--format txt|md|docx] [--out PATH]` (`palmcards/export.py`): always a new file (default: the session's `exports/`), unedited sentences keep their markup, edited ones are rebuilt from their marks; what a format can't hold is reported.

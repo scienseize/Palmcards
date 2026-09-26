@@ -3,7 +3,7 @@ import pytest
 
 from palmcards.notes import parse_text
 from palmcards.render import Hit, OpsView, TextOverlay, ViewState, layout, sentence_units
-from palmcards.style import LABEL
+from palmcards.style import CALIBRATION, LABEL
 
 TEXT = (
     "[slow] Thank you for *being* here. / Truly. [rise]\n\n"
@@ -285,3 +285,18 @@ def test_the_alert_line_and_keys_help_are_drawn():
     keys = np.full((720, 1280, 3), 128, np.uint8)
     ov.draw(keys, ViewState(keys_help=True))
     assert (base != alert).any() and (base != keys).any()
+
+
+def test_the_calibration_steps_in_the_count_in():
+    ov = overlay()
+    view = ViewState(app="count_in", count_in=4, calibration="camera")
+    assert ov.label_lines(view) == ("REHEARSE", "LOOK AT THE DOT BY THE CAMERA")
+    frame = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(frame, view)
+    dot = frame[round(720 * CALIBRATION.dot_y), 640]
+    assert (dot != 128).any()  # the dot, top centre under the camera
+    view = ViewState(app="count_in", count_in=2, calibration="notes")
+    assert ov.label_lines(view)[1] == "NOW LOOK AT THE ORANGE LINE  2"
+    plain = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(plain, view)
+    assert (plain[round(720 * CALIBRATION.dot_y), 640] == 128).all()  # no dot once the notes step starts

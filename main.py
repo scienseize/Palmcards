@@ -23,7 +23,9 @@ the right of the frame; it steers the highlight in the text on the left.
                            tone and length say they are not available yet (they need the optional LLM)
   drop the hand for 1 s    back out
   fist raised into view, held 1 s
-                           start a take after a 3-2-1 count-in
+                           start a take after a 3-2-1 count-in. The session's first
+                           count-in also calibrates the eyes: look at the dot by the
+                           camera for 2 s, then at the orange line during the 3-2-1
 
 Rehearse listens only to the command zone, top right:
   flick sideways           next section
@@ -60,6 +62,7 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
   a play the focused sentence (Review), u undo the last edit (Prepare), r retry failed analysis,
+  e calibrate the eyes again at the next take,
   g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit.
 Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
 Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
@@ -81,7 +84,8 @@ import cv2
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import ANALYSIS, FOLLOW, RECORDING, SPEECH
+from palmcards.config import ANALYSIS, BODY, FOLLOW, RECORDING, REHEARSE, SPEECH
+from palmcards import features
 from palmcards import prefs as preferences
 from palmcards import render
 from palmcards.gestures import FIST, OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
@@ -106,6 +110,7 @@ from palmcards.analysis import Supervisor
 from palmcards.asr import get_recognizer
 from palmcards.follow import LiveFollow
 from palmcards.speech import make_job
+from palmcards.vision import Watcher
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = SESSIONS_DIR / "screens"
@@ -238,6 +243,9 @@ class Takes:
         self.board = Board(notes)  # verdicts of the judged takes, for Review
         self.drill: int | None = None  # the sentence the current count-in or take drills
         self.dial_seen = 0  # take-dial steps already applied
+        self.vision: Watcher | None = None  # face and pose (milestone 7); run() opens it
+        self.vision_off = "face and pose tracking not opened"  # why there is none
+        self.calibrate_next = False  # e: calibrate the eyes again at the next count-in
 
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown."""
@@ -490,6 +498,11 @@ class Takes:
             view.panel_scroll, view.preview_next = 0.0, False
             if self.drill is None and self._ensure_follow():
                 self.follow.prepare()  # the model loads during the count-in
+            if self.vision is not None and (self.calibrate_next or self.session.calibration is None):
+                # The count-in starts with the dot by the camera; the orange line is the 3-2-1.
+                self.vision.begin_calibration(ev.t)
+                modes.count_in_end = ev.t + BODY.calib_camera_s + REHEARSE.count_in_s
+                self.log(ev.t, "calibration_start")
             view.hover = view.focus = None
             view.mode, view.level, view.ops = "idle", None, OpsView()
             return ""
@@ -498,11 +511,15 @@ class Takes:
             view.mode, view.level, view.ops = "idle", None, OpsView()
             return ""
         if ev.kind == "count_in_cancel":
+            if self.vision is not None:
+                self.vision.cancel()
             self.recorder.close()
             self.drill = None
             return "TAKE CANCELLED"
         if ev.kind == "take_start":
             self.alert = ""
+            note = self._finish_calibration(ev.t) \
+                if self.vision is not None and self.vision.state == "calibrating" else ""
             try:
                 number = self.session.begin_take()
                 self.writer = TakeWriter(self.session.dir, number, self.recorder.rate, {
@@ -518,8 +535,10 @@ class Takes:
             if self.drill is None and self.follow is not None:
                 self.follow.start_take(self.section)
                 self.recorder.tap = self.follow.tap
+            if self.vision is not None:
+                self.vision.begin_take(ev.t)
             self.log(ev.t, "take_start", take=number)
-            return ""
+            return note
         if ev.kind == "next_section":
             if self.section + 1 >= len(self.notes.sections):
                 return "LAST SECTION"
@@ -555,6 +574,43 @@ class Takes:
             view.scroll = overlay.scroll_to(view.current)
             return ""
         return ""
+
+    def _finish_calibration(self, t: float) -> str:
+        """Keep the calibration that just ended. Returns a label note if it didn't work."""
+        summary = self.vision.finish_calibration(t)
+        cid = self.session.add_calibration(summary)  # written with the take's first save
+        self.log(t, "calibration", id=cid, status=summary["status"], reason=summary["reason"])
+        if summary["status"] == "ok":
+            self.calibrate_next = False
+            print(f"eyes calibrated ({cid}: face seen in {summary['camera']['n']} + {summary['notes']['n']} frames)")
+            return ""
+        print(f"eye calibration {cid} {summary['status']}: {summary['reason']}; it runs again at the next take",
+              file=sys.stderr)
+        return "EYE CALIBRATION DIDN'T WORK: AGAIN AT THE NEXT TAKE"
+
+    def recalibrate(self) -> str:
+        """e: calibrate the eyes again at the next count-in."""
+        if self.vision is None:
+            return "FACE TRACKING IS OFF (SEE TERMINAL)"
+        self.calibrate_next = True
+        return "EYES CALIBRATED AGAIN AT THE NEXT TAKE"
+
+    def _save_vision(self, writer: TakeWriter) -> dict:
+        """The take's face, pose and hand features to take-NN.face.npz; what to note on the take."""
+        if self.vision is None:
+            return {"state": "off", "reason": self.vision_off}
+        rows, counts = self.vision.end_take()
+        calibration = self.session.calibration
+        name = f"take-{writer.number:02d}.face.npz"
+        info = {"state": "recorded", "file": name, "calibration": calibration["id"] if calibration else None,
+                "counts": counts}
+        try:
+            features.save(self.session.dir / name, rows,
+                          self.vision.provenance(take=writer.number, calibration=info["calibration"]))
+        except OSError as exc:
+            print(f"take {writer.number}: face and pose features not saved: {exc}", file=sys.stderr)
+            return {"state": "failed", "error": f"{type(exc).__name__}: {exc}", "counts": counts}
+        return info
 
     def first_of(self, section: int) -> int:
         return next(i for i, s in enumerate(self.notes.sentences) if s.section == section)
@@ -598,6 +654,8 @@ class Takes:
     def _stop_recording(self) -> "TakeWriter | None":
         """Stop the microphone; the take finishes writing in the background."""
         writer, self.writer = self.writer, None
+        if writer is not None and (self.vision is None or self.vision.state == "take"):
+            writer.meta["vision"] = self._save_vision(writer)
         if self.follow is not None and self.follow.follower is not None:
             live = self.follow.stop_take()
             if writer is not None:
@@ -726,6 +784,7 @@ class Devices:
     speaker: Callable = get_speaker
     player: Callable = ClipPlayer
     llm: Callable = get_provider  # None: the optional LLM is off
+    vision: Callable = Watcher.open  # face and pose; None or an error: off (they are optional)
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
     named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
     show: Callable = cv2.imshow
@@ -827,6 +886,13 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
             session = Session.create(path, root=sessions_root, gesture_log=log.path, language=lang, parsed=notes,
                                      source=source)
         takes = Takes(notes, session, log, devices, follow)
+        try:
+            takes.vision = devices.vision()
+        except Exception as exc:  # a model missing or failing to load: the takes go on without
+            takes.vision_off = f"{type(exc).__name__}: {exc}"
+            print(f"face and pose tracking off: {exc}", file=sys.stderr)
+        if takes.vision is not None:
+            stack.callback(guarded(takes.vision.close, "face and pose tracking"))
         stack.callback(guarded(takes.close, "the takes"))
         review = takes.restore()
         stack.callback(guarded(devices.destroy_windows, "the window"))
@@ -864,11 +930,15 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     palm_since, played_for = None, None  # Review: an open palm held on a focused sentence plays it
     hint_after, rehearse_open_since = 0.0, None
     notes_seen = takes.notes_version
+    frame_index = 0
 
     while True:
         frame = camera.read()
         start = time.perf_counter()
         tracker.submit(frame, start - t0)
+        if takes.vision is not None:  # before anything is drawn on the frame; idle outside calibration and takes
+            takes.vision.frame(frame, start - t0, frame_index, late=(start - prev_start) * 1000 > BODY.late_ms)
+        frame_index += 1
         # Hand results arrive asynchronously, usually one frame behind.
         if (result := tracker.poll()) is not None:
             if trace:
@@ -876,6 +946,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 trace.write(json.dumps({"t": round(t_hand, 3), "hands": [
                     {"label": hd.handedness, "points": hd.points.round(1).tolist()} for hd in hands]}) + "\n")
             events = modes.update(*result)
+            if takes.vision is not None:
+                takes.vision.hands(*result)
         else:
             events = []
         events += modes.tick(start - t0)
@@ -902,6 +974,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if until is not None:
                 note_until = until
         view.app = modes.mode
+        view.calibration = takes.vision.phase(start - t0) \
+            if takes.vision is not None and modes.mode == "count_in" else None
         zone = modes.zone
         view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
@@ -1052,6 +1126,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         elif key == ord("a") and view.app == "review":
             sentence = view.focus.sentence if view.focus is not None else view.current
             view.note, note_until = takes.play_sentence(sentence), time.perf_counter() + NOTE_S
+        elif key == ord("e"):
+            view.note, note_until = takes.recalibrate(), time.perf_counter() + NOTE_S
         elif key == ord("d"):
             show_debug = not show_debug
         elif key == ord("r"):

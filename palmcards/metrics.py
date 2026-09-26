@@ -16,9 +16,11 @@ the speaker. One without enough to go on is None with the reason, like an
            per second). These are movement, not "fidgeting": what the
            movement means is for the speaker to judge.
   gaze, posture
-           not measured: they need the face and pose models
-           (scripts/download_models.py --all), a calibration step and
-           validation against people; see docs/evaluation.md.
+           not measured yet: the face, pose and hand features are recorded
+           during every take (take-NN.face.npz, palmcards.features) against
+           the session's calibration; turning them into gaze and posture
+           observations, validated against people, is milestone 7's next
+           stages (docs/evaluation.md).
 
 Computed after the take in the analysis worker (palmcards.speech), never
 on the camera loop; stored on the take in session.json.
@@ -117,8 +119,8 @@ def take_metrics(alignment: dict, words: list[dict], t_start: float, duration_s:
         "version": VERSION,
         "speech": speech(alignment, words, duration_s, planned_pauses),
         "hands": hands(gesture_log, trace, t_start, t_start + duration_s),
-        "gaze": _none("not measured: needs the face model, calibration and validation (milestone 7)"),
-        "posture": _none("not measured: needs the pose model, calibration and validation (milestone 7)"),
+        "gaze": _none("not measured yet: face features are recorded, the gaze classifier comes next (milestone 7)"),
+        "posture": _none("not measured yet: pose features are recorded, posture comes next (milestone 7)"),
     }
 
 
