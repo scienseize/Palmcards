@@ -153,6 +153,7 @@ class Ring:
     stroke: int = 1
     picked_stroke: int = 2
     closing_box: int = 3  # px: the box around the picked node while the thumb closes into a pinch
+    take_gap: int = 6  # px between Review's take chips
 
 
 @dataclass(frozen=True)

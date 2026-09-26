@@ -538,7 +538,7 @@ def test_spread_marks_are_asked_once_shown_and_added_together(tmp_path, monkeypa
     takes.ask_marks(0)  # open the palm again: the same suggestions, no second call
     assert len(provider.calls) == 1 and takes.suggestion_view(0)[0] == "ready"
 
-    takes.turn_marks(0, 1)  # the knob one step on: the pause
+    point_at(takes, 1)  # the pause
     event("toggle")
     assert view.focus is not None  # a toggle keeps the focus
     _, preview, states, current = takes.suggestion_view(0)
@@ -568,19 +568,27 @@ def picked(takes):
     return preview.marks[current], [m for m, st in zip(preview.marks, states) if st == "accepted"]
 
 
-def test_the_outline_follows_the_knob_along_the_suggestions(tmp_path, monkeypatch):
-    takes = spread(tmp_path, monkeypatch)  # in reading order: [slow], *you*, // before "for"
-    assert takes.marks_range(0) == (0, 2) and takes.marks_range(1) == (0, 0)  # the grammar clamps the knob to it
-    assert picked(takes)[0] == Mark(MarkKind.SLOW)
-    takes.turn_marks(0, 1)
-    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
-    takes.turn_marks(0, 2)
-    assert picked(takes)[0] == Mark(MarkKind.LONG_PAUSE, 2)
-    takes.turn_marks(0, 1)  # a rewind back one step lands one mark back
-    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
-    takes.turn_marks(0, 9)  # out of range (the grammar wouldn't send it): kept on the suggestions
-    assert picked(takes)[0] == Mark(MarkKind.LONG_PAUSE, 2)
+def point_at(takes, k):
+    """Point at suggestion k (as the frame loop does from the pointer)."""
+    takes.pickers["marks"].index = k
 
+
+def test_the_outline_follows_the_pointer_to_the_nearest_mark(tmp_path, monkeypatch):
+    takes = spread(tmp_path, monkeypatch)  # in reading order: [slow], *you*, // before "for"
+    _, preview, _, _ = takes.suggestion_view(0)
+    where = takes._suggest_view[1][1]  # suggestion -> its index among the sentence's marks
+    positions = {i: (100.0 + 100 * k, 200.0) for k, i in enumerate(where)}  # on screen, 100 px apart
+    scale = (500.0, 400.0)
+    takes.point_marks(0.0, 0, (0.0, 0.0), positions, scale)
+    assert picked(takes)[0] == Mark(MarkKind.SLOW)  # starts on the first
+    takes.point_marks(0.1, 0, (0.2, 0.0), positions, scale)  # 100 px right
+    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
+    takes.point_marks(0.2, 0, (0.4, 0.0), positions, scale)
+    assert picked(takes)[0] == Mark(MarkKind.LONG_PAUSE, 2)
+    takes.rewind_pick(0.15)  # a pinch took the pointer back to 0.15 s
+    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
+    takes.point_marks(0.3, 0, (0.0, 0.0), {}, scale)  # not on screen: left alone
+    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
 
 def test_accept_two_of_three_then_one_revision_and_dropping_discards(tmp_path, monkeypatch):
     from palmcards.gestures import GestureEvent
@@ -594,10 +602,10 @@ def test_accept_two_of_three_then_one_revision_and_dropping_discards(tmp_path, m
         main.apply_event(GestureEvent(kind, 1.0, "sentence", "marks"), view, overlay, GestureLog(), takes=takes)
 
     event("toggle")  # [slow]
-    takes.turn_marks(0, 1)
+    point_at(takes, 1)
     event("toggle")  # *you*
     event("toggle")  # *you* again: rejected
-    takes.turn_marks(0, 2)
+    point_at(takes, 2)
     event("toggle")  # the pause
     assert set(picked(takes)[1]) == {Mark(MarkKind.SLOW), Mark(MarkKind.LONG_PAUSE, 2)}
 
@@ -608,7 +616,7 @@ def test_accept_two_of_three_then_one_revision_and_dropping_discards(tmp_path, m
     before = takes.notes.sentences[0].marks
 
     event("toggle")
-    takes.turn_marks(0, 2)
+    point_at(takes, 2)
     event("toggle")
     event("commit")
     assert view.note == "ADDED 2 MARKS  /  U: UNDO"

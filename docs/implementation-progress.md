@@ -32,7 +32,8 @@ user runs them. They are never inferred from unit tests.
 | M8 — L-hand dials held through a pinch | Implemented, validation pending | When the thumb of a hand working a dial (ring, marks, tone, stretch, take dial) closes toward the index tip or a pinch registers, the dial goes back to its value from just before the thumb started closing and holds, drawn bolder; marks knob and take dial clamped in the grammar | 477 passed; on the 7 recorded L-to-pinch moments (simulated): knob off 4/7 -> 1/7, dial angle 41 -> 2 deg (median) | Measured on the user's recording: see the next row |
 | M8 — Knob dwell, rewind keep, rewrite length | Implemented, validation pending | Knob steps wait 0.15 s (wobble); a knob step on screen 0.25 s survives the rewind; tone/length rewrites get a word count in the prompt and room above it in the check | 480 passed; the user's recording 20260926-161541 replayed through the code: pinches off what was shown 9/19 -> 1/19, knob changes 158 -> 49 | The user: the ring stretch was pinch-only testing; then the ring knob and word pinch problems below |
 | M8 — Word options by tilt; word pinch | Tilt reverted by the user's choice; word pinch kept | The word's options in a row over the word, left to right; tilt the L-hand right for the next, left for the one before (one per tilt); marks/take knobs walk one step per frame; pointing + pinch focuses the word pointed at before the curl | 484 passed; on the recordings: word pinches on another word 9/15 -> 2/15; ring 32 steps/min against 158 | The user: tilting doesn't feel like a knob |
-| M8 — Ring knob back, 10 degrees an option | Implemented, validation pending | The round ring and its knob back (wrapping), OPS.ring_step_deg 10 (60 degrees of wrist for six options), dwell and one-step walk kept; the word-pinch fix kept | 485 passed; the recording: 0/19 pinches off what was shown when the thumb started closing (2/19 against the longest shown) | The user tries it |
+| M8 — Ring knob back, 10 degrees an option | Implemented, validation pending | The round ring and its knob back (wrapping), OPS.ring_step_deg 10 (60 degrees of wrist for six options), dwell and one-step walk kept; the word-pinch fix kept | 485 passed; the recording: 0/19 pinches off what was shown when the thumb started closing (2/19 against the longest shown) | The user: none of the L-hand choosers feel like they work |
+| M8 — Choosing by pointing | Implemented, validation pending | Options ring, spread marks and Review's takes: an L starts choosing, then the index fingertip moves a point and the nearest item is picked (a margin against flicker); a pinch acts on the item pointed at before the curl; Review's takes as chips beside the sentence, with a message when there is nothing to choose | 478 passed; rendered offline | The user tries it; a --trace to measure |
 
 ## Log
 
@@ -1432,4 +1433,36 @@ Changes: the tilt-to-step code and its settings removed; the ring drawn round ag
 Result on the recording: 0/19 pinches off what was shown when the thumb started closing, 2/19
   against the value shown longest in the 0.4 s before; knob changes 105 (49 at 15 degrees).
 Tests: pytest (full) -> 485 passed (the ring's knob tests back, at its own step; a slow curl too).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: choosing by pointing (the user: the L-hand word and sentence selection "does not feel
+  like it is working"; pivot to pointing, the L kept as the trigger; Review's take dial too, with chips)
+Evidence (sessions/gesture-logs/20260926-185900.trace.jsonl, replayed 1:1): the ring open 21 s without
+  a choice, its knob turned 85 times across -6..+5 steps, the index angle over 120 degrees; 72 changes
+  in 29 s to accept one mark; the hand read as ONE (thumb in, pointing) about 70% of the time.
+  Review (20260926-190933): the take dial was tried three times with two takes that said no sentence
+  (both ~6 s): nothing to dial, and the screen didn't say so.
+Changes:
+  palmcards/gestures.py: for the ring, the marks and Review's takes, an L starts a pointer; then the
+    index fingertip (thumb in or out) moves GestureState.point (hand-box units since the focus,
+    One Euro smoothed, carried on when picked up again: no jump). A pinch rewinds the point to
+    before the thumb moved in and emits a "rewind" event (the time it went back to). The knob
+    (knob, take_step, dial_limits, the dwell and walk) is gone; the pinch hold on dials stays for
+    the tone dial and the stretch.
+  palmcards/pick.py (new): Picker: the point starts on the picked item and moves at the scale of
+    browsing (hand box onto text box, OPS.point_gain); the nearest item wins once nearer by
+    OPS.pick_margin (0.2) of the gap; rewind(t) puts the pick back.
+  palmcards/render.py: ring_nodes (where each option sits), mark_points (where each suggested mark
+    is, recorded while the panel is drawn), the take chips (a column beside the focused sentence)
+    and take_points; labels "L-HAND, THEN POINT TO PICK", "L-HAND, THEN POINT: ANOTHER".
+  main.py: three pickers (ring, marks, take), reset on each focus; the frame loop moves them from the
+    pointer; "rewind" events put them back; Review shows the take chips and, with one take or none,
+    "ONLY TAKE n SAID THIS SENTENCE" / "NO TAKE SAID THIS SENTENCE".
+Found on the way: when pointing restarted, the pointer's smoothing filter still held the old hand
+  position, so the point jumped by the blend; the filter now resets before the first reading.
+Tests: pytest (full) -> 478 passed (the knob tests replaced by pointer tests: an L starts it, thumb in
+  keeps it, it carries on without a jump, a pinch rewinds it; the picker's margin and rewind; the
+  outline following the point over marks; the take chips in Review; where the pointer's targets are).
 ```

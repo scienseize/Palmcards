@@ -22,10 +22,10 @@ the right of the frame; it steers the highlight in the text on the left.
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
                            focus
   open palm (word)         options ring: the word, alternatives (with --llm), stress/unstress it, "hear it";
-                           turn an L-hand like a knob to pick (~10 degrees an option)
+                           make an L, then point: the fingertip moves the pick to the nearest option
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
-  open palm (sentence)     suggested marks (with --llm), faded where they would go; turn an L-hand like a
-                           knob to move the outline along them, pinch (no lift) to accept or reject one,
+  open palm (sentence)     suggested marks (with --llm), faded where they would go; make an L, then point
+                           to move the outline to the nearest mark, pinch (no lift) to accept or reject one,
                            pinch + lift adds the accepted ones; dropping the hand discards them
   two L-hands (paragraph)  length stretch
   pinch + lift             commit: stress/unstress or an alternative makes a new notes revision (u undoes it);
@@ -53,7 +53,8 @@ chip coloured by its verdict (green hit, red missed, grey unclear):
 
   two fingers together     browse sentences
   fold onto the thumb      focus: each mark's verdict and why, pace, fillers
-  L-hand turned (focused)  dial through the takes that said this sentence
+  L-hand, then point (focused)
+                           the takes that said this sentence, as chips beside it: point at one
   pinch + lift (focused)   drill the sentence: count-in, then just that
                            sentence; open palm in the zone to stop
   open palm on a focused sentence, held ~0.6 s
@@ -113,6 +114,7 @@ from palmcards.render import (
 )
 from palmcards.review import Board
 from palmcards.metrics import summary as metrics_summary
+from palmcards.pick import Picker
 from palmcards.playback import ClipPlayer, sentence_clip
 from palmcards.recording import TakeWriter
 from palmcards.revisions import from_snapshot
@@ -164,9 +166,7 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
         view.hover = None
     ops = view.ops
     ops.kind, ops.pointing, ops.tone, ops.stretch = gs.op, gs.pointing, gs.tone, gs.stretch
-    ops.stretch_ends, ops.closing = gs.stretch_ends, gs.closing
-    if gs.op == "ring":
-        ops.picked = gs.knob % len(overlay.ring_labels(view))
+    ops.stretch_ends, ops.closing = gs.stretch_ends, gs.closing  # ops.picked: pointing (Takes.pickers["ring"])
 
 
 def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog,
@@ -182,6 +182,10 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         view.focus = view.hover
         view.ops = OpsView()
         view.panel_scroll = 0.0
+        return None
+    if ev.kind == "rewind":  # a pinch took the pointer back to before the curl: the pick goes back too
+        if takes is not None:
+            takes.rewind_pick(ev.value)
         return None
     if ev.kind == "toggle":  # a pinch on spread marks: accept or reject the outlined one; still focused
         if takes is None or view.focus is None:
@@ -280,7 +284,6 @@ class Takes:
         self.last_saved = ""
         self.board = Board(notes)  # verdicts of the judged takes, for Review
         self.drill: int | None = None  # the sentence the current count-in or take drills
-        self.dial_seen = 0  # take-dial steps already applied
         self._summary_key, self._summary = None, ()  # Review's take summary card, and what it was made from
         self.vision: Watcher | None = None  # face and pose (milestone 7); run() opens it
         self.vision_off = "face and pose tracking not opened"  # why there is none
@@ -301,7 +304,11 @@ class Takes:
             title = self.notes.sections[self.section].title or "untitled"
             return f"SECTION {self.section + 1}/{len(self.notes.sections)}: {title.upper()}"
         if mode == "review" and view.mode == "focus" and view.level == "sentence" and view.focus is not None:
-            return f"{self.board.take_label(view.focus.sentence)}  /  L-HAND: TAKES  /  PINCH + LIFT: DRILL"
+            said = self.board.said_in(view.focus.sentence)
+            if len(said) > 1:
+                return f"{self.board.take_label(view.focus.sentence)}  /  L-HAND, THEN POINT: TAKES  /  PINCH + LIFT: DRILL"
+            which = f"ONLY TAKE {said[0]} SAID THIS SENTENCE" if said else "NO TAKE SAID THIS SENTENCE"
+            return f"{which}  /  PINCH + LIFT: DRILL"
         if self.finalizing:
             return f"TAKE {self.finalizing[0].number}: SAVING..."
         if self.analysis.pending or self.deferred:
@@ -425,20 +432,29 @@ class Takes:
         return ""
 
     def reset_pick(self) -> None:
-        """Forget which suggested mark is outlined and which are accepted (a new
-        focus, or backing out: dropping the hand discards them all)."""
-        self.pick_current, self.pick_accepted = 0, set()
+        """A new focus, or leaving one: the pickers start again on the first item
+        (the word itself, the first mark, the take shown) and no mark is accepted
+        (dropping the hand discards them all)."""
+        self.pickers = {kind: Picker() for kind in ("ring", "marks", "take")}
+        self.pick_accepted = set()
 
-    def marks_range(self, sentence: int) -> tuple[int, int]:
-        """Where the marks knob can go (the grammar clamps it): one step per suggestion."""
-        return 0, max(len(self.mark_suggestions.get(sentence) or ()) - 1, 0)
+    @property
+    def pick_current(self) -> int:
+        """The suggested mark pointed at (index into mark_suggestions[sentence])."""
+        return self.pickers["marks"].index
 
-    def turn_marks(self, sentence: int, knob: int) -> None:
-        """The outline follows the L-hand knob (steps since the focus), kept on the
-        suggestions; the grammar clamps the knob to marks_range, so turning past
-        the end and back moves at once, and a rewind lands on the right mark."""
-        n = len(self.mark_suggestions.get(sentence) or ())
-        self.pick_current = min(max(knob, 0), n - 1) if n else 0
+    def rewind_pick(self, t: float) -> None:
+        for picker in self.pickers.values():
+            picker.rewind(t)
+
+    def point_marks(self, t: float, sentence: int, point, positions: dict[int, tuple[float, float]],
+                    scale: tuple[float, float]) -> None:
+        """The outline follows the pointer to the nearest suggested mark; `positions`
+        by index among the preview sentence's marks (TextOverlay.mark_points)."""
+        where = self._suggest_view[1][1] if self._suggest_view[0] == (sentence, self.notes_version) else None
+        if not where or any(i not in positions for i in where):
+            return
+        self.pickers["marks"].update(t, point, [positions[i] for i in where], scale)
 
     def toggle_mark(self, sentence: int) -> str:
         """A pinch on spread marks: accept the outlined suggestion, or reject it again."""
@@ -606,20 +622,25 @@ class Takes:
             return f"TAKE {failed[0]}: ANALYSIS FAILED (SEE TERMINAL)  /  R: RETRY"
         return ""
 
-    def sync_review(self, grammar: Grammar, view: ViewState) -> None:
-        """Review: turn the take dial, and show the chosen takes' verdicts."""
+    def sync_review(self, grammar: Grammar, view: ViewState, overlay: "TextOverlay | None" = None,
+                    t: float = 0.0) -> None:
+        """Review: the takes to point at, and the chosen takes' verdicts."""
         gs = grammar.state
         focused = view.focus.sentence if view.mode == "focus" and view.focus is not None else None
-        if focused is not None and view.level == "sentence":  # the grammar keeps the dial on the takes there are
-            said = self.board.said_in(focused)
+        said = self.board.said_in(focused) if focused is not None and view.level == "sentence" else []
+        if said:  # the takes as chips beside the sentence, one of them pointed at
+            picker = self.pickers["take"]
             shown = self.board.shown(focused)
-            at = said.index(shown) if shown in said else len(said) - 1
-            gs.dial_limits = (gs.take_step - at, gs.take_step + len(said) - 1 - at) if said else (gs.take_step,) * 2
+            if gs.point is None:
+                picker.index = said.index(shown) if shown in said else len(said) - 1
+            view.takes = tuple(f"TAKE {n}" + (" (DRILL)" if n in self.board.drills else "") for n in said)
+            view.take_shown = picker.index
+            if gs.op == "take":
+                picker.update(t, gs.point, overlay.take_points(view), (overlay.box_w, overlay.box_h))
+                self.board.picked[focused] = said[picker.index]
+                view.take_shown = picker.index
         else:
-            gs.dial_limits = None
-        if gs.op == "take" and focused is not None and view.level == "sentence":
-            self.board.step(focused, gs.take_step - self.dial_seen)
-            self.dial_seen = gs.take_step
+            view.takes = ()
         view.mark_verdicts = self.board.mark_verdicts()
         view.detail = self.board.detail(focused) if focused is not None and view.level == "sentence" else ()
         n = self.board.latest()
@@ -1180,9 +1201,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "drill" and ev.sentence is None:
                 ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
-            if ev.kind == "focus":
-                takes.dial_seen = 0
-            if ev.kind in ("focus", "commit", "back", "toggle"):
+            if ev.kind in ("focus", "commit", "back", "toggle", "rewind"):
                 until = apply_event(ev, view, overlay, log, speaker, takes)
             elif note := takes.handle(ev, modes, view, overlay):
                 view.note, until = note, start + NOTE_S
@@ -1215,19 +1234,24 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if view.mode == "focus" and view.level == "sentence" and view.focus is not None \
                     and grammar.state.op == "marks":
                 takes.ask_marks(view.focus.sentence)  # opening the palm asks (once per sentence and revision)
-                grammar.state.dial_limits = takes.marks_range(view.focus.sentence)
-                takes.turn_marks(view.focus.sentence, grammar.state.knob)
                 view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = \
                     takes.suggestion_view(view.focus.sentence)
+                if view.suggest == "ready":  # the outline follows the pointer to the nearest mark
+                    takes.point_marks(start - t0, view.focus.sentence, grammar.state.point,
+                                      overlay.mark_points(view), (overlay.box_w, overlay.box_h))
+                    view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = \
+                        takes.suggestion_view(view.focus.sentence)
             else:
                 view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = "", None, (), None
-                grammar.state.dial_limits = None  # the ring's knob wraps
+            if word_key and grammar.state.op == "ring":  # the pick follows the pointer to the nearest option
+                view.ops.picked = takes.pickers["ring"].update(start - t0, grammar.state.point,
+                                                               overlay.ring_nodes(view), (overlay.box_w, overlay.box_h))
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)
             view.start_progress = modes.start_progress
             if modes.mode == "review":
-                takes.sync_review(grammar, view)
+                takes.sync_review(grammar, view, overlay, start - t0)
             else:
                 view.mark_verdicts = ()
                 view.detail = (("", f"PROPOSED: {view.proposal}"),) if view.proposal else ()

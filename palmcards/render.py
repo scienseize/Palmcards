@@ -179,7 +179,11 @@ class ViewState:
     suggest: str = ""
     suggest_sentence: Sentence | None = None
     suggest_marks: tuple[str, ...] = ()  # per mark of suggest_sentence: "suggested", "accepted" or ""
-    suggest_current: int | None = None  # the mark (of suggest_sentence) the knob is on: outlined
+    suggest_current: int | None = None  # the mark (of suggest_sentence) pointed at: outlined
+    # Review, a focused sentence: the takes that said it, as chips beside it to
+    # point at (an L, then the fingertip), and which one it shows.
+    takes: tuple[str, ...] = ()
+    take_shown: int = 0
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
 
@@ -190,6 +194,7 @@ class Panel:
     color: np.ndarray
     inv: np.ndarray
     rows: dict[int, tuple[int, int]]  # sentence -> (top, bottom) of its enlarged rows, px into the content
+    marks: dict[int, tuple[float, float, float, float]] = field(default_factory=dict)  # suggested mark -> box
 
 
 @dataclass(frozen=True)
@@ -464,7 +469,7 @@ class TextOverlay:
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
-            second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "TURN AN L-HAND TO PICK"
+            second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "L-HAND, THEN POINT TO PICK"
             if ops.pointing:
                 picked = self.ring_labels(state)[ops.picked]
                 word = self.word_text(state.focus).upper() if state.focus and state.focus.word is not None else ""
@@ -510,7 +515,7 @@ class TextOverlay:
         cur = state.suggest_current if state.suggest_current in picks else picks[0]
         on = state.suggest_marks[cur] == "accepted"
         where = f"{picks.index(cur) + 1}/{len(picks)} {mark_label(state.suggest_sentence, cur)}"
-        commit = f"PINCH + LIFT: ADD {accepted}" if accepted else "TURN L-HAND: NEXT"
+        commit = f"PINCH + LIFT: ADD {accepted}" if accepted else "L-HAND, THEN POINT: ANOTHER"
         return f"{where}: {'ACCEPTED' if on else 'NOT ACCEPTED'}  /  PINCH: {'REJECT' if on else 'ACCEPT'}  /  {commit}"
 
     def ring_labels(self, state: ViewState) -> tuple[str, ...]:
@@ -692,6 +697,7 @@ class TextOverlay:
         img = Image.new("RGBA", (self.box_w, panel_h), CLEAR)
         draw = ImageDraw.Draw(img)
         where: dict[int, tuple[int, int]] = {}
+        mark_boxes: dict[int, tuple[float, float, float, float]] = {}
 
         def draw_rows(rows_, font_, lh_, cw_, colors, y_, sentence_of=lambda r: r.sentence):
             for row in rows_:
@@ -703,8 +709,11 @@ class TextOverlay:
                     if suggest and si == suggest[0] and sp.mark is not None and sp.mark < len(states) \
                             and states[sp.mark]:
                         mc = C.accepted_mark if states[sp.mark] == "accepted" else C.suggest_mark
+                        box = draw.textbbox(xy, sp.text, font=font_)
+                        was = mark_boxes.get(sp.mark)
+                        mark_boxes[sp.mark] = box if was is None else (min(was[0], box[0]), min(was[1], box[1]),
+                                                                       max(was[2], box[2]), max(was[3], box[3]))
                         if sp.mark == suggest[3]:
-                            box = draw.textbbox(xy, sp.text, font=font_)
                             picked = box if picked is None else (min(picked[0], box[0]), min(picked[1], box[1]),
                                                                  max(picked[2], box[2]), max(picked[3], box[3]))
                     self._draw_span(draw, xy, sp, font_, word_c, mc, self._verdict(verdicts, si, sp))
@@ -742,7 +751,7 @@ class TextOverlay:
                 y += dlh
         draw_rows(below, self.font, self.line_h, self.char_w, lambda si: (C.faint, C.faint_mark), y)
         color, inv = _premultiply(img)
-        self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y)
+        self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y, mark_boxes)
         return self._panel
 
     # --- the panel's viewport ------------------------------------------------
@@ -852,21 +861,77 @@ class TextOverlay:
         if c2:
             _blend(frame, x, y + c1[0].shape[0], *c2)
 
-    def _draw_ring(self, frame: np.ndarray, state: ViewState, center: tuple[float, float]) -> None:
+    def ring_nodes(self, state: ViewState) -> list[tuple[float, float]]:
+        """Where each of the focused word's options sits on screen (ring_labels
+        order): around the word, clockwise from the top, shifted so every
+        node stays on screen. Empty when the word is not on screen."""
+        if state.focus is None or state.focus.word is None or (box := self.word_box(state.focus, state.scroll)) is None:
+            return []
         labels = self.ring_labels(state)
         n = len(labels)
         rx, ry = RING.rx * self.line_h, RING.ry * self.line_h
         size = round(self.font_size * RING.node_scale)
-        # Centre the ring on the word, shifted so every node stays on screen;
-        # the connectors still start at the word.
         widest = max(self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)[0].shape[1] for label in labels)
         edge = rx + widest / 2 + RING.edge_px
-        rcx = min(max(center[0], edge), self.frame_w - edge)
-        rcy = min(max(center[1], ry + self.line_h), self.frame_h - ry - self.line_h)
-        cx, cy = center
-        for i, label in enumerate(labels):
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        rcx = min(max(cx, edge), self.frame_w - edge)
+        rcy = min(max(cy, ry + self.line_h), self.frame_h - ry - self.line_h)
+        out = []
+        for i in range(n):
             a = math.radians(-90 + i * 360 / n)
-            nx, ny = rcx + rx * math.cos(a), rcy + ry * math.sin(a)
+            out.append((rcx + rx * math.cos(a), rcy + ry * math.sin(a)))
+        return out
+
+    def _panel_origin(self, state: ViewState) -> tuple[Panel, float, float, int] | None:
+        """The focus panel, where its content's (0, 0) is on screen, and its viewport's top."""
+        panel = self.panel(state)
+        if panel is None:
+            return None
+        view_h = self.panel_view_h(panel)
+        top = self._panel_top(view_h)
+        return panel, self.x + self.margin, top - int(self.clamp_panel_scroll(state, state.panel_scroll)), top
+
+    def mark_points(self, state: ViewState) -> dict[int, tuple[float, float]]:
+        """Where each suggested mark of the focused sentence is on screen (by its
+        index among suggest_sentence's marks)."""
+        got = self._panel_origin(state)
+        if got is None:
+            return {}
+        panel, ox, oy, _ = got
+        return {m: (ox + (b[0] + b[2]) / 2, oy + (b[1] + b[3]) / 2) for m, b in panel.marks.items()}
+
+    def _take_chips(self, state: ViewState) -> list[tuple[tuple[np.ndarray, np.ndarray], float, float]]:
+        """Review: the focused sentence's takes as chips in a column right of the
+        panel, from its top: (chip, centre x, centre y) each."""
+        got = self._panel_origin(state) if state.takes else None
+        if got is None:
+            return []
+        size = round(self.font_size * RING.node_scale)
+        x0, y = self.x + self.margin + self.box_w + self.pad, got[3] + self.pad
+        out = []
+        for i, label in enumerate(state.takes):
+            chip = self._chip(label, size, C.chip_text, C.chip_fill) if i == state.take_shown \
+                else self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)
+            h, w = chip[0].shape[:2]
+            out.append((chip, x0 + w / 2, y + h / 2))
+            y += h + RING.take_gap
+        return out
+
+    def take_points(self, state: ViewState) -> list[tuple[float, float]]:
+        return [(x, y) for _, x, y in self._take_chips(state)]
+
+    def _draw_takes(self, frame: np.ndarray, state: ViewState) -> None:
+        for i, (chip, x, y) in enumerate(self._take_chips(state)):
+            box = self._blend_centered(frame, chip, x, y)
+            if i == state.take_shown and state.ops.closing:
+                g = RING.closing_box
+                cv2.rectangle(frame, (box[0] - g, box[1] - g), (box[2] + g, box[3] + g), bgr(C.yellow), g, cv2.LINE_AA)
+
+    def _draw_ring(self, frame: np.ndarray, state: ViewState, center: tuple[float, float]) -> None:
+        labels = self.ring_labels(state)
+        size = round(self.font_size * RING.node_scale)
+        cx, cy = center
+        for i, (label, (nx, ny)) in enumerate(zip(labels, self.ring_nodes(state))):
             # Curved connector: quadratic Bezier bowed to one side.
             mx, my = (cx + nx) / 2, (cy + ny) / 2
             ctrl = (mx - (ny - cy) * RING.bow, my + (nx - cx) * RING.bow)
@@ -990,6 +1055,8 @@ class TextOverlay:
             self._draw_zone(frame, state)
         if state.app == "review" and state.summary and state.mode != "focus":
             self._draw_summary(frame, state.summary)
+        if state.app == "review" and state.mode == "focus" and state.takes:
+            self._draw_takes(frame, state)
         if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
             # In the clear space between the notes and the right edge, below the zone.
             chip = self._chip(str(state.count_in), round(self.font_size * COUNT_IN.scale), C.orange, None)

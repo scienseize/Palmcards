@@ -105,3 +105,41 @@ def test_the_take_summary_card():
     b.add(2, judged(FULL), drill=1)
     assert b.latest() == 2 and b.take_summary(2)[-1] == "METRICS NOT MEASURED YET"
     assert b.take_summary(2)[0] == "TAKE 2 (DRILL)"
+
+
+def test_review_points_at_take_chips_and_says_when_there_is_nothing_to_choose(tmp_path, monkeypatch):
+    from palmcards.gestures import Grammar
+    from palmcards.render import Hit, TextOverlay, ViewState
+    from tests.test_llm import takes_with
+
+    notes = parse_text(TEXT)
+    takes = takes_with(tmp_path, monkeypatch, None)
+    takes.board = b = Board(notes)
+    b.add(1, judged(FULL))
+    b.add(2, judged("Good evening everyone. <0.5> Thank you for being here."))
+    b.add(3, judged("Thank you for being here.", ), drill=1)
+    ov = TextOverlay(notes.sentences, (1280, 720))
+    g = Grammar((1280, 720))
+    g.state.mode, g.state.level = "focus", "sentence"
+    view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None))
+
+    takes.sync_review(g, view, ov, 0.0)
+    assert view.takes == ("TAKE 1", "TAKE 2", "TAKE 3 (DRILL)") and view.take_shown == 2  # the latest said it
+    assert "L-HAND, THEN POINT: TAKES" in takes.status("review", view)
+    g.state.op, g.state.point = "take", (0.0, 0.0)  # an L: pointing starts on the take shown
+    takes.sync_review(g, view, ov, 0.1)
+    assert b.shown(1) == 3
+    top = ov.take_points(view)[0][1]
+    g.state.point = (0.0, (top - ov.take_points(view)[2][1]) / ov.box_h)  # up to the first chip
+    takes.sync_review(g, view, ov, 0.2)
+    assert view.take_shown == 0 and b.shown(1) == 1 and view.detail  # take 1's verdicts shown
+    g.state.op, g.state.point = None, None
+
+    view.focus = Hit(2, None)  # said only in take 1
+    takes.sync_review(g, view, ov, 0.3)
+    assert view.takes == ("TAKE 1",) and takes.status("review", view).startswith("ONLY TAKE 1 SAID THIS SENTENCE")
+    b2 = Board(notes)
+    b2.add(1, judged("Good evening everyone."))
+    takes.board = b2
+    takes.sync_review(g, view, ov, 0.4)
+    assert view.takes == () and takes.status("review", view).startswith("NO TAKE SAID THIS SENTENCE")

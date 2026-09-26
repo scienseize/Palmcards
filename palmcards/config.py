@@ -109,28 +109,27 @@ class Cursor:
 @dataclass(frozen=True)
 class Ops:
     tone_range_deg: float = 45.0  # tilt from the start angle for full warm/cold
-    knob_step_deg: float = 15.0  # L-hand turn per step of the marks knob
-    # The options ring's knob: less turn per option than the marks knob, so a
-    # full turn through six options takes 60 degrees of wrist, not 90.
-    ring_step_deg: float = 10.0
-    knob_hysteresis: float = 0.2  # of a step, past the boundary before the node changes
-    # A knob step (ring, marks, take dial) shows only once the hand has stayed in
-    # it this long: the index angle wobbles by tens of degrees in a fraction of a
-    # second (a recorded session: 24.5 steps a minute reversed within 0.4 s at
-    # 15 deg a step; 0.4 with this), and a steady turn still steps as it goes.
-    knob_dwell_s: float = 0.15
+    # Choosing by pointing (the ring's options, spread marks, Review's takes):
+    # after an L, the index fingertip moves a point at the scale of browsing
+    # (the hand box onto the text box) times point_gain, from the item picked;
+    # the nearest item is picked, but only once the point is nearer to it than
+    # to the current one by pick_margin of the gap between them (no flicker
+    # between neighbours). It replaced turning a knob, which followed every
+    # wobble of the index angle (2026-09-26: 85 changes in 21 s on the ring).
+    point_gain: float = 1.0
+    pick_margin: float = 0.2
     stretch_min: float = 0.5  # length ratio clamp
     stretch_max: float = 2.0
-    take_step_deg: float = 20.0  # Review: L-hand turn per take on the take dial
     # An L-hand closing into a pinch curls the index toward the thumb, which
     # turns the angle the dials read (a median 41 deg in the recorded traces,
     # nearly 3 knob steps). So once the thumb tip comes within closing_enter
     # palms of the index tip (leaving again past closing_leave), or a pinch
-    # registers, the dials (ring and marks knob, tone, stretch, take dial) go
-    # back to their value from just before the thumb started closing (the
-    # latest moment in the last rewind_max_s with the thumb within
-    # rewind_plateau palms of its farthest out) and hold there until the thumb
-    # opens again. A steady L has the thumb 1.3-1.9 palms from the index
+    # registers, the dials (tone, stretch) go back to their value from just
+    # before the thumb started closing (the latest moment in the last
+    # rewind_max_s with the thumb within rewind_plateau palms of its farthest
+    # out) and hold there until the thumb opens again. Pointing (the ring, the
+    # marks, the takes, browsing words) goes back the same way, but only when
+    # the pinch registers: pointing, the thumb often rests near the index tip. A steady L has the thumb 1.3-1.9 palms from the index
     # tip; a thumb drifting in while turning rarely (about 2% of the time)
     # comes within 0.9. On the 7 recorded L-to-pinch moments this left 1 knob
     # step off (4 without it) and the dial angle 2 deg off (median; 41 without).
@@ -138,9 +137,6 @@ class Ops:
     closing_leave: float = 1.0
     rewind_max_s: float = 0.5
     rewind_plateau: float = 0.1
-    # ... but a knob step (ring, marks, take dial) that has been on screen this
-    # long stays: it was seen and chosen, not a curl on the way into the pinch.
-    rewind_keep_s: float = 0.25
 
 
 @dataclass(frozen=True)

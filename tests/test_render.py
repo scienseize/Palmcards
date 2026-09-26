@@ -98,7 +98,7 @@ def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
-    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "TURN AN L-HAND TO PICK")
+    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "L-HAND, THEN POINT TO PICK")
     # Only what works is offered: the word itself, (un)stressing it, and hearing it.
     assert ov.ring_labels(focus) == ("being", "unstress", "hear it")  # *being* is stressed
     assert ov.ring_labels(ViewState(mode="focus", level="word", focus=Hit(0, 1)))[1] == "stress"
@@ -392,7 +392,7 @@ def test_the_outlined_suggestion_and_the_accepted_ones():
                      llm="cloud", suggest="ready", suggest_sentence=preview, suggest_marks=tuple(states),
                      suggest_current=pause)
     assert mark_label(preview, pause) == '// BEFORE "FOR"' and mark_label(preview, fall) == "[FALL]"
-    assert ov.label_lines(view)[1] == '1/2 // BEFORE "FOR": NOT ACCEPTED  /  PINCH: ACCEPT  /  TURN L-HAND: NEXT'
+    assert ov.label_lines(view)[1] == '1/2 // BEFORE "FOR": NOT ACCEPTED  /  PINCH: ACCEPT  /  L-HAND, THEN POINT: ANOTHER'
     accepted = list(states)
     accepted[pause] = "accepted"
     chosen = replace(view, suggest_marks=tuple(accepted))
@@ -435,4 +435,44 @@ def test_a_closing_pinch_is_shown_on_the_dial_it_will_act_on():
     for view in (ring, tone, stretch, marks):
         held = replace(view, ops=replace(view.ops, closing=True))
         assert (drawn(view) != drawn(held)).any(), view.ops.kind
+
+
+def test_where_the_pointer_can_go_ring_nodes_marks_and_takes():
+    from dataclasses import replace
+
+    from palmcards.edit import add_marks
+
+    ov = overlay()
+    ring = ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"),
+                     alternatives=("present", "around"))
+    nodes = ov.ring_nodes(ring)
+    assert len(nodes) == len(ov.ring_labels(ring)) == 5
+    box = ov.word_box(ring.focus, ring.scroll)
+    assert nodes[0][1] < box[1]  # the word itself at the top, the rest clockwise round it
+    assert ov.ring_nodes(replace(ring, focus=Hit(0, None))) == []
+
+    notes = parse_text(TEXT)
+    preview = add_marks(notes, 0, [("long_pause", 2), ("fall", None)]).sentences[0]
+    states = tuple("suggested" if m.kind in ("long_pause", "fall") else "" for m in preview.marks)
+    marks = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None), ops=OpsView(kind="marks"),
+                      suggest="ready", suggest_sentence=preview, suggest_marks=states)
+    at = ov.mark_points(marks)
+    pause = next(i for i, m in enumerate(preview.marks) if m.kind == "long_pause")
+    fall = next(i for i, m in enumerate(preview.marks) if m.kind == "fall")
+    assert set(at) == {pause, fall}
+    assert (at[pause][1], at[pause][0]) < (at[fall][1], at[fall][0])  # on screen, in reading order (line, then x)
+
+    review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None),
+                       takes=("TAKE 1", "TAKE 2", "TAKE 3 (DRILL)"), take_shown=1)
+    points = ov.take_points(review)
+    assert len(points) == 3 and points[0][1] < points[1][1] < points[2][1]  # a column beside the sentence
+    assert all(x > ov.x + ov.margin + ov.box_w for x, _ in points)  # clear of the text
+
+    def drawn(v):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, v)
+        return frame
+
+    assert (drawn(review) != drawn(replace(review, takes=()))).any()
+    assert (drawn(review) != drawn(replace(review, take_shown=2))).any()  # the shown take is highlighted
 
