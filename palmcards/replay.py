@@ -19,7 +19,7 @@ the mirrored frame. `expected` holds the grammar and mode entries of the
 gesture log (KINDS); poses are left out, they flicker too much to pin down.
 A step of the options ring's knob keeps its direction (`dir`). What the app
 told the grammar is in `inputs`, given back at its time: the options ring's
-nodes, [{"t": 1.2, "ring_nodes": ["imparted", "stamped", "stress", "hear it"]}]
+nodes, [{"t": 1.2, "ring_nodes": ["imparted", "stamped", "hear it"]}]
 (optional; without it the ring has the grammar's DEFAULT_RING).
 `known_issue` explains a sample the current code gets wrong: the sample is
 kept as evidence, and its test is an expected failure until the bug is fixed.

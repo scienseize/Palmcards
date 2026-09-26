@@ -23,12 +23,12 @@ def aligned(script, text=TEXT):
 def test_speech_metrics_rest_on_what_was_said():
     al, words, notes = aligned("Good evening everyone um thank you. <2.0> We are so glad <1.8> you could make "
                                "it tonight. so")
-    marks = [[[m.kind, m.word] for m in s.marks] for s in notes.sentences]
-    m = metrics.speech(al, words, 60.0, metrics.planned_pause_words(al, marks))
+    m = metrics.speech(al, words, 60.0)
     assert m["pace_wpm"]["value"] > 100 and "14 words" in m["pace_wpm"]["basis"]
     assert m["fillers_per_min"]["value"] == 2.0  # "um" and the trailing "so" in a minute
-    # The 2.0 s gap sits where the notes ask for a pause: planned. The 1.8 s one isn't.
-    assert m["unplanned_long_pauses"]["value"] == 1 and m["unplanned_long_pauses"]["longest_s"] == 1.8
+    # Every silence between words over 1.5 s: between the sentences and inside one.
+    assert m["long_pauses"]["value"] == 2 and m["long_pauses"]["longest_s"] == 2.0
+    assert m["long_pauses_per_min"]["value"] == 2.0
     assert (m["restarts"]["value"], m["ad_libs"]["value"]) == (0, 0)
 
 
@@ -86,6 +86,7 @@ def test_too_little_to_go_on_says_so():
     m = metrics.speech(al, words, 4.0)
     assert m["pace_wpm"]["value"] is None and "too little said" in m["pace_wpm"]["reason"]
     assert m["fillers_per_min"]["value"] is None and "too short" in m["fillers_per_min"]["reason"]
+    assert m["long_pauses_per_min"]["value"] is None and "too short" in m["long_pauses_per_min"]["reason"]
 
 
 def test_hands_from_the_gesture_log_and_the_trace(tmp_path):
@@ -111,7 +112,7 @@ def test_without_face_features_gaze_posture_and_touches_say_why():
     al, words, _ = aligned("Good evening everyone thank you.")
     m = metrics.take_metrics(al, words, 0.0, 30.0)
     assert m["gaze"]["value"] is None and "no face features" in m["gaze"]["reason"]
-    assert m["posture"]["value"] is None and "no face features" in m["posture"]["reason"] and m["version"] == 4
+    assert m["posture"]["value"] is None and "no face features" in m["posture"]["reason"] and m["version"] == 5
     assert "no face features" in m["hands"]["face_touches"]["reason"]
 
 

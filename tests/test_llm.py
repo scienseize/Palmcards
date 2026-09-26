@@ -20,7 +20,7 @@ from palmcards.config import LLM
 from palmcards.edit import replace_text, replace_word
 from palmcards.gestures import GestureLog
 from palmcards.llm import Assistant, FakeProvider, OllamaProvider
-from palmcards.notes import Mark, MarkKind, parse_text
+from palmcards.notes import parse_text
 from palmcards.session import Session
 from tests.test_app_lifecycle import FakeSupervisor
 
@@ -295,17 +295,16 @@ def test_short_reasons():
 
 # --- the edits an answer can become ------------------------------------------------
 
-TEXT = "# One\n\nThank you for being *here* tonight. [fall] We are glad. You came.\n"
+TEXT = "# One\n\nThank you for being here tonight. We are glad. You came.\n"
 
 
 def test_edits_from_answers():
     notes = parse_text(TEXT, "md")
     alt = replace_word(notes, 0, 4, "with us")
-    assert alt.sentences[0].raw == "Thank you for being *with* us tonight. [fall]"
-    assert alt.sentences[0].marks[:1] == [Mark(MarkKind.FALL)] and Mark(MarkKind.STRESS, 4) in alt.sentences[0].marks
+    assert alt.sentences[0].raw == alt.sentences[0].text == "Thank you for being with us tonight."
     rewritten = replace_text(notes, [1, 2], "We're so glad you came along.")
     assert [s.text for s in rewritten.sentences] == ["Thank you for being here tonight.", "We're so glad you came along."]
-    assert rewritten.sentences[1].marks == [] and rewritten.sentences[1].index == 1
+    assert rewritten.sentences[1].index == 1
 
 
 # --- in the app --------------------------------------------------------------------
@@ -345,14 +344,14 @@ def test_a_tone_rewrite_is_a_proposal_until_used(tmp_path, monkeypatch):
     assert "PROPOSAL READY: FOCUS IT AGAIN TO SEE IT" in notes
     assert takes.proposals[(0,)][2] == "Thanks so much for being here."
     assert takes.use_proposal((0,)).startswith("TONE PROPOSAL USED")
-    assert takes.notes.sentences[0].text == "Thanks so much for being here." and takes.notes.sentences[0].marks == []
+    assert takes.notes.sentences[0].text == "Thanks so much for being here."
 
 
 def test_an_answer_about_notes_that_changed_is_dropped(tmp_path, monkeypatch):
     slow = FakeProvider(lambda s, u: (time.sleep(0.2), json.dumps({"text": "Late answer."}))[1])
     takes = takes_with(tmp_path, monkeypatch, slow)
     takes.ask_rewrite("tone", (0,), 0.6)
-    takes.edit_stress(0, 0)  # the notes change while it is thinking
+    takes.use_alternative(0, 0, "Thanks")  # the notes change while it is thinking
     notes = poll_until(takes, lambda: not takes.assistant.pending)
     assert "THE NOTES CHANGED: SUGGESTION DROPPED" in notes and takes.proposals == {}
 

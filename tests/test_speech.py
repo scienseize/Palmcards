@@ -70,7 +70,7 @@ def job_for(tmp_path, **kw) -> dict:
     job = {"take": 1, "wav": str(tmp_path / "take-01.wav"), "transcript": str(tmp_path / "take-01.transcript.json"),
            "prosody": str(tmp_path / "take-01.prosody.npz"),
            "t_start": 3.0, "language": "en", "silent": False, "sentences": [["hello", "there"]],
-           "texts": ["Hello there /."], "words": [["Hello", "there"]], "marks": [[["short_pause", 2]]],
+           "texts": ["Hello there."], "words": [["Hello", "there"]],
            "realign": False}
     return job | kw
 
@@ -93,7 +93,7 @@ def test_realign_uses_saved_transcript(tmp_path):
         {"text": "Hello", "start": 4.0, "end": 4.3, "probability": 0.9},
         {"text": "there.", "start": 4.4, "end": 4.7, "probability": 0.9}]}))
     write_wav(tmp_path / "take-01.wav", np.zeros(16000 * 2, np.float32), 16000)
-    result = run_job(job_for(tmp_path, realign=True, marks=[[]]))
+    result = run_job(job_for(tmp_path, realign=True))
     s = result["alignment"]["sentences"][0]
     assert (s["status"], s["start"], s["end"]) == ("spoken", 4.0, 4.7)
     assert "0:01.0-0:01.7" in result["report"]
@@ -109,7 +109,7 @@ def test_drill_job_matches_only_its_sentence(tmp_path):
     drill = session.add_take(np.zeros(800, np.float32), 8000, 5.0, datetime.now(), [(0.0, 0)], drill=1)
     job = make_job(session, drill, notes)
     assert job["sentences"] == [[], ["good", "evening", "to", "you", "all"]]
-    assert job["marks"] == [[], [["slow", None]]]
+    assert "marks" not in job
     assert job["drill"] == 1 and job["revision"] == drill.revision and job["config"]
     assert "baseline" not in job  # Review compares the drill with the full takes; nothing waits for them
     assert make_job(session, full, notes)["drill"] is None

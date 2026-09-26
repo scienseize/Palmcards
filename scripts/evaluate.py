@@ -169,7 +169,8 @@ def gaze_report(r: dict) -> str:
 METRIC_COLUMNS = (
     ("pace_wpm", "speech", "pace_wpm", "value"),
     ("fillers_per_min", "speech", "fillers_per_min", "value"),
-    ("unplanned_long_pauses", "speech", "unplanned_long_pauses", "value"),
+    ("long_pauses", "speech", "long_pauses", "value"),
+    ("long_pauses_per_min", "speech", "long_pauses_per_min", "value"),
     ("restarts", "speech", "restarts", "value"),
     ("ad_libs", "speech", "ad_libs", "value"),
     ("pitch_range_st", "voice", "pitch_range_st", "value"),

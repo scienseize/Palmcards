@@ -1,35 +1,29 @@
-"""Stress edits make notes revisions; undo steps back; takes keep the notes
-they were recorded with."""
+"""Edits make notes revisions; undo steps back; takes keep the notes they
+were recorded with."""
 
 import json
 from datetime import datetime
 
 import numpy as np
-import pytest
 
 import main
-from palmcards.edit import is_stressed, toggle_stress
+from palmcards.edit import replace_word
 from palmcards.gestures import GestureLog
-from palmcards.notes import Mark, MarkKind, parse_text
+from palmcards.notes import parse_text
 from palmcards.session import Session
 from tests.test_app_lifecycle import FakeSupervisor
 
-TEXT = "# One\n\n/ Thank you for *being* here tonight. [fall] Second one here.\n"
+TEXT = "# One\n\nThank you for being here tonight. Second one here.\n"
 
 
-def test_toggling_stress_rebuilds_just_that_sentence():
+def test_replacing_a_word_rebuilds_just_that_sentence():
     notes = parse_text(TEXT, "md")
-    on = toggle_stress(notes, 0, 5)  # "tonight."
-    s = on.sentences[0]
-    assert s.raw == "/ Thank you for *being* here *tonight.* [fall]"
-    assert s.marks == [Mark(MarkKind.FALL), Mark(MarkKind.SHORT_PAUSE, 0), Mark(MarkKind.STRESS, 3),
-                       Mark(MarkKind.STRESS, 5)]  # the parser's order: bracket marks first
-    assert on.sentences[1].raw == notes.sentences[1].raw and s.section == 0 and s.index == 0
-    assert not is_stressed(notes, 0, 5)  # the original is left alone
-    off = toggle_stress(on, 0, 3)
-    assert off.sentences[0].raw == "/ Thank you for being here *tonight.* [fall]" and not is_stressed(off, 0, 3)
-    with pytest.raises(IndexError):
-        toggle_stress(notes, 0, 99)
+    new = replace_word(notes, 0, 5, "this evening")  # "tonight."
+    s = new.sentences[0]
+    assert s.text == s.raw == "Thank you for being here this evening."
+    assert [w.text for w in s.words][-2:] == ["this", "evening."] and s.section == 0 and s.index == 0
+    assert new.sentences[1].raw == notes.sentences[1].raw
+    assert notes.sentences[0].text == "Thank you for being here tonight."  # the original is left alone
 
 
 def new_session(tmp_path) -> Session:
@@ -41,8 +35,7 @@ def new_session(tmp_path) -> Session:
 def test_edits_are_revisions_and_undo_steps_back(tmp_path):
     session = new_session(tmp_path)
     assert not session.dir.exists()
-    imported = None
-    edited = session.edit(toggle_stress(session._parsed, 0, 5), note="stress on")
+    edited = session.edit(replace_word(session._parsed, 0, 5, "today."), note="alternative")
     imported = session.revision(edited)["parent"]
     assert session.dir.exists() and [r["provenance"] for r in session.revisions] == ["imported", "edited"]
     assert session.current_revision == edited
@@ -52,7 +45,7 @@ def test_edits_are_revisions_and_undo_steps_back(tmp_path):
     assert session.undo() is None  # nothing before the import
     again = session.add_take(np.zeros(800, np.float32), 8000, 2.0, datetime.now(), [(0.0, 0)])
     assert again.revision == imported
-    branch = session.edit(toggle_stress(session.current_notes(), 1, 0))
+    branch = session.edit(replace_word(session.current_notes(), 1, 0, "Another"))
     assert session.revision(branch)["parent"] == imported  # a new edit follows the undo, not the last one
     session.release()
     loaded = Session.load(session.dir)
@@ -74,10 +67,11 @@ def takes_for(tmp_path, monkeypatch):
 def test_the_app_edits_and_undoes_and_rebuilds_its_board(tmp_path, monkeypatch):
     takes = takes_for(tmp_path, monkeypatch)
     assert takes.undo() == "NOTHING TO UNDO"
-    note = takes.edit_stress(0, 5)
-    assert note == 'STRESSED "TONIGHT."  /  U: UNDO' and takes.notes_version == 1
-    assert is_stressed(takes.notes, 0, 5) and takes.board.notes is takes.notes
-    assert takes.log.entries[-1]["kind"] == "edit" and takes.log.entries[-1]["on"] is True
-    assert takes.undo() == "UNDONE" and not is_stressed(takes.notes, 0, 5) and takes.notes_version == 2
+    note = takes.use_alternative(0, 5, "today")
+    assert note == '"TONIGHT." -> "TODAY"  /  U: UNDO' and takes.notes_version == 1
+    assert takes.notes.sentences[0].text.endswith("today.") and takes.board.notes is takes.notes
+    assert takes.log.entries[-1]["kind"] == "edit" and takes.log.entries[-1]["op"] == "alternative"
+    assert takes.undo() == "UNDONE" and takes.notes.sentences[0].text.endswith("tonight.")
+    assert takes.notes_version == 2
     data = json.loads((takes.session.dir / "session.json").read_text())
     assert data["current"] == data["revisions"][0]["id"] and len(data["revisions"]) == 2

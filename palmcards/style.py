@@ -29,15 +29,12 @@ def bgr(c: RGB | RGBA) -> tuple[int, int, int]:
 
 @dataclass(frozen=True)
 class Colors:
-    # Text: the highlighted unit, the rest dimmed, context fainter still; marks a shade dimmer.
+    # Text: the highlighted unit, the rest dimmed, context fainter still.
     orange: RGBA = (255, 140, 0, 255)
-    orange_mark: RGBA = (255, 140, 0, 150)
+    orange_soft: RGBA = (255, 140, 0, 150)  # the label's second line
     dim: RGBA = (220, 220, 220, 110)
-    dim_mark: RGBA = (220, 220, 220, 60)
     faint: RGBA = (220, 220, 220, 45)
-    faint_mark: RGBA = (220, 220, 220, 25)
     focus_text: RGBA = (245, 245, 245, 255)  # enlarged unit in the focus panel
-    focus_mark: RGBA = (245, 245, 245, 140)
     backing: RGBA = (10, 10, 12, 150)  # soft dark box behind the text
     # Chips and nodes.
     chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node
@@ -45,7 +42,7 @@ class Colors:
     dark_fill: RGBA = (15, 15, 18, 215)
     node_text: RGBA = (240, 240, 240, 255)
     node_outline: RGBA = (240, 240, 240, 200)
-    node_outline_dim: RGBA = (240, 240, 240, 90)  # the ring's action nodes (stress, hear it)
+    node_outline_dim: RGBA = (240, 240, 240, 90)  # the ring's action node (hear it)
     # Review.
     detail_text: RGBA = (235, 235, 235, 235)  # the takes' lines under a focused sentence
     # Persistent alert line (recording or analysis trouble) and the panel's scrollbar.
@@ -251,9 +248,8 @@ class Player:
 COLORS = Colors()
 # Preferences > high contrast (key c): dimmed text much brighter, context
 # readable, a darker backing; the highlight stays orange.
-HIGH_CONTRAST = replace(COLORS, dim=(245, 245, 245, 200), dim_mark=(245, 245, 245, 150), faint=(235, 235, 235, 130),
-                        faint_mark=(235, 235, 235, 100), backing=(0, 0, 0, 215), label_fill=(0, 0, 0, 230),
-                        focus_mark=(255, 255, 255, 200), detail_text=(255, 255, 255, 255),
+HIGH_CONTRAST = replace(COLORS, dim=(245, 245, 245, 200), faint=(235, 235, 235, 130),
+                        backing=(0, 0, 0, 215), label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255),
                         node_outline_dim=(245, 245, 245, 160))
 TEXT = Text()
 CHIPS = Chips()

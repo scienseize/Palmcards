@@ -73,7 +73,7 @@ class RingSelection:
         return self.labels.index(self.pick) if self.pick in self.labels else 0
 
     def set_labels(self, labels: tuple[str, ...]) -> None:
-        """New nodes (alternatives arriving, stress turned to unstress): the pick
+        """New nodes (alternatives arriving): the pick
         stays on its label; a label that has gone falls back to the first node."""
         self.labels = tuple(labels)
         if self.pick not in self.labels:

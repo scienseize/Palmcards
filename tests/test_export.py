@@ -1,5 +1,6 @@
-"""Exported notes read back as the same sentences, words and marks, in every
-format; nothing is written over an existing file or the original."""
+"""Exported notes read back as the same sentences and words, in every format;
+old delivery-mark markup is not written back; nothing is written over an
+existing file or the original."""
 
 from datetime import datetime
 
@@ -7,7 +8,7 @@ import numpy as np
 import pytest
 
 from palmcards import export
-from palmcards.notes import Mark, MarkKind, load_notes, parse_text
+from palmcards.notes import load_notes, parse_text
 from palmcards.revisions import from_snapshot, to_snapshot
 from palmcards.session import Session
 
@@ -26,8 +27,8 @@ We started with one question: // what if practice felt easy? [rise]
 
 def same(a, b):
     assert [sec.title for sec in a.sections] == [sec.title for sec in b.sections]
-    assert [(s.text, s.section, [w.text for w in s.words], s.marks) for s in a.sentences] == \
-        [(s.text, s.section, [w.text for w in s.words], s.marks) for s in b.sentences]
+    assert [(s.text, s.section, [w.text for w in s.words]) for s in a.sentences] == \
+        [(s.text, s.section, [w.text for w in s.words]) for s in b.sentences]
     paragraphs = lambda n: [[s.index for s in n.sentences if s.paragraph == p] for p in sorted({s.paragraph for s in n.sentences})]
     assert paragraphs(a) == paragraphs(b)
 
@@ -40,14 +41,13 @@ def test_every_format_reads_back_the_same(tmp_path, fmt):
     same(load_notes(dest), notes)
 
 
-def test_an_unedited_sentence_keeps_its_markup_and_an_edited_one_is_rebuilt():
+def test_old_markup_is_not_written_back(tmp_path):
     notes = parse_text(TEXT, "md")
-    assert export.marked(notes.sentences[4]) == "**Very** forgiving heads. [fall]"  # as written
-    s = notes.sentences[1]
-    s.marks = [m for m in s.marks if m.kind != MarkKind.STRESS] + [Mark(MarkKind.STRESS, 5)]  # stress moved
-    s.words[3].stressed, s.words[5].stressed = False, True
-    assert export.marked(s) == "/ Thank you for being here *tonight.*"  # its pause stays
-    assert parse_text(export.marked(s)).sentences[0].marks == [Mark(MarkKind.SHORT_PAUSE, 0), Mark(MarkKind.STRESS, 5)]
+    export.write(notes, tmp_path / "out.md", "md")
+    out = (tmp_path / "out.md").read_text()
+    assert "Thank you for being here tonight." in out and "Very forgiving heads." in out
+    assert not any(m in out for m in ("/", "*", "[slow]", "[fast]", "[rise]", "[fall]"))
+    assert load_notes(tmp_path / "out.md").warnings == []
 
 
 def test_untitled_sections_round_trip_in_txt_and_are_reported_in_md(tmp_path):
@@ -81,15 +81,15 @@ def test_the_cli_exports_the_chosen_revision_to_the_session(tmp_path, capsys):
     session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)])
     first = session.current_revision
     edited = from_snapshot(session.snapshot(first))
-    edited.sentences[0].marks.append(Mark(MarkKind.FALL))  # a later revision: an ending added
+    edited.sections[0].sentences[0].text = "Good evening, all."  # a later revision
     second = session.add_revision(edited)
     session.release()
     assert export.main([str(session.dir), "--revision", first, "--format", "md"]) == 0
     out = capsys.readouterr().out
     assert "docx are not kept" in out
     path = session.dir / "exports" / f"talk-{first}.md"
-    assert load_notes(path).sentences[0].marks == []
+    assert load_notes(path).sentences[0].text == "Good evening, everyone."
     assert export.main([str(session.dir)]) == 0  # current revision, the original's format
     back = load_notes(session.dir / "exports" / f"talk-{second}.docx")
-    assert Mark(MarkKind.FALL) in back.sentences[0].marks  # the later revision's ending
+    assert back.sentences[0].text == "Good evening, all."  # the later revision's text
     assert original.exists() and export.main([str(session.dir)]) == 1  # the same file again: refused

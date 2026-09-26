@@ -1,15 +1,12 @@
-"""File loading, sections/sentences/words, delivery-mark parsing.
+"""File loading: sections, sentences, words.
 
 Supported inputs: .txt, .md, .docx. Legacy .doc is rejected.
 
-Delivery marks (plain ASCII in the file):
-  /  short pause       //  long pause        *word*  stress
-  [slow] [fast]  pace (anywhere in the sentence, usually at the start)
-  [rise] [fall]  ending intonation (usually at the end)
-
-Pause marks are stored as the gap *before* word i, so i ranges over
-0..len(words): 0 is the gap before the first word (after the previous
-sentence), len(words) is the gap after the last word.
+Notes are plain text. PalmCards used to read delivery marks written in the
+file (/ // *word* [slow] [fast] [rise] [fall]); they were removed on
+2026-09-26. Such markup is still recognised, only to be left out of the
+text, with one warning saying how many marks were ignored. A slash inside a
+word ("and/or") is text, as before.
 
 Sections start at headings (markdown `#`, Word "Heading"/"Title" styles).
 In .txt and .docx, two or more consecutive blank lines/paragraphs also start
@@ -24,45 +21,12 @@ import io
 import re
 import sys
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 
 
 # Bump when parsing changes what a file turns into, so saved notes snapshots
-# (palmcards.revisions) say which parser made them.
-PARSER_VERSION = 1
-
-
-class MarkKind(StrEnum):
-    SHORT_PAUSE = "short_pause"
-    LONG_PAUSE = "long_pause"
-    STRESS = "stress"
-    SLOW = "slow"
-    FAST = "fast"
-    RISE = "rise"
-    FALL = "fall"
-
-
-PACE_KINDS = (MarkKind.SLOW, MarkKind.FAST)
-ENDING_KINDS = (MarkKind.RISE, MarkKind.FALL)
-
-
-@dataclass(frozen=True)
-class Mark:
-    kind: MarkKind
-    # Stress: index of the stressed word. Pause: gap before this word index.
-    # Pace and ending: None (they apply to the whole sentence).
-    word: int | None = None
-
-
-def reading_place(mark: Mark, n_words: int) -> tuple[int, int]:
-    """Where a mark reads in its sentence, for ordering: the pace first, then
-    word by word (a pause before its word, a stress on it), the ending last."""
-    if mark.kind in PACE_KINDS:
-        return (-1, 0)
-    if mark.kind in ENDING_KINDS:
-        return (n_words + 1, 0)
-    return (mark.word, 1 if mark.kind is MarkKind.STRESS else 0)
+# (palmcards.revisions) say which parser made them. 2: no delivery marks.
+PARSER_VERSION = 2
 
 
 @dataclass
@@ -71,29 +35,16 @@ class Word:
     norm: str  # lowercase letters/digits/apostrophes only, for alignment
     start: int  # char offsets into Sentence.text
     end: int
-    stressed: bool = False
 
 
 @dataclass
 class Sentence:
-    raw: str  # original text with marks
-    text: str  # display text with marks removed
+    raw: str  # the sentence as written in the file (any old markup included)
+    text: str  # as displayed: the words and punctuation, markup left out
     words: list[Word]
-    marks: list[Mark]
     section: int = 0
     paragraph: int = 0  # source paragraph, counted across the whole file
     index: int = 0  # position in Notes.sentences
-
-    @property
-    def pace(self) -> MarkKind | None:
-        return next((m.kind for m in self.marks if m.kind in PACE_KINDS), None)
-
-    @property
-    def ending(self) -> MarkKind | None:
-        return next((m.kind for m in self.marks if m.kind in ENDING_KINDS), None)
-
-    def pauses(self) -> list[Mark]:
-        return [m for m in self.marks if m.kind in (MarkKind.SHORT_PAUSE, MarkKind.LONG_PAUSE)]
 
 
 @dataclass
@@ -115,10 +66,10 @@ class Notes:
 
 # --- sentence parsing -------------------------------------------------------
 
+# The delivery-mark markup of earlier versions, recognised only to leave it out.
 BRACKET_MARK = re.compile(r"\[(slow|fast|rise|fall)\]", re.IGNORECASE)
 # *word* or **several words**; must hug non-space text on both sides.
 STRESS_SPAN = re.compile(r"(\*{1,2})(?=\S)(.+?)(?<=\S)\1")
-STRESS_ON, STRESS_OFF = "\x01", "\x02"
 EDGE_PAUSES = re.compile(r"^(/{1,2})?(.*?)(/{1,2})?$", re.DOTALL)
 NORM_DROP = re.compile(r"[^\w']+")
 
@@ -129,87 +80,40 @@ def normalize(text: str) -> str:
     return NORM_DROP.sub("", text.lower().replace("\u2019", "'")).strip("'")
 
 
-def _pause(slashes: str) -> MarkKind:
-    return MarkKind.LONG_PAUSE if len(slashes) == 2 else MarkKind.SHORT_PAUSE
-
-
-def parse_sentence(raw: str, warnings: list[str] | None = None) -> Sentence:
-    """Parse one sentence of marked-up text."""
-    warnings = warnings if warnings is not None else []
-    marks: list[Mark] = []
-
-    # 1. Sentence-level bracket marks. If both of a pair appear, the last wins.
-    found = [MarkKind(m.group(1).lower()) for m in BRACKET_MARK.finditer(raw)]
-    for kinds in (PACE_KINDS, ENDING_KINDS):
-        picked = [k for k in found if k in kinds]
-        if len(set(picked)) > 1:
-            warnings.append(f"Conflicting marks {', '.join('[' + k + ']' for k in picked)} "
-                            f"in {raw!r}; using [{picked[-1]}].")
-        if picked:
-            marks.append(Mark(picked[-1]))
+def parse_sentence(raw: str, ignored: list[int] | None = None) -> Sentence:
+    """Parse one sentence. Old delivery-mark markup is left out of the text;
+    how many marks were left out is appended to `ignored`."""
+    marks = len(BRACKET_MARK.findall(raw))
     body = BRACKET_MARK.sub(" ", raw)
+    # Stress spans (*word*, **several words**) lose their asterisks.
+    marks += len(STRESS_SPAN.findall(body))
+    body = STRESS_SPAN.sub(lambda m: m.group(2), body)
 
-    # 2. Stress spans become sentinel characters that survive tokenisation.
-    body = STRESS_SPAN.sub(lambda m: STRESS_ON + m.group(2) + STRESS_OFF, body)
-
-    # 3. Tokenise on whitespace; slashes standing alone or at a token's edge
-    #    are pauses, slashes inside a token ("and/or") are text.
+    # Slashes standing alone or at a token's edge were pauses; slashes inside
+    # a token ("and/or") are text.
     words: list[Word] = []
     pieces: list[str] = []
-    stressed = False
-    pending_pause: MarkKind | None = None
-
-    def add_pause(kind: MarkKind) -> None:
-        nonlocal pending_pause
-        # Two marks in the same gap: keep the longer one.
-        if pending_pause != MarkKind.LONG_PAUSE:
-            pending_pause = kind
-
     for token in body.split():
-        if token.strip(STRESS_ON + STRESS_OFF) in ("/", "//"):
-            add_pause(_pause(token.strip(STRESS_ON + STRESS_OFF)))
+        if token.strip("/") == "":
+            marks += 1
             continue
-        if token.strip("/" + STRESS_ON + STRESS_OFF) == "":
-            continue  # "///" or stray sentinels: nothing to say
-        lead, core, trail = EDGE_PAUSES.match(token).groups()
-        if lead:
-            add_pause(_pause(lead))
-
-        starts_stress = STRESS_ON in core
-        text = core.replace(STRESS_ON, "").replace(STRESS_OFF, "")
-        is_stressed = stressed or starts_stress
-        if STRESS_ON in core:
-            stressed = core.rfind(STRESS_ON) > core.rfind(STRESS_OFF)
-        elif STRESS_OFF in core:
-            stressed = False
-
+        lead, text, trail = EDGE_PAUSES.match(token).groups()
+        marks += bool(lead) + bool(trail)
         norm = normalize(text)
-        if not norm:
-            pieces.append(text)  # punctuation-only token, e.g. an em dash
-        else:
-            if pending_pause:
-                marks.append(Mark(pending_pause, len(words)))
-                pending_pause = None
+        if norm:
             start = sum(len(p) + 1 for p in pieces)
-            words.append(Word(text, norm, start, start + len(text), is_stressed))
-            if is_stressed:
-                marks.append(Mark(MarkKind.STRESS, len(words) - 1))
-            pieces.append(text)
-        if trail:
-            add_pause(_pause(trail))
-
-    if pending_pause:
-        marks.append(Mark(pending_pause, len(words)))
-
-    text = " ".join(pieces)
-    return Sentence(raw=raw.strip(), text=text, words=words, marks=marks)
+            words.append(Word(text, norm, start, start + len(text)))
+        pieces.append(text)  # a punctuation-only token (an em dash) is text, not a word
+    if ignored is not None:
+        ignored.append(marks)
+    return Sentence(raw=raw.strip(), text=" ".join(pieces), words=words)
 
 
 # --- sentence splitting -----------------------------------------------------
 
 ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "prof", "st", "vs", "etc", "e.g", "i.e", "approx", "no"}
 SENTENCE_END = re.compile(r"[.?!]+[\"'”’)\]*]*(?=\s)")
-# Ending marks after the punctuation belong to the sentence they follow.
+# Old ending marks after the punctuation belong to the sentence they follow.
 TRAILING_ENDING = re.compile(r"\s+\[(?:rise|fall)\]", re.IGNORECASE)
 
 
@@ -273,7 +177,7 @@ def _md_blocks(text: str) -> list[Block]:
     for i, tok in enumerate(tokens):
         if tok.type != "inline":
             continue
-        # Raw inline source keeps *stress* asterisks and [marks] intact.
+        # Raw inline source: old *stress* and [marks] are left out by parse_sentence, not by markdown.
         kind = "heading" if tokens[i - 1].type == "heading_open" else "para"
         blocks.append((kind, " ".join(tok.content.split())))
     return blocks
@@ -301,6 +205,7 @@ def _docx_blocks(data: bytes) -> list[Block]:
 def build_notes(blocks: list[Block], source: Path | None = None) -> Notes:
     notes = Notes(sections=[Section("")], source=source)
     paragraph = -1
+    ignored: list[int] = []
     for kind, text in blocks:
         current = notes.sections[-1]
         if kind in ("heading", "break"):
@@ -311,13 +216,16 @@ def build_notes(blocks: list[Block], source: Path | None = None) -> Notes:
             continue
         paragraph += 1
         for raw in split_sentences(text):
-            sentence = parse_sentence(raw, notes.warnings)
+            sentence = parse_sentence(raw, ignored)
             if not sentence.words:
-                notes.warnings.append(f"Ignored {raw!r}: no words, only marks.")
+                notes.warnings.append(f"Ignored {raw!r}: no words.")
                 continue
             sentence.paragraph = paragraph
             current.sentences.append(sentence)
 
+    if n := sum(ignored):
+        notes.warnings.append(f"Ignored {n} delivery mark{'s' if n != 1 else ''} (/ // *word* [slow] [fast] "
+                              "[rise] [fall]): PalmCards no longer uses them, and the text reads without them.")
     for sec in notes.sections:
         if not sec.sentences and sec.title:
             notes.warnings.append(f"Section {sec.title!r} has no text; dropped.")
@@ -375,15 +283,6 @@ def _describe(notes: Notes) -> str:
         lines.append(f"== Section {si}: {sec.title or '(untitled)'}")
         for s in sec.sentences:
             lines.append(f"  [{s.index}] {s.text}")
-            for m in s.marks:
-                where = ""
-                if m.kind is MarkKind.STRESS:
-                    where = f" on {s.words[m.word].text!r}"
-                elif m.word is not None:
-                    before = s.words[m.word - 1].text if m.word > 0 else "(start)"
-                    after = s.words[m.word].text if m.word < len(s.words) else "(end)"
-                    where = f" between {before!r} and {after!r}"
-                lines.append(f"      {m.kind}{where}")
     for w in notes.warnings:
         lines.append(f"warning: {w}")
     return "\n".join(lines)

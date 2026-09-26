@@ -3,13 +3,12 @@
     take_metrics(alignment, words, t_start, duration_s, gesture_log, trace) -> dict
 
 Every metric is an observation with what it rests on, never a judgment of
-the speaker. One without enough to go on is None with the reason, like an
-"unclear" verdict.
+the speaker. One without enough to go on is None with the reason.
 
   speech   pace over the sentences said (words per minute of speaking
-           time), fillers per minute of the take, unplanned long pauses
-           (silences between words over METRICS.long_pause_s that no pause
-           mark asked for), restarts and ad-libs. From the transcript. Per
+           time), fillers per minute of the take, long pauses (silences
+           between words over METRICS.long_pause_s; a count, and per minute
+           of the take), restarts and ad-libs. From the transcript. Per
            sentence (`sentences`): whether it was said, its pace from its
            first to its last word, and the fillers that count toward it (the
            sentence they fall in, or the next one said after them).
@@ -50,7 +49,7 @@ from palmcards.config import BODY, METRICS
 from palmcards.notes import normalize
 from palmcards.prosody import Prosody
 
-VERSION = 4  # 2: gaze; 3: posture, hands from the features, face touches; 4: speech per sentence, voice
+VERSION = 5  # 2: gaze; 3: posture, hands, face touches; 4: speech per sentence, voice; 5: long pauses, all of them
 
 
 def _none(reason: str) -> dict:
@@ -96,10 +95,8 @@ def sentence_speech(alignment: dict, gaps=()) -> list[dict]:
     return out
 
 
-def speech(alignment: dict, words: list[dict], duration_s: float, planned_pauses: set[int] = frozenset(),
-           lost=()) -> dict:
-    """`planned_pauses`: transcript word indices a pause mark sits before;
-    `lost`: (start, end) app times the recording lost."""
+def speech(alignment: dict, words: list[dict], duration_s: float, lost=()) -> dict:
+    """`lost`: (start, end) app times the recording lost."""
     said = [s for s in alignment["sentences"] if s["status"] != "skipped" and s["start"] is not None]
     n_words = sum(sum(i is not None for i in s["words"]) for s in said)
     speaking_s = sum(s["end"] - s["start"] for s in said)
@@ -118,9 +115,14 @@ def speech(alignment: dict, words: list[dict], duration_s: float, planned_pauses
     unsure = set(alignment.get("unsure", []))
     real = [i for i, w in enumerate(words) if normalize(w["text"]) and i not in unsure]
     gaps = [(words[b]["start"] - words[a]["end"], b) for a, b in zip(real, real[1:])]
-    long = [g for g, b in gaps if g >= METRICS.long_pause_s and b not in planned_pauses]
-    out["unplanned_long_pauses"] = {"value": len(long), "longest_s": round(max(long), 2) if long else None,
-                                    "basis": f"silences over {METRICS.long_pause_s:g} s no pause mark asked for"}
+    long = [g for g, _ in gaps if g >= METRICS.long_pause_s]
+    out["long_pauses"] = {"value": len(long), "longest_s": round(max(long), 2) if long else None,
+                          "basis": f"silences between words over {METRICS.long_pause_s:g} s"}
+    if duration_s >= METRICS.min_take_s:
+        out["long_pauses_per_min"] = {"value": round(len(long) / minutes, 2),
+                                      "basis": f"{len(long)} long pauses in {duration_s:.0f} s"}
+    else:
+        out["long_pauses_per_min"] = _none(f"take too short ({duration_s:.0f} s)")
     out["restarts"] = {"value": len(alignment["restarts"]), "basis": "phrases said again"}
     out["ad_libs"] = {"value": len(alignment["extras"]), "basis": "runs of words not in the notes"}
     out["sentences"] = sentence_speech(alignment, lost)
@@ -317,30 +319,19 @@ def gaze(alignment: dict, vision: dict | None, face: Path | None, calibration: d
 
 def take_metrics(alignment: dict, words: list[dict], t_start: float, duration_s: float,
                  gesture_log: Path | None = None, trace: Path | None = None,
-                 planned_pauses: set[int] = frozenset(), vision: dict | None = None, face: Path | None = None,
+                 vision: dict | None = None, face: Path | None = None,
                  calibration: dict | None = None, prosody: Prosody | None = None, prosody_why: str = "",
                  gaps=()) -> dict:
     arrays, why = _features(vision, face)
     return {
         "version": VERSION,
-        "speech": speech(alignment, words, duration_s, planned_pauses, gaps),
+        "speech": speech(alignment, words, duration_s, gaps),
         "voice": voice(prosody, alignment, prosody_why),
         "hands": hands(gesture_log, trace, t_start, t_start + duration_s, arrays, why),
         "gaze": gaze_mod.take_gaze(arrays, calibration, alignment, vision.get("calibration")) if arrays is not None
         else _none(why),
         "posture": posture(arrays, calibration, why),
     }
-
-
-def planned_pause_words(alignment: dict, marks: list[list]) -> set[int]:
-    """Transcript words that a pause mark sits before (their silence was asked for)."""
-    out = set()
-    for entry, sent_marks in zip(alignment["sentences"], marks):
-        for kind, word in sent_marks:
-            if kind in ("short_pause", "long_pause") and word is not None and word < len(entry["words"]):
-                if (t := entry["words"][word]) is not None:
-                    out.add(t)
-    return out
 
 
 def value(group: dict | None, key: str):

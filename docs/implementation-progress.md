@@ -1581,3 +1581,28 @@ Checked on a copy of 20260926-193557 (two takes): --realign printed per-sentence
 Docs (CLAUDE.md, README) are rewritten in stage 4.
 Tests: pytest (full) -> 466 passed; replays 12 ok.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: no delivery marks, stage 3 of 4: the markup itself removed
+Changes:
+  palmcards/notes.py (PARSER_VERSION 2): notes are plain text. Mark, MarkKind, Sentence.marks / pace /
+    ending / pauses and Word.stressed are gone. Old markup (/ // *word* [slow] [fast] [rise] [fall]) is
+    still recognised by the same rules, only to leave it out of the text; a file with any gets one
+    warning ("Ignored N delivery marks ..."). Sentence.raw stays the text as written.
+  palmcards/revisions.py: snapshots hold no marks. Parser-1 snapshots (marks, a stressed flag per word)
+    load as they are, their hash checked on what they hold, the marks left out of the Notes; sentence
+    ids carry on across the change (matched on the text as written).
+  palmcards/edit.py: toggle_stress / is_stressed gone; replace_word rebuilds the sentence from its text
+    (punctuation such as em dashes kept). palmcards/export.py writes each sentence as it reads.
+  The options ring: the word, its alternatives, hear it (stress/unstress gone; hear it still speaks the
+    sentence with the focused word emphasised). gestures.DEFAULT_RING = ("original", "hear it").
+  palmcards/metrics.py (version 5): long pauses are every silence between words over
+    METRICS.long_pause_s (no planned ones any more), counted and per minute of the take
+    (long_pauses, long_pauses_per_min); the take table reads unplanned_long_pauses from older metrics.
+  SPEECH.scoring_languages became filler_languages (what it still decides).
+  samples/sample_notes.md: plain text, its two sentences about marks reworded.
+Checked on a copy of 20260926-193557: its parser-1 revision loads and verifies; an edit made a parser-2
+  revision keeping the other sentences' ids; export wrote plain text; --realign gave long_pauses.
+Tests: pytest (full) -> 461 passed; replays 12 ok.
+```

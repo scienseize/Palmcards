@@ -2,7 +2,7 @@
 
 Demo style: monospace block floating beside the user, the unit under the
 cursor in orange, the rest dimmed, a few lines visible, soft dark backing
-behind it. Delivery marks are drawn as written, a shade dimmer than the words.
+behind it.
 
 The layout is a grid of monospace cells, so every word has a known row and
 column range; hit_test() maps a point back to (sentence, word), and
@@ -10,7 +10,7 @@ cursor_to_text() maps the relative hand-box cursor to such a point.
 
 On top of the text: the two-line state label (Kat's `BROWSE BY WORD`), and
 Prepare's operations: the options ring (the original word, its alternatives
-when the optional LLM is on, stress and "hear it"; an L-hand turns it like a
+when the optional LLM is on, and "hear it"; an L-hand turns it like a
 knob, the picked node at 12 o'clock, its word scrambling into the sentence),
 and the tone gauge and stretch line; without the LLM these two only preview,
 and say so. While the
@@ -56,7 +56,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from palmcards.config import CURSOR, KNOB, REHEARSE
 from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
-from palmcards.notes import MarkKind, Sentence
+from palmcards.notes import Sentence
 from palmcards.style import (
     CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
 )
@@ -72,18 +72,17 @@ def set_contrast(high: bool) -> None:
     """High-contrast colours (preferences); build a new TextOverlay afterwards."""
     global C
     C = HIGH_CONTRAST if high else COLORS
-PAUSE_TEXT = {MarkKind.SHORT_PAUSE: "/", MarkKind.LONG_PAUSE: "//"}
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
-HEAR_IT, STRESS, UNSTRESS = "hear it", "stress", "unstress"  # ring nodes after the original word (and alternatives)
+HEAR_IT = "hear it"  # the ring's last node, after the word itself and its alternatives
 SCRAMBLE = "abcdefghijklmnopqrstuvwxyz#%&@$"
 FOCUS_HINTS = {  # without the optional LLM
-    "word": "OPEN PALM: STRESS, HEAR IT  /  DROP HAND: BACK",
+    "word": "OPEN PALM: HEAR IT  /  DROP HAND: BACK",
     "sentence": "L-HAND, THEN TILT: TONE (PREVIEW ONLY)  /  DROP HAND: BACK",
     "paragraph": "TWO L-HANDS: LENGTH (PREVIEW ONLY)  /  DROP HAND: BACK",
 }
 FOCUS_HINTS_LLM = {
-    "word": "OPEN PALM: ALTERNATIVES, STRESS, HEAR IT  /  DROP HAND: BACK",
+    "word": "OPEN PALM: ALTERNATIVES, HEAR IT  /  DROP HAND: BACK",
     "sentence": "L-HAND: TONE  /  DROP HAND: BACK",
     "paragraph": "TWO L-HANDS: LENGTH  /  DROP HAND: BACK",
 }
@@ -137,7 +136,7 @@ class OpsView:
 
     kind: str | None = None  # ring | tone | stretch
     picked: int = 0  # ring node (ring_labels order), 0 = original word
-    pointing: bool = False  # choosing: pointing at the marks, turning the ring
+    pointing: bool = False  # choosing: pointing at Review's takes, turning the ring
     # The ring turned like a knob (follow_ring): its rotation in nodes, unwrapped
     # (+ clockwise), eases from rot_from to rot_to over KNOB.rotate_s from
     # turned_t. `turn` is the grammar's ring_turn it has followed. `preview` is
@@ -219,9 +218,8 @@ class Panel:
 @dataclass(frozen=True)
 class Span:
     text: str
-    role: str  # "word" | "mark" | "punct"
+    role: str  # "word" | "punct"
     word: int | None = None
-    mark: int | None = None  # index into Sentence.marks, for marks
 
 
 @dataclass
@@ -232,46 +230,26 @@ class Row:
 
 def sentence_units(s: Sentence) -> list[list[Span]]:
     """Display units (unbreakable, space-separated) for one sentence."""
-    pauses = {m.word: (i, m.kind) for i, m in enumerate(s.marks) if m in s.pauses()}
-    stress = {m.word: i for i, m in enumerate(s.marks) if m.kind is MarkKind.STRESS}
     units: list[list[Span]] = []
-    if s.pace:
-        units.append([Span(f"[{s.pace}]", "mark", mark=_mark_index(s, s.pace))])
     wi = 0
     for tok in re.finditer(r"\S+", s.text):
         if wi < len(s.words) and tok.start() == s.words[wi].start:
-            if wi in pauses:
-                units.append([Span(PAUSE_TEXT[pauses[wi][1]], "mark", mark=pauses[wi][0])])
-            word = Span(tok.group(), "word", wi)
-            if s.words[wi].stressed:
-                mi = stress.get(wi)
-                units.append([Span("*", "mark", mark=mi), word, Span("*", "mark", mark=mi)])
-            else:
-                units.append([word])
+            units.append([Span(tok.group(), "word", wi)])
             wi += 1
         else:
             units.append([Span(tok.group(), "punct")])
-    if len(s.words) in pauses:
-        i, kind = pauses[len(s.words)]
-        units.append([Span(PAUSE_TEXT[kind], "mark", mark=i)])
-    if s.ending:
-        units.append([Span(f"[{s.ending}]", "mark", mark=_mark_index(s, s.ending))])
     return units
-
-
-def _mark_index(s: Sentence, kind: MarkKind) -> int | None:
-    return next((i for i, m in enumerate(s.marks) if m.kind is kind), None)
 
 
 def _split(unit: list[Span], columns: int) -> list[list[Span]]:
     """A unit wider than a row, cut into row-wide pieces; each piece keeps
-    its spans' word and mark, so hit-testing still finds the word."""
+    its spans' word, so hit-testing still finds the word."""
     pieces, piece, width = [], [], 0
     for sp in unit:
         text = sp.text
         while text:
             take = min(len(text), columns - width)
-            piece.append(Span(text[:take], sp.role, sp.word, sp.mark))
+            piece.append(Span(text[:take], sp.role, sp.word))
             text, width = text[take:], width + take
             if width == columns:
                 pieces.append(piece)
@@ -479,10 +457,9 @@ class TextOverlay:
             second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "L-HAND, THEN TURN TO PICK"
             if ops.pointing or ops.picked:
                 picked = self.ring_labels(state)[ops.picked]
-                word = self.word_text(state.focus).upper() if state.focus and state.focus.word is not None else ""
-                second = {HEAR_IT: "PINCH + LIFT: HEAR IT", STRESS: f'PINCH + LIFT: STRESS "{word}"',
-                          UNSTRESS: f'PINCH + LIFT: UNSTRESS "{word}"'}.get(picked)
-                if second is None:
+                if picked == HEAR_IT and ops.picked >= self.ring_words(state):
+                    second = "PINCH + LIFT: HEAR IT"
+                else:
                     second = "KEEP THE WORD (NO CHANGE)" if ops.picked == 0 else f'PINCH + LIFT: USE "{picked.upper()}"'
         elif ops.kind == "tone":
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
@@ -503,8 +480,8 @@ class TextOverlay:
 
     def ring_words(self, state: ViewState) -> int:
         """How many of ring_labels are words (the word itself and its
-        alternatives); the rest are actions (stress/unstress, hear it)."""
-        return len(self.ring_labels(state)) - 2 if state.focus is not None and state.focus.word is not None else 0
+        alternatives); the last is the action (hear it)."""
+        return len(self.ring_labels(state)) - 1 if state.focus is not None and state.focus.word is not None else 0
 
     def follow_ring(self, state: ViewState, pick: str | None, turn: int) -> None:
         """The options ring follows the grammar's knob (GestureState.ring_pick,
@@ -547,13 +524,11 @@ class TextOverlay:
         return ops.preview
 
     def ring_labels(self, state: ViewState) -> tuple[str, ...]:
-        """The word as it is, stress (or unstress) it, hear it. Word alternatives
+        """The word as it is, its alternatives, hear it. Word alternatives
         need the optional LLM and are not offered without one."""
         if state.focus is None or state.focus.word is None:
             return ("original", HEAR_IT)
-        stressed = any(m.kind == MarkKind.STRESS and m.word == state.focus.word
-                       for m in self.sentences[state.focus.sentence].marks)
-        return (self.word_text(state.focus), *state.alternatives, UNSTRESS if stressed else STRESS, HEAR_IT)
+        return (self.word_text(state.focus), *state.alternatives, HEAR_IT)
 
     # --- drawing: text -----------------------------------------------------
 
@@ -580,9 +555,9 @@ class TextOverlay:
             return ("browse", tuple(self.unit(state.level, state.hover.sentence)))
         return ("browse", (state.current,))
 
-    def _draw_span(self, draw: ImageDraw.ImageDraw, xy: tuple[float, float], sp: Span, font, word_c, mark_c) -> None:
-        """A word, punctuation, or a mark (a shade dimmer than the words)."""
-        draw.text(xy, sp.text, font=font, fill=mark_c if sp.role == "mark" else word_c)
+    def _draw_span(self, draw: ImageDraw.ImageDraw, xy: tuple[float, float], sp: Span, font, color) -> None:
+        """A word or punctuation."""
+        draw.text(xy, sp.text, font=font, fill=color)
 
     def _render_band(self, style: tuple, start: int) -> tuple[np.ndarray, np.ndarray]:
         """Rows start..start+band_rows, with row `start` at y = pad."""
@@ -594,11 +569,11 @@ class TextOverlay:
             row = self.rows[ri]
             y = self.pad + (ri - start) * self.line_h
             if kind == "focus":  # word focus: its sentence dim, the rest fainter
-                word_c, mark_c = (C.dim, C.dim_mark) if row.sentence == which else (C.faint, C.faint_mark)
+                color = C.dim if row.sentence == which else C.faint
             else:
-                word_c, mark_c = (C.orange, C.orange_mark) if row.sentence in which else (C.dim, C.dim_mark)
+                color = C.orange if row.sentence in which else C.dim
             for col, sp in row.spans:
-                self._draw_span(draw, (self.pad + col * self.char_w, y), sp, self.font, word_c, mark_c)
+                self._draw_span(draw, (self.pad + col * self.char_w, y), sp, self.font, color)
         return _premultiply(text)
 
     def _band_valid(self, scroll: float) -> bool:
@@ -688,9 +663,9 @@ class TextOverlay:
         def draw_rows(rows_, font_, lh_, cw_, colors, y_, sentence_of=lambda r: r.sentence):
             for row in rows_:
                 si = sentence_of(row)
-                word_c, mark_c = colors(si)
+                color = colors(si)
                 for col, sp in row.spans:
-                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, word_c, mark_c)
+                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, color)
                 top, bottom = where.get(si, (y_, y_))
                 where[si] = (min(top, y_), max(bottom, y_ + lh_))
                 y_ += lh_
@@ -698,14 +673,14 @@ class TextOverlay:
 
         def unit_colors(si):
             if current is not None and si == current:  # orange, even in the previewed section
-                return C.orange, C.orange_mark
+                return C.orange
             if preview_from is not None and si >= preview_from:
-                return C.faint, C.faint_mark
+                return C.faint
             if current is None:
-                return C.focus_text, C.focus_mark
-            return (C.orange, C.orange_mark) if si == current else (C.dim, C.dim_mark)
+                return C.focus_text
+            return C.orange if si == current else C.dim
 
-        y = draw_rows(above, self.font, self.line_h, self.char_w, lambda si: (C.faint, C.faint_mark), y)
+        y = draw_rows(above, self.font, self.line_h, self.char_w, lambda si: C.faint, y)
         where.clear()  # context rows are not the unit
         # The enlarged rows were laid out afresh: their sentence numbers count from the unit's first.
         y = draw_rows(rows, font, lh, cw, unit_colors, y, lambda r: unit[r.sentence])
@@ -715,7 +690,7 @@ class TextOverlay:
             for piece in dlines:
                 draw.text((self.pad, y), piece, font=dfont, fill=C.detail_text)
                 y += dlh
-        draw_rows(below, self.font, self.line_h, self.char_w, lambda si: (C.faint, C.faint_mark), y)
+        draw_rows(below, self.font, self.line_h, self.char_w, lambda si: C.faint, y)
         color, inv = _premultiply(img)
         self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y)
         return self._panel
@@ -727,7 +702,7 @@ class TextOverlay:
         """Height the two-line label needs above the text."""
         big, small = round(self.font_size * LABEL.first_scale), round(self.font_size * LABEL.second_scale)
         return self._chip("X", big, C.orange, C.label_fill)[0].shape[0] + \
-            self._chip("X", small, C.orange_mark, C.label_fill)[0].shape[0]
+            self._chip("X", small, C.orange_soft, C.label_fill)[0].shape[0]
 
     @property
     def max_panel_h(self) -> int:
@@ -818,7 +793,7 @@ class TextOverlay:
         first, second = self.label_lines(state)
         big, small = round(self.font_size * LABEL.first_scale), round(self.font_size * LABEL.second_scale)
         c1 = self._chip(first, big, C.orange, C.label_fill)
-        c2 = self._chip(second, small, C.orange_mark, C.label_fill) if second else None
+        c2 = self._chip(second, small, C.orange_soft, C.label_fill) if second else None
         h = c1[0].shape[0] + (c2[0].shape[0] if c2 else 0)
         x, y = self.x + self.margin + self.pad // 2, max(LABEL.min_top, top - h - self.pad // 2)
         _blend(frame, x, y, *c1)
@@ -900,7 +875,7 @@ class TextOverlay:
             curve = (1 - ts) ** 2 * np.array(center) + 2 * (1 - ts) * ts * np.array(ctrl) + ts ** 2 * np.array((nx, ny))
             stroke = RING.picked_stroke if i == state.ops.picked else RING.stroke
             cv2.polylines(frame, [curve.astype(np.int32)], False, bgr(C.yellow), stroke, cv2.LINE_AA)
-            outline = C.node_outline if i < words else C.node_outline_dim  # stress, hear it: actions
+            outline = C.node_outline if i < words else C.node_outline_dim  # hear it: an action
             if i == state.ops.picked and vacated and i < words:  # its word has gone up into the sentence
                 chip = self._chip(" " * len(label), size, C.node_text, C.dark_fill, outline)
             elif i == state.ops.picked:

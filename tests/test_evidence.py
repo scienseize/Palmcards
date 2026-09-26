@@ -89,7 +89,7 @@ def test_metrics_record_what_made_them(tmp_path):
     job = {"take": 1, "job": "j1", "revision": "r1", "config": "c1", "wav": str(wav),
            "transcript": str(tmp_path / "take-01.transcript.json"), "prosody": str(cache),
            "t_start": 5.0, "language": "en", "silent": True,
-           "sentences": [["hello"]], "texts": ["Hello."], "words": [["Hello."]], "marks": [[]],
+           "sentences": [["hello"]], "texts": ["Hello."], "words": [["Hello."]],
            "gaps": [[5.1, 5.2]], "realign": False}
     result = speech.run_job(job)
     prov = result["metrics"]["provenance"]

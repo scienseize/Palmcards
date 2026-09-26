@@ -1,16 +1,16 @@
-"""Write a notes revision back out as .txt, .md or .docx, delivery marks included.
+"""Write a notes revision back out as .txt, .md or .docx.
 
   python -m palmcards.export RUN [--revision ID] [--format txt|md|docx] [--out PATH]
 
 Always a new file: by default in the session's exports/ folder, never the
 file the notes were imported from (--out to choose; an existing file is
-never overwritten). A sentence nobody edited keeps its original markup
-exactly; an edited one is written from its words and marks (pace first,
-pauses and *stress* in place, the ending last).
+never overwritten). Each sentence is written as it reads in PalmCards:
+delivery-mark markup from an older file (/ // *word* [slow] ...) is not
+written back.
 
-What round-trips: section titles, sentences, paragraphs, every delivery
-mark, in all three formats (re-importing gives the same sentences, words
-and marks). What doesn't, and is reported when it applies: fonts, styles,
+What round-trips: section titles, sentences, paragraphs, in all three
+formats (re-importing gives the same sentences and words). What doesn't,
+and is reported when it applies: fonts, styles,
 lists and other formatting of an imported .docx; in .md, a section without
 a title after the first (markdown has no untitled break PalmCards reads),
 which gets the title "Section N".
@@ -22,30 +22,10 @@ import argparse
 import sys
 from pathlib import Path
 
-from palmcards.notes import MarkKind, Notes, Sentence, parse_sentence
+from palmcards.notes import Notes
 from palmcards.revisions import from_snapshot
 
 FORMATS = ("txt", "md", "docx")
-
-
-def marked(s: Sentence) -> str:
-    """The sentence as marked-up text: its original if that still says the
-    same, else rebuilt from its words and marks."""
-    again = parse_sentence(s.raw) if s.raw else None
-    if again is not None and [w.text for w in again.words] == [w.text for w in s.words] and again.marks == s.marks:
-        return s.raw
-    pauses = {m.word: m.kind for m in s.marks if m.kind in (MarkKind.SHORT_PAUSE, MarkKind.LONG_PAUSE)}
-    stressed = {m.word for m in s.marks if m.kind == MarkKind.STRESS}
-    parts = [f"[{s.pace}]"] if s.pace else []
-    for i, w in enumerate(s.words):
-        if i in pauses:
-            parts.append("//" if pauses[i] == MarkKind.LONG_PAUSE else "/")
-        parts.append(f"*{w.text}*" if i in stressed else w.text)
-    if len(s.words) in pauses:
-        parts.append("//" if pauses[len(s.words)] == MarkKind.LONG_PAUSE else "/")
-    if s.ending:
-        parts.append(f"[{s.ending}]")
-    return " ".join(parts)
 
 
 def blocks(notes: Notes) -> list[tuple[str, str]]:
@@ -62,7 +42,7 @@ def blocks(notes: Notes) -> list[tuple[str, str]]:
                 out.append(("para", " ".join(text)))
                 text = []
             paragraph = s.paragraph
-            text.append(marked(s))
+            text.append(s.text)
         if text:
             out.append(("para", " ".join(text)))
     return out

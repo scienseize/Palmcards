@@ -230,9 +230,9 @@ class Speech:
     # Off: in the stage 1 benchmark a prompt sent Whisper into loops
     # ("very, very, very, ...") and carried misheard words forward.
     live_prompt_words: int = 0
-    # Delivery-mark scoring is calibrated for these languages (stress and
-    # intonation thresholds, filler words); others get pauses and pace only.
-    scoring_languages: tuple[str, ...] = ("en",)
+    # The filler words (ALIGN.fillers) are these languages'; in others no
+    # fillers are detected (the other metrics compare the speaker with themselves).
+    filler_languages: tuple[str, ...] = ("en",)
     # Apple's recogniser (backend "apple") wants a locale, not a language code.
     apple_locales: tuple[tuple[str, str], ...] = (("en", "en-US"),)
     apple_max_hints: int = 100  # contextual strings (note sentences) given to Apple's recogniser
@@ -323,7 +323,7 @@ class Metrics:
     min_speaking_s: float = 5.0  # less speaking time: no pace
     min_words: int = 10  # fewer words: no pace
     min_take_s: float = 10.0  # a shorter take: no fillers per minute
-    long_pause_s: float = 1.5  # a silence this long that no pause mark asked for
+    long_pause_s: float = 1.5  # a silence between words this long is a long pause
     # Per sentence: pace needs this many aligned words (fewer: no pace for it).
     sentence_min_words: int = 4
     gap_unknown_s: float = 0.05  # a lost stretch of audio of unknown length counts as this long

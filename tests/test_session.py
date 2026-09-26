@@ -107,8 +107,7 @@ def test_the_imported_file_and_its_notes_are_kept(tmp_path):
     assert session.notes == path.resolve()  # absolute: provenance only
     notes = Session.load(session.dir).notes_for(take)
     assert texts(notes) == texts(load_notes(path))
-    assert [(m.kind, m.word) for m in notes.sentences[1].marks] == \
-        [(m.kind, m.word) for m in load_notes(path).sentences[1].marks]
+    assert [s.raw for s in notes.sentences] == [s.raw for s in load_notes(path).sentences]
 
 
 @pytest.mark.parametrize("change", ["edit_same_count", "delete", "move"])
@@ -275,9 +274,23 @@ def test_snapshot_round_trip_rebuilds_the_notes_without_parsing():
     assert texts(back) == texts(notes) and [sec.title for sec in back.sections] == ["One", "Two"]
     for a, b in zip(back.sentences, notes.sentences):
         assert (a.raw, a.section, a.paragraph, a.index) == (b.raw, b.section, b.paragraph, b.index)
-        assert [(w.text, w.norm, w.stressed) for w in a.words] == [(w.text, w.norm, w.stressed) for w in b.words]
-        assert a.marks == b.marks
-    assert snap["sentences"][1]["words"][1]["id"] == "s2.w1" and snap["sentences"][1]["marks"][0]["id"] == "s2.m0"
+        assert [(w.text, w.norm, w.start) for w in a.words] == [(w.text, w.norm, w.start) for w in b.words]
+    assert snap["sentences"][1]["words"][1]["id"] == "s2.w1" and "marks" not in snap["sentences"][1]
+    assert snap["parser"] == 2
+
+
+def test_a_snapshot_from_parser_1_with_marks_loads_and_keeps_its_hash():
+    from palmcards.revisions import content_hash
+
+    snap, _ = to_snapshot(parse_text(NOTES, "md"))
+    old = json.loads(json.dumps(snap)) | {"parser": 1}
+    for s in old["sentences"]:  # as parser 1 saved them: marks, and a stressed flag per word
+        s["marks"] = [{"id": f"{s['id']}.m0", "kind": "short_pause", "word": 0}]
+        for w in s["words"]:
+            w["stressed"] = False
+    assert content_hash(old) != content_hash(snap)  # the marks are part of what it holds
+    back = from_snapshot(old)
+    assert texts(back) == texts(from_snapshot(snap)) and not hasattr(back.sentences[0], "marks")
 
 
 def test_unchanged_sentences_keep_their_ids_when_others_change():

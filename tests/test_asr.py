@@ -80,7 +80,7 @@ def test_run_job_writes_what_the_recognizer_heard(tmp_path, monkeypatch):
         "take": 1, "wav": str(tmp_path / "take-01.wav"), "transcript": str(tmp_path / "take-01.transcript.json"),
         "prosody": str(tmp_path / "take-01.prosody.npz"), "verdicts": str(tmp_path / "take-01.verdicts.json"),
         "t_start": 3.0, "language": "en", "silent": False, "sentences": [["hello", "there"]],
-        "texts": ["Hello there."], "words": [["Hello", "there."]], "marks": [[]], "baseline_from": [],
+        "texts": ["Hello there."], "words": [["Hello", "there."]],
         "realign": False,
     }
     result = run_job(job)

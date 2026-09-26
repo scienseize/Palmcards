@@ -8,7 +8,7 @@ from palmcards.render import Hit, OpsView, TextOverlay, ViewState, layout, sente
 from palmcards.style import LABEL
 
 TEXT = (
-    "[slow] Thank you for *being* here. / Truly. [rise]\n\n"
+    "———— Thank you for being here. Truly.\n\n"
     "This is a much longer sentence that has to wrap across more than one row of the block.\n\n"
     "Third. Fourth. Fifth. Sixth."
 )
@@ -25,11 +25,11 @@ def span_center(ov, ri, word, scroll=0.0):
     return x, y
 
 
-def test_units_show_marks_as_written():
+def test_units_are_the_words_and_punctuation():
     first, second = parse_text(TEXT).sentences[:2]
     flat = [" ".join("".join(sp.text for sp in u) for u in sentence_units(s)) for s in (first, second)]
-    assert flat[0] == "[slow] Thank you for *being* here."
-    assert flat[1] == "/ Truly. [rise]"
+    assert flat == ["———— Thank you for being here.", "Truly."]
+    assert [sp.role for u in sentence_units(first) for sp in u] == ["punct"] + ["word"] * 5
 
 
 def test_layout_wraps_and_starts_each_sentence_on_new_row():
@@ -51,10 +51,10 @@ def test_hit_test_finds_words_and_respects_scroll():
     assert ov.hit_test(*span_center(ov, ri, word, scroll=2), scroll=2) == Hit(ov.rows[ri].sentence, word)
 
 
-def test_hit_test_outside_box_and_on_marks():
+def test_hit_test_outside_box_and_on_punctuation():
     ov = overlay()
     assert ov.hit_test(5, 5, 0) is None
-    # Leading "[slow]" is a mark, the nearest word is not within one cell.
+    # Leading "————" is punctuation, the nearest word is not within one cell.
     x = ov.x + ov.margin + ov.pad + 2 * ov.char_w
     y = ov.y + ov.margin + ov.pad + 0.4 * ov.line_h
     assert ov.hit_test(x, y, 0) == Hit(0, None)
@@ -79,8 +79,8 @@ def test_draw_composites_in_place():
 
 def test_cursor_maps_onto_rows_and_snaps_to_nearest_word():
     ov = overlay()
-    # Top-left of the hand box lands on the first row; the leading "[slow]"
-    # mark is not a word, so snapping picks "Thank".
+    # Top-left of the hand box lands on the first row; the leading "————"
+    # is not a word, so snapping picks "Thank".
     assert ov.hit_test(*ov.cursor_to_text(0.0, 0.0), 0, snap=True) == Hit(0, 0)
     assert ov.hit_test(*ov.cursor_to_text(0.0, 0.0), 0) == Hit(0, None)
     # Bottom of the hand box lands on the last visible row.
@@ -101,17 +101,14 @@ def test_label_lines_follow_mode_and_operation():
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
     assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "L-HAND, THEN TURN TO PICK")
-    # Only what works is offered: the word itself, (un)stressing it, and hearing it.
-    assert ov.ring_labels(focus) == ("being", "unstress", "hear it")  # *being* is stressed
-    assert ov.ring_labels(ViewState(mode="focus", level="word", focus=Hit(0, 1)))[1] == "stress"
-    focus.ops.pointing, focus.ops.picked = True, 2
+    # Only what works is offered: the word itself and hearing it (alternatives need the LLM).
+    assert ov.ring_labels(focus) == ("being", "hear it")
+    focus.ops.pointing, focus.ops.picked = True, 1
     assert ov.label_lines(focus)[1] == "PINCH + LIFT: HEAR IT"
-    focus.ops.picked = 1
-    assert ov.label_lines(focus)[1] == 'PINCH + LIFT: UNSTRESS "BEING"'
     focus.ops.picked = 0
     assert ov.label_lines(focus)[1] == "KEEP THE WORD (NO CHANGE)"
     focus.ops = OpsView()
-    assert ov.label_lines(focus)[1].startswith("OPEN PALM: STRESS, HEAR IT")
+    assert ov.label_lines(focus)[1].startswith("OPEN PALM: HEAR IT")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
     assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "SENTENCE TONE: WARM  (PREVIEW ONLY: NEEDS THE OPTIONAL LLM)")
     tone.drop_progress = 0.4
@@ -128,7 +125,7 @@ def test_labels_promise_a_rewrite_only_when_an_llm_is_on():
                             llm=llm)
         assert ov.label_lines(stretch)[1] == "PARAGRAPH LENGTH: LONGER  x1.50  /  PINCH + LIFT: ASK FOR A REWRITE"
         word = ViewState(mode="focus", level="word", focus=Hit(0, 1), llm=llm)
-        assert ov.label_lines(word)[1].startswith("OPEN PALM: ALTERNATIVES, STRESS, HEAR IT")
+        assert ov.label_lines(word)[1].startswith("OPEN PALM: ALTERNATIVES, HEAR IT")
     stretch.llm = ""
     assert ov.label_lines(stretch)[1].endswith("(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)")
 
@@ -206,14 +203,6 @@ def test_draw_count_in_and_rehearse():
         ov.draw(frame, view)
         zone = frame[:int(0.42 * 720), int(0.72 * 1280):]
         assert (zone != 128).any()
-
-
-def test_marks_know_their_index_for_verdict_chips():
-    s = parse_text(TEXT).sentences[0]  # [slow] Thank you for *being* here.
-    spans = [sp for u in sentence_units(s) for sp in u if sp.role == "mark"]
-    assert [(sp.text, s.marks[sp.mark].kind) for sp in spans] == [
-        ("[slow]", "slow"), ("*", "stress"), ("*", "stress")]
-
 
 def test_review_draws_the_take_table_and_the_focused_sentences_takes():
     from palmcards.review import Board
@@ -369,7 +358,7 @@ def test_where_the_ring_nodes_and_the_take_chips_are():
     ring = ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"),
                      alternatives=("present", "around"))
     nodes = ov.ring_nodes(ring)
-    assert len(nodes) == len(ov.ring_labels(ring)) == 5
+    assert len(nodes) == len(ov.ring_labels(ring)) == 4
     box = ov.word_box(ring.focus, ring.scroll)
     assert nodes[0][1] < box[1]  # the word itself at the top, the rest clockwise round it
     assert ov.ring_nodes(replace(ring, focus=Hit(0, None))) == []
@@ -393,7 +382,7 @@ def test_where_the_ring_nodes_and_the_take_chips_are():
 
 def knob_view(**kw):
     return ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"),
-                     alternatives=("present", "around"), **kw)  # being, present, around, unstress, hear it
+                     alternatives=("present", "around"), **kw)  # being, present, around, hear it
 
 
 def test_resolve_scramble_resolves_left_to_right():
@@ -416,12 +405,12 @@ def test_the_ring_turns_the_picked_node_to_the_top():
     view = knob_view(now=10.0)
     ov.follow_ring(view, "being", 0)
     at_rest = ov.ring_nodes(view)
-    assert min(range(5), key=lambda i: at_rest[i][1]) == 0  # the word itself at 12 o'clock
+    assert min(range(4), key=lambda i: at_rest[i][1]) == 0  # the word itself at 12 o'clock
     ov.follow_ring(view, "present", 1)  # one step clockwise
     assert (view.ops.picked, view.ops.rot_from, view.ops.rot_to) == (1, 0.0, 1.0)
     halfway = ov.ring_nodes(replace(view, now=10.0 + KNOB.rotate_s / 2))
     settled = ov.ring_nodes(replace(view, now=10.0 + KNOB.rotate_s))
-    assert min(range(5), key=lambda i: settled[i][1]) == 1  # "present" came up to 12 o'clock
+    assert min(range(4), key=lambda i: settled[i][1]) == 1  # "present" came up to 12 o'clock
     cx = settled[1][0]
     assert settled[0][0] > cx  # and the word itself went on round, clockwise, to the right
     assert at_rest[1][0] < halfway[1][0] < settled[1][0] + 1  # on its way up from the left
@@ -433,7 +422,7 @@ def test_turning_back_past_the_word_wraps_the_short_way():
     view = knob_view(now=5.0)
     ov.follow_ring(view, "being", 0)
     ov.follow_ring(view, "hear it", -1)
-    assert (view.ops.picked, view.ops.rot_to) == (4, -1.0)  # turned back one node, not on four
+    assert (view.ops.picked, view.ops.rot_to) == (3, -1.0)  # turned back one node, not on three
 
 
 def test_a_new_word_scrambles_into_the_sentence_and_the_label():
@@ -448,11 +437,11 @@ def test_a_new_word_scrambles_into_the_sentence_and_the_label():
     assert during != 'FOCUS BY WORD  "present"' and len(during) == len('FOCUS BY WORD  "present"')
     view.now = 3.0 + KNOB.scramble_s + 0.001
     assert ov.label_lines(view) == ('FOCUS BY WORD  "present"', 'PINCH + LIFT: USE "PRESENT"')
-    # An action node puts the word itself back in the sentence (scrambling
+    # The action node puts the word itself back in the sentence (scrambling
     # back from "present"), never its own name.
-    ov.follow_ring(view, "unstress", 3)
+    ov.follow_ring(view, "hear it", 3)
     view.now += KNOB.scramble_s + 0.001
-    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', 'PINCH + LIFT: UNSTRESS "BEING"')
+    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "PINCH + LIFT: HEAR IT")
     # From the word itself, stepping onto an action node changes nothing in the sentence: no scramble.
     view = knob_view(now=3.0)
     ov.follow_ring(view, "being", 0)
@@ -485,15 +474,15 @@ def test_nodes_arriving_keep_the_pick_and_do_not_turn_the_ring():
     ov = overlay()
     view = ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), now=2.0)
     ov.follow_ring(view, "being", 0)
-    ov.follow_ring(view, "unstress", 1)
+    ov.follow_ring(view, "hear it", 1)
     changed = view.ops.changed_t
     view.alternatives, view.now = ("present", "around"), 2.5
-    ov.follow_ring(view, "unstress", 1)
-    assert (view.ops.picked, view.ops.pick_label, view.ops.changed_t) == (3, "unstress", changed)
+    ov.follow_ring(view, "hear it", 1)
+    assert (view.ops.picked, view.ops.pick_label, view.ops.changed_t) == (3, "hear it", changed)
     assert view.ops.turned_t is None and view.ops.rot_to == 3.0
 
 
-def test_the_ring_action_nodes_have_a_dimmer_border(monkeypatch):
+def test_the_ring_action_node_has_a_dimmer_border(monkeypatch):
     import palmcards.render as render
 
     ov = overlay()

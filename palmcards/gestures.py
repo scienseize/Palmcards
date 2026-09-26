@@ -74,9 +74,9 @@ ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", 
 LEVEL_OF_SHAPE = {ONE: "word", TWO: "sentence", FLAT: "paragraph"}
 SHAPE_OF_LEVEL = {v: k for k, v in LEVEL_OF_SHAPE.items()}
 FOLD_TIPS = {TWO: (INDEX_TIP, MIDDLE_TIP), FLAT: (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)}
-# The options ring before the app gives its nodes (the word, stress, hear it): replays of
+# The options ring before the app gives its nodes (the word, hear it): replays of
 # recordings without the app's "ring_nodes" lines.
-DEFAULT_RING = ("original", "stress", "hear it")
+DEFAULT_RING = ("original", "hear it")
 
 
 @dataclass
@@ -855,7 +855,7 @@ class Grammar:
 
     def set_ring_labels(self, t: float, labels: tuple[str, ...]) -> None:
         """The app's ring nodes for the focused word (the word, its alternatives,
-        stress/unstress, hear it). The pick stays on its label when they change
+        hear it). The pick stays on its label when they change
         (alternatives arriving mid-turn). Logged, so a replay can give them back."""
         labels = tuple(labels)
         if labels and labels != self.ring_labels:

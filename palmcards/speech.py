@@ -142,7 +142,6 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
         "sentences": sentences,
         "texts": [s.text for s in notes.sentences],
         "words": [[w.text for w in s.words] for s in notes.sentences],
-        "marks": [[[m.kind, m.word] for m in s.marks] for s in notes.sentences],
         "gaps": capture_gaps(take),
         "duration_s": take.duration_s,
         "gesture_log": str(session.dir.parent / session.gesture_log) if session.gesture_log else None,
@@ -196,16 +195,14 @@ def run_job(job: dict) -> dict:
         tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
         tmp.replace(path)
     language = job.get("language", "en")
-    calibrated = language in SPEECH.scoring_languages
-    fillers = ALIGN.fillers if calibrated else ()  # the filler list is English
+    fillers = ALIGN.fillers if language in SPEECH.filler_languages else ()  # the filler list is English
     alignment = align(job["sentences"], data["words"], fillers)
     thread.join()
     log = Path(job["gesture_log"]) if job.get("gesture_log") else None
     prov = measured.get("provenance", {"status": "failed"})
     measured_take = metrics.take_metrics(
         alignment, data["words"], job["t_start"], job.get("duration_s", 0.0), log,
-        log.with_suffix(".trace.jsonl") if log else None, metrics.planned_pause_words(alignment, job["marks"]),
-        job.get("vision"), Path(job["face"]) if job.get("face") else None, job.get("calibration"),
+        log.with_suffix(".trace.jsonl") if log else None, job.get("vision"), Path(job["face"]) if job.get("face") else None, job.get("calibration"),
         measured.get("prosody"), "pitch and loudness failed (see the worker's log)", job.get("gaps", []))
     # What produced these metrics, so they can be checked or reproduced later.
     measured_take["provenance"] = {

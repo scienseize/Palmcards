@@ -158,7 +158,8 @@ class Board:
             length,
             fmt(value(speech, "pace_wpm"), "{:.0f}"),
             fmt(value(speech, "fillers_per_min"), "{:g}"),
-            fmt(value(speech, "unplanned_long_pauses"), "{}"),
+            fmt(value(speech, "long_pauses") if value(speech, "long_pauses") is not None
+                else value(speech, "unplanned_long_pauses"), "{}"),  # metrics before version 5
             fmt(value(speech, "restarts"), "{}"),
             fmt(value(voice, "pitch_range_st"), "{:g}"),
             fmt(on_screen, "{:.0f}%"),

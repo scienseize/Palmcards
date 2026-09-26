@@ -21,13 +21,13 @@ the right of the frame; it steers the highlight in the text on the left.
   top or bottom of the box scroll
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
                            focus
-  open palm (word)         options ring: the word, alternatives (with --llm), stress/unstress it, "hear it";
+  open palm (word)         options ring: the word, alternatives (with --llm), "hear it";
                            make an L and turn it like a knob: one option per ~15 degrees, tilting right
                            turns the ring clockwise; the picked word previews in the sentence
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
   two L-hands (paragraph)  length stretch
-  pinch + lift             commit: stress/unstress or an alternative makes a new notes revision (u undoes it);
-                           "hear it" speaks the sentence with the word stressed;
+  pinch + lift             commit: an alternative makes a new notes revision (u undoes it);
+                           "hear it" speaks the sentence, the focused word emphasised;
                            tone and length ask the LLM for a rewrite, shown as a proposal when the unit
                            is focused again (pinch + lift uses it); without --llm they say they need it
   drop the hand for 1 s    back out
@@ -104,11 +104,11 @@ from palmcards import render
 from palmcards.gestures import FIST, OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, notes_from_bytes
-from palmcards.edit import is_stressed, replace_text, replace_word, toggle_stress
+from palmcards.edit import replace_text, replace_word
 from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
     parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
-    HEAR_IT, STRESS, UNSTRESS, Hit, OpsView, TextOverlay, ViewState,
+    HEAR_IT, Hit, OpsView, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
@@ -193,9 +193,7 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         sentence = view.focus.sentence if view.focus else None
         picked = overlay.ring_labels(view)[view.ops.picked] if ev.op == "ring" else None
         unit = tuple(overlay.unit(ev.level, sentence)) if sentence is not None else ()
-        if picked in (STRESS, UNSTRESS) and takes is not None and view.focus is not None:
-            view.note = takes.edit_stress(view.focus.sentence, view.focus.word)
-        elif picked in view.alternatives and takes is not None and view.focus is not None and view.ops.picked > 0:
+        if picked in view.alternatives and takes is not None and view.focus is not None and view.ops.picked > 0:
             view.note = takes.use_alternative(view.focus.sentence, view.focus.word, picked)
         elif ev.op in ("tone", "stretch") and takes is not None and unit:
             view.note = takes.ask_rewrite("tone" if ev.op == "tone" else "length", unit, ev.value)
@@ -203,9 +201,8 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
             view.note = takes.use_proposal(unit)
         elif picked == HEAR_IT and view.focus is not None:
             s = overlay.sentences[view.focus.sentence]
-            stressed = {m.word for m in s.marks if m.kind == "stress"} | {view.focus.word}
             try:
-                (speaker or get_speaker()).say_words([w.text for w in s.words], stressed)
+                (speaker or get_speaker()).say_words([w.text for w in s.words], {view.focus.word})
                 view.note = f'SPEAKING, STRESSING "{overlay.word_text(view.focus).upper()}"'
             except OSError as exc:
                 view.note = "COULD NOT SPEAK (SEE TERMINAL)"
@@ -341,21 +338,6 @@ class Takes:
             self.follow.notes = notes
         self.notes_version += 1
 
-    def edit_stress(self, sentence: int, word: int) -> str:
-        """Stress or unstress a word: a new notes revision. Returns a label note."""
-        text = self.notes.sentences[sentence].words[word].text
-        on = not is_stressed(self.notes, sentence, word)
-        try:
-            rid = self.session.edit(toggle_stress(self.notes, sentence, word),
-                                    note=f'{"stress on" if on else "stress off"} "{text}" in sentence {sentence + 1}')
-        except (OSError, SessionError) as exc:
-            print(f"could not save the edit: {exc}", file=sys.stderr)
-            return "EDIT NOT SAVED (SEE TERMINAL)"
-        self._use_notes(self.session.current_notes())
-        self.log(time.perf_counter() - self.t0, "edit", op="stress", on=on, sentence=sentence, word=word,
-                 revision=rid)
-        return f'{"STRESSED" if on else "UNSTRESSED"} "{text.upper()}"  /  U: UNDO'
-
     # --- the optional LLM: requests from explicit actions, answers as previews ---
 
     LLM_WHAT = {"alternatives": "ALTERNATIVES", "tone": "TONE REWRITE", "length": "LENGTH REWRITE"}
@@ -477,7 +459,7 @@ class Takes:
         kind, value, _ = self.proposals.pop(unit)
         note = self._save_edit(replace_text(self.notes, list(unit), value), f"{kind} proposal used", op=kind,
                                sentences=list(unit))
-        return note or f"{kind.upper()} PROPOSAL USED  (ITS MARKS WERE FOR THE OLD WORDS: MARK IT AGAIN)  /  U: UNDO"
+        return note or f"{kind.upper()} PROPOSAL USED  /  U: UNDO"
 
     def undo(self) -> str:
         if self.session.current_revision is None or self.session._parsed is not None:

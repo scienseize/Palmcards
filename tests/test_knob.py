@@ -5,7 +5,7 @@ import pytest
 from palmcards.config import KNOB
 from palmcards.knob import Knob, RingSelection
 
-RING = ("imparted", "stamped", "stress", "hear it")
+RING = ("imparted", "stamped", "imposed", "hear it")
 
 
 def turn(angles, labels=RING, knob=None, ring=None):
@@ -39,7 +39,7 @@ def test_hysteresis_at_a_boundary():
 
 
 def test_turning_left_steps_back():
-    assert turn([-11.4, -11.6, -26.6]) == [0, 3, 2]  # wraps: 0 -> hear it -> stress
+    assert turn([-11.4, -11.6, -26.6]) == [0, 3, 2]  # wraps: 0 -> hear it -> imposed
 
 
 def test_dead_zone_returns_to_the_start_node():
@@ -61,28 +61,28 @@ def test_a_fast_turn_takes_every_step_between():
     knob.start(0.0)
     ring.begin()
     steps = ring.apply(knob.update(40.0))  # 40 deg in one frame: steps 1 and 2 (3 needs 30 + 11.5)
-    assert steps == [(1, "stamped", 1), (2, "stress", 1)]
+    assert steps == [(1, "stamped", 1), (2, "imposed", 1)]
     assert ring.apply(knob.update(-12.0)) == [(1, "stamped", -1), (0, "imparted", -1), (3, "hear it", -1)]
 
 
 def test_nodes_arriving_mid_turn_keep_the_pick():
-    knob, ring = Knob(), RingSelection(("imparted", "stress", "hear it"))
+    knob, ring = Knob(), RingSelection(("imparted", "imposed", "hear it"))
     knob.start(0.0)
     ring.begin()
     ring.apply(knob.update(12.0))
-    assert ring.pick == "stress"
-    ring.set_labels(("imparted", "stamped", "inflicted", "stress", "hear it"))  # the LLM answered
-    assert ring.pick == "stress" and ring.index == 3
+    assert ring.pick == "imposed"
+    ring.set_labels(("imparted", "stamped", "inflicted", "imposed", "hear it"))  # the LLM answered
+    assert ring.pick == "imposed" and ring.index == 3
     assert ring.apply(knob.update(27.0)) == [(4, "hear it", 1)]
     # Turning back steps through the new nodes, and step 0 is the start node.
-    assert [s[1] for s in ring.apply(knob.update(-12.0))] == ["stress", "imparted", "hear it"]
+    assert [s[1] for s in ring.apply(knob.update(-12.0))] == ["imposed", "imparted", "hear it"]
     assert [s[1] for s in ring.apply(knob.update(12.0))] == ["imparted", "stamped"]
 
 
 def test_a_node_that_goes_falls_back_to_the_first():
-    ring = RingSelection(("being", "stress", "hear it"))
-    ring.pick = "stress"
-    ring.set_labels(("being", "unstress", "hear it"))
+    ring = RingSelection(("being", "imposed", "hear it"))
+    ring.pick = "imposed"
+    ring.set_labels(("being", "stamped", "hear it"))
     assert ring.pick == "being"
 
 
@@ -94,7 +94,7 @@ def test_regrip_carries_on_with_no_jump():
     knob.release()  # the L was lost
     knob.regrip(-30.0)  # and comes back at another angle
     assert ring.apply(knob.update(-30.0)) == []
-    assert ring.apply(knob.update(-30.0 + 11.6)) == [(2, "stress", 1)]
+    assert ring.apply(knob.update(-30.0 + 11.6)) == [(2, "imposed", 1)]
 
 
 @pytest.mark.parametrize("angles", [[], [0.0], [3.0, -3.0]])

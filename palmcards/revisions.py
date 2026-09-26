@@ -1,13 +1,13 @@
 """Notes revisions: the exact notes a take was rehearsed against.
 
 A revision is a normalised snapshot of parsed notes (sections, sentences,
-words, delivery marks) saved inside the session folder, so a session's
+words) saved inside the session folder, so a session's
 history never depends on the imported file staying where it was, unchanged.
 Loading a snapshot rebuilds the Notes as they were; it never re-parses, so a
 later parser change can't alter an old take either.
 
 Identity. Every sentence gets an id when it first appears ("s1", "s2", ...);
-its words and marks are "<sentence id>.w<k>" and "<sentence id>.m<k>".
+its words are "<sentence id>.w<k>".
 List positions are not identities: a later revision (edits, milestone 8)
 keeps the ids of sentences whose text is unchanged, even if they moved, and
 gives edited or new sentences fresh ids, recording which old sentences they
@@ -19,6 +19,11 @@ their positions may no longer mean the same words.
     notes = from_snapshot(snap)
     content_hash(snap)   # what the notes say, ignoring ids
     revision_id(snap)    # the snapshot including its ids
+
+Snapshots made by parser 1 also hold delivery marks ("marks" per sentence,
+"<sentence id>.m<k>", and a "stressed" flag per word). They load as they
+are, their hash checked on what they hold, and the marks are left out of
+the Notes: PalmCards no longer uses them (2026-09-26).
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import difflib
 import hashlib
 import json
 
-from palmcards.notes import PARSER_VERSION, Mark, MarkKind, Notes, Section, Sentence, Word
+from palmcards.notes import PARSER_VERSION, Notes, Section, Sentence, Word
 
 SNAPSHOT_VERSION = 1
 ANCESTOR_SIM = 0.6  # an edited sentence at least this alike (difflib ratio) replaces the old one
@@ -39,11 +44,13 @@ def _canonical(data) -> bytes:
 
 def _content(snap: dict) -> dict:
     """The snapshot without ids: what the notes say."""
+    def bare(items: list[dict]) -> list[dict]:
+        return [{k: v for k, v in item.items() if k != "id"} for item in items]
+
     return {
         "sections": snap["sections"],
-        "sentences": [{k: v for k, v in s.items() if k != "id"}
-                      | {"words": [{k: v for k, v in w.items() if k != "id"} for w in s["words"]],
-                         "marks": [{k: v for k, v in m.items() if k != "id"} for m in s["marks"]]}
+        "sentences": [{k: v for k, v in s.items() if k != "id"} | {"words": bare(s["words"])}
+                      | ({"marks": bare(s["marks"])} if "marks" in s else {})  # parser 1
                       for s in snap["sentences"]],
     }
 
@@ -64,15 +71,14 @@ def _sentence(s: Sentence, sid: str) -> dict:
         "paragraph": s.paragraph,
         "raw": s.raw,
         "text": s.text,
-        "words": [{"id": f"{sid}.w{k}", "text": w.text, "norm": w.norm, "start": w.start, "end": w.end,
-                   "stressed": w.stressed} for k, w in enumerate(s.words)],
-        "marks": [{"id": f"{sid}.m{k}", "kind": str(m.kind), "word": m.word} for k, m in enumerate(s.marks)],
+        "words": [{"id": f"{sid}.w{k}", "text": w.text, "norm": w.norm, "start": w.start, "end": w.end}
+                  for k, w in enumerate(s.words)],
     }
 
 
 def carry_ids(previous: dict, notes: Notes, next_id: int | None = None) -> tuple[list[str], dict[str, list[str]], int]:
     """Sentence ids for `notes`, keeping those of sentences unchanged since
-    `previous` (same marked-up text), however they moved. New ids start at
+    `previous` (the same text as written), however they moved. New ids start at
     `next_id` (a session passes one past every id it has ever given out, so
     a branch after an undo never reuses an undone revision's ids). Returns
     (ids, ancestry: new id -> the old ids it replaces, next id number)."""
@@ -132,8 +138,7 @@ def from_snapshot(snap: dict) -> Notes:
     for i, s in enumerate(snap["sentences"]):
         sentence = Sentence(
             raw=s["raw"], text=s["text"],
-            words=[Word(w["text"], w["norm"], w["start"], w["end"], w["stressed"]) for w in s["words"]],
-            marks=[Mark(MarkKind(m["kind"]), m["word"]) for m in s["marks"]],
+            words=[Word(w["text"], w["norm"], w["start"], w["end"]) for w in s["words"]],
             section=s["section"], paragraph=s["paragraph"], index=i,
         )
         sections[s["section"]].sentences.append(sentence)

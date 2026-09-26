@@ -234,7 +234,7 @@ def test_word_flow_browse_focus_ring_turn_commit():
     assert (g.state.mode, g.state.level, g.state.op) == ("browse", "word", None)
 
 
-RING_NODES = ("imparted", "stamped", "inflicted", "stress", "hear it")
+RING_NODES = ("imparted", "stamped", "inflicted", "imposed", "hear it")
 
 
 def ring_turned(steps_deg=(0.0,)):
@@ -262,12 +262,12 @@ def test_turning_back_to_the_start_is_the_original():
 def test_alternatives_arriving_mid_turn_keep_the_pick():
     g = Grammar((W, H))
     _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, 0.3))
-    g.set_ring_labels(t, ("imparted", "stress", "hear it"))
+    g.set_ring_labels(t, ("imparted", "imposed", "hear it"))
     _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.3, rotate=16), t)
-    assert g.state.ring_pick == "stress"
+    assert g.state.ring_pick == "imposed"
     g.set_ring_labels(t, RING_NODES)
     _, t = run(g, hold(l_hand, 0.2, rotate=16), t)
-    assert g.state.ring_pick == "stress"
+    assert g.state.ring_pick == "imposed"
     assert any(e["kind"] == "ring_nodes" and e["nodes"] == list(RING_NODES) for e in g.log.entries)
     _, t = run(g, hold(l_hand, 0.3, rotate=31), t)
     assert g.state.ring_pick == "hear it"
