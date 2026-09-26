@@ -9,7 +9,15 @@ the speaker. One without enough to go on is None with the reason, like an
   speech   pace over the sentences said (words per minute of speaking
            time), fillers per minute of the take, unplanned long pauses
            (silences between words over METRICS.long_pause_s that no pause
-           mark asked for), restarts and ad-libs. From the transcript.
+           mark asked for), restarts and ad-libs. From the transcript. Per
+           sentence (`sentences`): whether it was said, its pace from its
+           first to its last word, and the fillers that count toward it (the
+           sentence they fall in, or the next one said after them).
+  voice    pitch and loudness while a sentence was being said (palmcards.
+           prosody, voiced frames only): the pitch range (10th to 90th
+           percentile, semitones from the speaker's median) and spread, the
+           loudness range (dB), and the pitch range per sentence. How much
+           the voice moves, not whether it moved "enough".
   hands    hand-shape changes per minute (the gesture log's poses); from the
            take's features (or, before them, a --trace recording) the share
            of the take a hand was in view and how much the wrists and the
@@ -40,16 +48,58 @@ import numpy as np
 from palmcards import features, gaze as gaze_mod
 from palmcards.config import BODY, METRICS
 from palmcards.notes import normalize
+from palmcards.prosody import Prosody
 
-VERSION = 3  # 2: gaze; 3: posture, hands from the features, face touches
+VERSION = 4  # 2: gaze; 3: posture, hands from the features, face touches; 4: speech per sentence, voice
 
 
 def _none(reason: str) -> dict:
     return {"value": None, "reason": reason}
 
 
-def speech(alignment: dict, words: list[dict], duration_s: float, planned_pauses: set[int] = frozenset()) -> dict:
-    """`planned_pauses`: transcript word indices a pause mark sits before."""
+def lost_s(gaps, t0: float, t1: float) -> float:
+    """Seconds of audio the recording lost between t0 and t1 (app clock)."""
+    return sum(max(0.0, min(t1, b) - max(t0, a)) for a, b in gaps if b > t0 and a < t1)
+
+
+def _sentence_fillers(alignment: dict) -> dict[int, list[str]]:
+    """Fillers by sentence: the one they fall in, or the next one said after them."""
+    spoken = sorted((s for s in alignment["sentences"] if s["start"] is not None), key=lambda s: s["start"])
+    out: dict[int, list[str]] = {}
+    if not spoken:
+        return out
+    for f in alignment["fillers"]:
+        s = next((s for s in spoken if s["end"] >= f["t"]), spoken[-1])
+        out.setdefault(s["sentence"], []).append(f["text"])
+    return out
+
+
+def sentence_speech(alignment: dict, gaps=()) -> list[dict]:
+    """Per note sentence: its status, pace (words per minute from its first to
+    its last word said; None with `why` under METRICS.sentence_min_words
+    aligned words or where the recording lost audio) and its fillers.
+    `gaps`: (start, end) app times the recording lost."""
+    fillers = _sentence_fillers(alignment)
+    out = []
+    for s in alignment["sentences"]:
+        said = sum(i is not None for i in s["words"])
+        entry = {"sentence": s["sentence"], "status": s["status"], "wpm": None, "fillers": fillers.get(s["sentence"], [])}
+        if s["status"] == "skipped":
+            pass
+        elif s["start"] is None or said < METRICS.sentence_min_words or s["end"] <= s["start"]:
+            entry["why"] = f"only {said} word{'s' if said != 1 else ''} heard"
+        elif lost := lost_s(gaps, s["start"], s["end"]):
+            entry["why"] = f"the recording lost {lost:.2f} s of audio in it"
+        else:
+            entry["wpm"] = round(60.0 * said / (s["end"] - s["start"]), 1)
+        out.append(entry)
+    return out
+
+
+def speech(alignment: dict, words: list[dict], duration_s: float, planned_pauses: set[int] = frozenset(),
+           lost=()) -> dict:
+    """`planned_pauses`: transcript word indices a pause mark sits before;
+    `lost`: (start, end) app times the recording lost."""
     said = [s for s in alignment["sentences"] if s["status"] != "skipped" and s["start"] is not None]
     n_words = sum(sum(i is not None for i in s["words"]) for s in said)
     speaking_s = sum(s["end"] - s["start"] for s in said)
@@ -73,7 +123,43 @@ def speech(alignment: dict, words: list[dict], duration_s: float, planned_pauses
                                     "basis": f"silences over {METRICS.long_pause_s:g} s no pause mark asked for"}
     out["restarts"] = {"value": len(alignment["restarts"]), "basis": "phrases said again"}
     out["ad_libs"] = {"value": len(alignment["extras"]), "basis": "runs of words not in the notes"}
+    out["sentences"] = sentence_speech(alignment, lost)
     return out
+
+
+def _spread(x: np.ndarray) -> float:
+    """10th to 90th percentile."""
+    return round(float(np.percentile(x, 90) - np.percentile(x, 10)), 1)
+
+
+def voice(p: Prosody | None, alignment: dict, why: str = "") -> dict:
+    """Pitch and loudness over the voiced frames while a sentence was being
+    said (from its first to its last word). `why`: why there is no prosody."""
+    if p is None or not len(p):
+        return _none(why or "pitch and loudness not measured")
+    st = p.st
+    mask = np.zeros(len(p), bool)
+    per = []
+    for s in alignment["sentences"]:
+        if s["status"] == "skipped" or s["start"] is None:
+            continue
+        w = p.window(s["start"], s["end"])
+        voiced = p.voiced[w]
+        mask[w] |= voiced
+        secs = float(voiced.sum()) * p.hop
+        rng = _spread(st[w][voiced]) if secs >= METRICS.sentence_min_voiced_s else None
+        per.append({"sentence": s["sentence"], "pitch_range_st": rng, "voiced_s": round(secs, 2)})
+    voiced_s = float(mask.sum()) * p.hop
+    if voiced_s < METRICS.min_voiced_s:
+        return {**_none(f"too little voiced sound while speaking ({voiced_s:.1f} s)"), "sentences": per}
+    basis = f"{voiced_s:.1f} s of voiced sound while speaking"
+    return {
+        "pitch_range_st": {"value": _spread(st[mask]), "basis": f"10th-90th percentile, semitones; {basis}"},
+        "pitch_sd_st": {"value": round(float(np.std(st[mask])), 2), "basis": f"semitones; {basis}"},
+        "loudness_range_db": {"value": _spread(p.rms_db[mask]), "basis": f"10th-90th percentile, dB; {basis}"},
+        "voiced_s": {"value": round(voiced_s, 1), "basis": "voiced frames while a sentence was being said"},
+        "sentences": per,
+    }
 
 
 def _read_jsonl(path: Path, t0: float, t1: float) -> list[dict]:
@@ -232,11 +318,13 @@ def gaze(alignment: dict, vision: dict | None, face: Path | None, calibration: d
 def take_metrics(alignment: dict, words: list[dict], t_start: float, duration_s: float,
                  gesture_log: Path | None = None, trace: Path | None = None,
                  planned_pauses: set[int] = frozenset(), vision: dict | None = None, face: Path | None = None,
-                 calibration: dict | None = None) -> dict:
+                 calibration: dict | None = None, prosody: Prosody | None = None, prosody_why: str = "",
+                 gaps=()) -> dict:
     arrays, why = _features(vision, face)
     return {
         "version": VERSION,
-        "speech": speech(alignment, words, duration_s, planned_pauses),
+        "speech": speech(alignment, words, duration_s, planned_pauses, gaps),
+        "voice": voice(prosody, alignment, prosody_why),
         "hands": hands(gesture_log, trace, t_start, t_start + duration_s, arrays, why),
         "gaze": gaze_mod.take_gaze(arrays, calibration, alignment, vision.get("calibration")) if arrays is not None
         else _none(why),
@@ -255,12 +343,46 @@ def planned_pause_words(alignment: dict, marks: list[list]) -> set[int]:
     return out
 
 
+def value(group: dict | None, key: str):
+    """A metric's value, None where it wasn't measured."""
+    return ((group or {}).get(key) or {}).get("value")
+
+
 def summary(m: dict) -> str:
-    """A short line: "142 WPM, 1.5 FILLERS/MIN"."""
-    s = m["speech"]
+    """A short line: "142 WPM, 1.5 FILLERS/MIN, PITCH RANGE 7.2 ST"."""
+    s, v = m["speech"], m.get("voice")
     parts = []
     if s["pace_wpm"]["value"] is not None:
         parts.append(f"{s['pace_wpm']['value']:.0f} WPM")
     if s["fillers_per_min"]["value"] is not None:
         parts.append(f"{s['fillers_per_min']['value']:g} FILLERS/MIN")
+    if (rng := value(v, "pitch_range_st")) is not None:
+        parts.append(f"PITCH RANGE {rng:g} ST")
     return ", ".join(parts)
+
+
+def report(m: dict, texts: list[str]) -> str:
+    """Readable metrics for the terminal: per sentence, then the take."""
+    pitch = {e["sentence"]: e["pitch_range_st"] for e in (m.get("voice") or {}).get("sentences", [])}
+    lines = []
+    for e in m["speech"].get("sentences", []):
+        if e["status"] == "skipped":
+            continue
+        pace = f"{e['wpm']:5.0f} wpm" if e["wpm"] is not None else "    - wpm"
+        rng = pitch.get(e["sentence"])
+        extra = [f"pitch range {rng:g} st" if rng is not None else "pitch range -"]
+        if e["fillers"]:
+            extra.append("fillers: " + ", ".join(e["fillers"]))
+        lines.append(f"  [{e['sentence']:2d}] {pace}  {', '.join(extra):<40} {texts[e['sentence']][:40]}")
+    for group in ("speech", "voice", "gaze", "hands", "posture"):
+        g = m.get(group)
+        if not g:
+            continue
+        if g.get("value", 0) is None:
+            lines.append(f"  {group:<8} not measured: {g.get('reason', '')}")
+            continue
+        vals = [f"{k} {v['value']:g}" for k, v in g.items()
+                if isinstance(v, dict) and isinstance(v.get("value"), (int, float)) and not isinstance(v["value"], bool)]
+        if vals:
+            lines.append(f"  {group:<8} " + ", ".join(vals))
+    return "\n".join(lines)

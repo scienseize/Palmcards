@@ -73,17 +73,24 @@ def test_language_transcript_and_alignment_round_trip(tmp_path):
     assert loaded.take(1).alignment == alignment
 
 
-def test_verdicts_and_drill_round_trip(tmp_path):
+def test_results_and_drill_round_trip_and_old_verdicts_are_kept(tmp_path):
     session = Session.create(notes_file(tmp_path), root=tmp_path)
     session.add_take(silence(), 8000, 1.0, datetime.now(), [(0.0, 0)])
     drill = session.add_take(silence(), 8000, 2.0, datetime.now(), [(0.0, 1)], drill=2)
-    assert (drill.prosody_name, drill.verdicts_name) == ("take-02.prosody.npz", "take-02.verdicts.json")
-    marks = {"hit": 2, "missed": 1, "unclear": 0, "skipped": 0}
-    session.set_result(2, "take-02.transcript.json", {"sentences": []}, "take-02.verdicts.json", marks)
+    assert drill.prosody_name == "take-02.prosody.npz"
+    session.set_result(2, "take-02.transcript.json", {"sentences": []}, {"version": 4})
     data = json.loads((session.dir / "session.json").read_text())
-    assert "drill" not in data["takes"][0] and "verdicts" not in data["takes"][0]
+    assert "drill" not in data["takes"][0] and "verdicts" not in data["takes"][1]  # never written now
     loaded = Session.load(session.dir)
-    assert (loaded.take(2).drill, loaded.take(2).verdicts, loaded.take(2).marks) == (2, "take-02.verdicts.json", marks)
+    assert (loaded.take(2).drill, loaded.take(2).metrics) == (2, {"version": 4})
+    # A session from when marks were judged keeps its verdict fields as found.
+    data["takes"][0] |= {"verdicts": "take-01.verdicts.json", "marks": {"hit": 2, "missed": 1}}
+    (session.dir / "session.json").write_text(json.dumps(data))
+    session.release()
+    old = Session.load(session.dir)
+    old.acquire()
+    old.save()
+    assert json.loads((session.dir / "session.json").read_text())["takes"][0]["verdicts"] == "take-01.verdicts.json"
 
 
 # --- the notes a take was recorded with ------------------------------------------

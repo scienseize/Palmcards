@@ -44,13 +44,15 @@ section shown faint as you start the last sentence of one); a flick, n or b
 moves by hand and the voice carries on from there. Off with --no-follow.
 
 Review browses and focuses like Prepare, without Prepare's operations.
-Each take is transcribed, measured and judged in the background as soon as
-it stops; the label shows TRANSCRIBING, then how many marks were hit, and
-the terminal prints the full report. Every delivery mark is then drawn as a
-chip coloured by its verdict (green hit, red missed, grey unclear):
+Each take is transcribed and measured in the background as soon as it
+stops; the label shows TRANSCRIBING, then the take's pace and fillers, and
+the terminal prints the full report. Nothing is judged: the takes are set
+side by side.
 
-  two fingers together     browse sentences
-  fold onto the thumb      focus: each mark's verdict and why, pace, fillers
+  two fingers together     browse sentences; the take table (the last full takes side by side:
+                           pace, fillers, long pauses, restarts, pitch range, gaze, posture)
+  fold onto the thumb      focus: the sentence in every take that said it (pace, fillers,
+                           pitch range, on screen)
   L-hand, then point (focused)
                            the takes that said this sentence, as chips beside it: point at one
   pinch + lift (focused)   drill the sentence: count-in, then just that
@@ -64,8 +66,8 @@ chip coloured by its verdict (green hit, red missed, grey unclear):
 Without --llm, tone and length preview their controls and say they need the
 optional LLM; nothing is ever sent unless you ask. Poses and events are
 logged to sessions/gesture-logs/; each take is saved as a WAV in its session
-folder under sessions/, with its transcript, pitch and verdicts and
-session.json.
+folder under sessions/, with its transcript, pitch and loudness, and
+session.json (the metrics).
 
 Keys, the fallback when gestures won't do (h shows them in the app):
   t start a take, x stop it (or cancel the count-in), n next section, b previous section,
@@ -270,9 +272,9 @@ class Takes:
         self.interrupted = False  # the app is closing because of an error or Ctrl-C
         self._closed = False
         self.last_saved = ""
-        self.board = Board(notes)  # verdicts of the judged takes, for Review
+        self.board = Board(notes)  # the analysed takes, side by side, for Review
         self.drill: int | None = None  # the sentence the current count-in or take drills
-        self._summary_key, self._summary = None, ()  # Review's take summary card, and what it was made from
+        self._summary_key, self._summary = None, ()  # Review's take table, and what it was made from
         self.vision: Watcher | None = None  # face and pose (milestone 7); run() opens it
         self.vision_off = "face and pose tracking not opened"  # why there is none
         self.calibrate_next = False  # e: calibrate the eyes again at the next count-in
@@ -308,22 +310,21 @@ class Takes:
         return "RAISE A FIST: START A TAKE"
 
     def _fill_board(self) -> None:
-        """Every judged take on the board, placed on the current notes by sentence id."""
+        """Every analysed take on the board, placed on the current notes by sentence id."""
         for take in self.session.takes:
-            path = self.session.dir / take.verdicts if take.verdicts else None
-            if path is not None and path.exists():
-                self.board.add(take.number, json.loads(path.read_text()), take.drill,
-                               self.session.sentence_map(take), take.metrics)
+            if take.alignment is not None:
+                self.board.add(take.number, take.alignment, take.metrics, take.drill,
+                               self.session.sentence_map(take), take.duration_s)
 
     def restore(self) -> bool:
-        """A reopened session: its judged takes onto the board, and takes whose
+        """A reopened session: its analysed takes onto the board, and takes whose
         analysis never finished submitted again. Returns whether there is
         anything to review."""
         from palmcards.analysis import resolve_jobs
 
         self._fill_board()
         for take in self.session.takes:
-            if not take.verdicts and take.status == "saved" and take.revision is not None:
+            if take.alignment is None and take.status == "saved" and take.revision is not None:
                 resolve_jobs(self.session.dir, take.number, "failed", "superseded: submitted again on reopening")
                 self._submit(take.number)
         return bool(self.board.takes)
@@ -523,7 +524,7 @@ class Takes:
 
     def sync_review(self, grammar: Grammar, view: ViewState, overlay: "TextOverlay | None" = None,
                     t: float = 0.0) -> None:
-        """Review: the takes to point at, and the chosen takes' verdicts."""
+        """Review: the takes to point at, the focused sentence in each take, and the take table."""
         gs = grammar.state
         focused = view.focus.sentence if view.mode == "focus" and view.focus is not None else None
         said = self.board.said_in(focused) if focused is not None and view.level == "sentence" else []
@@ -540,13 +541,12 @@ class Takes:
                 view.take_shown = picker.index
         else:
             view.takes = ()
-        view.mark_verdicts = self.board.mark_verdicts()
         view.detail = self.board.detail(focused) if focused is not None and view.level == "sentence" else ()
         n = self.board.latest()
-        if focused is None and n is not None:  # the latest take's summary card, made again when it changes
+        if focused is None and n is not None:  # the take table, made again when a take arrives
             key = (n, n in self.board.metrics, id(self.board))
             if key != self._summary_key:
-                self._summary_key, self._summary = key, self.board.take_summary(n, self.session.take(n).duration_s)
+                self._summary_key, self._summary = key, self.board.take_table()
             view.summary = self._summary
         else:
             view.summary = ()
@@ -558,17 +558,18 @@ class Takes:
             print(f"take {n}: analysis failed: {result.get('error')}. Press r to retry, or run: "
                   f"python -m palmcards.speech {self.session.dir} --take {n}", file=sys.stderr)
             return ""
-        self.session.set_result(n, result["transcript"], result["alignment"], result["verdicts"], result["marks"],
-                                result.get("metrics"))
+        self.session.set_result(n, result["transcript"], result["alignment"], result.get("metrics"))
         take = self.session.take(n)
-        self.board.add(n, result["verdict_data"], take.drill, metrics=result.get("metrics"))
+        self.board.add(n, result["alignment"], result.get("metrics"), take.drill, duration_s=take.duration_s)
         self.log(time.perf_counter() - self.t0, "transcribed", take=n, seconds=result["seconds"])
-        print(f"take {n} (transcribed and judged in {result['seconds']:.1f} s)\n{result['report']}")
+        print(f"take {n} (transcribed and measured in {result['seconds']:.1f} s)\n{result['report']}")
         if take.drill is not None:
-            self.last_saved = f"TAKE {n} (DRILL): {self.board.summary(n)}"
+            row = self.board.rows[n].get(take.drill, {})
+            pace = f"{row['wpm']:.0f} WPM" if row.get("wpm") is not None else "NOT SAID"
+            self.last_saved = f"TAKE {n} (DRILL): {pace}"
             return ""
         c = counts(result["alignment"])
-        parts = [f"{c['spoken']}/{len(result['alignment']['sentences'])} SPOKEN", self.board.summary(n)]
+        parts = [f"{c['spoken']}/{len(result['alignment']['sentences'])} SPOKEN"]
         if result.get("metrics") and (said := metrics_summary(result["metrics"])):
             parts.append(said)
         parts += [f"{c[k]} {k.upper()}" for k in ("fillers", "restarts") if c[k]]
@@ -1140,8 +1141,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if modes.mode == "review":
                 takes.sync_review(grammar, view, overlay, start - t0)
             else:
-                view.mark_verdicts = ()
-                view.detail = (("", f"PROPOSED: {view.proposal}"),) if view.proposal else ()
+                view.detail = (f"PROPOSED: {view.proposal}",) if view.proposal else ()
         else:
             if modes.mode == "rehearse":
                 takes.poll_follow(view, overlay)
@@ -1150,7 +1150,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" and takes.recorder else 0.0
             view.mic = takes.recorder.level if takes.recorder else 0.0
             view.start_progress = 0.0
-            view.mark_verdicts, view.detail = (), ()
+            view.detail = ()
         focused = view.focus.sentence if view.app == "review" and view.mode == "focus" and view.level == "sentence" \
             and view.focus is not None else None
         palm = grammar.state.primary is not None and grammar.state.primary.stable == OPEN
@@ -1183,7 +1183,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         view.status = takes.status(modes.mode, view)
         view.alert = takes.alert_line(modes.mode)
         # A focused panel taller than the frame turns its own pages, so every
-        # verdict line is reachable without keys; a key pauses it.
+        # line is reachable without keys; a key pauses it.
         if view.app in ("prepare", "review") and view.mode == "focus" and (most := overlay.panel_max_scroll(view)):
             if start >= page_pause_until and start - page_t >= TEXT.page_s:
                 page = overlay.panel_view_h(overlay.panel(view)) - overlay.line_h

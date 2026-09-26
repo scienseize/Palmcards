@@ -9,7 +9,7 @@ import pytest
 from palmcards import metrics
 from palmcards.align import align
 from palmcards.notes import parse_text
-from tests.test_cues import speak
+from tests.synth import RATE, speak, utter, voice
 
 TEXT = "Good evening everyone thank you. / We are so glad you could make it tonight."
 
@@ -30,6 +30,55 @@ def test_speech_metrics_rest_on_what_was_said():
     # The 2.0 s gap sits where the notes ask for a pause: planned. The 1.8 s one isn't.
     assert m["unplanned_long_pauses"]["value"] == 1 and m["unplanned_long_pauses"]["longest_s"] == 1.8
     assert (m["restarts"]["value"], m["ad_libs"]["value"]) == (0, 0)
+
+
+def test_speech_per_sentence_pace_and_fillers():
+    al, words, _ = aligned("Good evening everyone um thank you. <0.5> We are so glad you could make it tonight. so")
+    first, second = metrics.sentence_speech(al)
+    assert first["status"] == "spoken" and first["wpm"] == pytest.approx(60 * 5 / (6 * 0.3 - 0.05), abs=0.5)
+    assert first["fillers"] == ["um"] and second["fillers"] == ["so"]  # the trailing "so": the last sentence said
+    lost = metrics.sentence_speech(al, gaps=[(words[0]["start"] + 0.1, words[0]["start"] + 0.2)])[0]
+    assert lost["wpm"] is None and "lost 0.10 s" in lost["why"]
+    al, _, _ = aligned("Good evening")
+    first, second = metrics.sentence_speech(al)
+    assert first["wpm"] is None and "only 2 words heard" in first["why"] and second["status"] == "skipped"
+    assert metrics.speech(al, words, 60.0)["sentences"] == [first, second]
+
+
+def voice_take(f0_start, f0_end, words=("Good", "evening", "everyone", "thank", "you.")):
+    """A take of the notes' first sentence, each word a tone gliding over the sentence's pitch."""
+    from palmcards.prosody import analyse
+
+    steps = np.linspace(f0_start, f0_end, len(words) + 1)
+    audio, said = utter([(w, voice(steps[i], steps[i + 1], 1.2)) for i, w in enumerate(words)])
+    notes = parse_text(TEXT)
+    al = align([[w.norm for w in s.words] for s in notes.sentences], said)
+    return analyse(audio, RATE, 5.0), al
+
+
+def test_voice_is_the_pitch_and_loudness_range_while_speaking():
+    wide = metrics.voice(*voice_take(110, 220))  # an octave over the sentence
+    flat = metrics.voice(*voice_take(150, 150))
+    assert wide["pitch_range_st"]["value"] > 8 and flat["pitch_range_st"]["value"] < 1
+    assert wide["voiced_s"]["value"] >= 5 and "voiced sound" in wide["pitch_range_st"]["basis"]
+    assert flat["loudness_range_db"]["value"] < 3
+    (sentence,) = wide["sentences"]
+    assert sentence["sentence"] == 0 and sentence["pitch_range_st"] > 8
+
+
+def test_voice_says_why_when_it_cannot_be_measured():
+    assert "not measured" in metrics.voice(None, {"sentences": []})["reason"]
+    assert metrics.voice(None, {"sentences": []}, "pitch and loudness failed")["reason"] == "pitch and loudness failed"
+    short = metrics.voice(*voice_take(110, 220, words=("Good", "evening")))
+    assert short["value"] is None and "too little voiced sound" in short["reason"] and short["sentences"]
+
+
+def test_the_report_lists_each_sentence_said_and_the_take():
+    al, words, notes = aligned("Good evening everyone um thank you. <0.5> We are so glad you could make it tonight.")
+    m = metrics.take_metrics(al, words, 0.0, 30.0)
+    out = metrics.report(m, [s.text for s in notes.sentences])
+    assert "[ 0]   171 wpm" in out and "fillers: um" in out and "voice    not measured" in out
+    assert "fillers_per_min 2" in out
 
 
 def test_too_little_to_go_on_says_so():
@@ -62,7 +111,7 @@ def test_without_face_features_gaze_posture_and_touches_say_why():
     al, words, _ = aligned("Good evening everyone thank you.")
     m = metrics.take_metrics(al, words, 0.0, 30.0)
     assert m["gaze"]["value"] is None and "no face features" in m["gaze"]["reason"]
-    assert m["posture"]["value"] is None and "no face features" in m["posture"]["reason"] and m["version"] == 3
+    assert m["posture"]["value"] is None and "no face features" in m["posture"]["reason"] and m["version"] == 4
     assert "no face features" in m["hands"]["face_touches"]["reason"]
 
 
@@ -77,8 +126,7 @@ def test_the_analysis_stores_metrics_on_the_take(tmp_path):
     take = session.add_take(np.zeros(16000 * 12, np.float32), 16000, 5.0, datetime.now(), [(0.0, 0)])
     result = run_job({**make_job(session, take, session.notes_for(take)), "job": "j"})
     assert result["metrics"]["speech"]["pace_wpm"]["value"] is None  # a silent take
-    session.set_result(1, result["transcript"], result["alignment"], result["verdicts"], result["marks"],
-                       result["metrics"])
+    session.set_result(1, result["transcript"], result["alignment"], result["metrics"])
     assert Session.load(session.dir).take(1).metrics["gaze"]["value"] is None
 
 

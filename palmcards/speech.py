@@ -14,23 +14,21 @@ the worker keeps the model loaded between takes. For each take it:
   4. aligns the words to the notes (palmcards.align),
   5. meanwhile, in a thread, measures pitch and loudness (palmcards.prosody,
      cached as take-NN.prosody.npz),
-  6. judges every delivery mark (palmcards.cues), writes
-     take-NN.verdicts.json, and returns the lot, which the app stores on the
-     take in session.json.
+  6. measures the take (palmcards.metrics: speech per take and per
+     sentence, voice, hands, gaze, posture) and returns the lot, which the
+     app stores on the take in session.json.
 
 A drill take (one sentence rehearsed on its own) is aligned against that
-sentence only, and its pace is judged against the latest full take
-recorded before it (by take number); if that take has no verdicts, the
-drill's pace is unclear.
+sentence only; Review sets it beside the full takes that said the sentence.
 
 Offline, for takes already recorded:
 
   python -m palmcards.speech SESSION_DIR [--take N] [--force] [--realign] [--lang xx] [--rebind]
       transcribes takes that have no transcript yet and prints a report;
       --force transcribes again, --realign re-aligns the saved transcripts
-      and judges them again without running Whisper or pyin (fast, for
-      tuning palmcards/config.py ALIGN and CUES). Takes transcribed before
-      milestone 6 get their verdicts on a plain run. Every take is analysed
+      and measures them again without running Whisper or pyin (fast, for
+      tuning palmcards/config.py ALIGN and METRICS). Takes with a transcript
+      but no metrics get them on a plain run. Every take is analysed
       against the notes revision it was recorded with (palmcards.session).
       Takes from before notes snapshots have none: --rebind saves the notes
       file as it is now for them, marked unverified.
@@ -53,11 +51,11 @@ import traceback
 from dataclasses import asdict
 from pathlib import Path
 
-from palmcards import cues, prosody
+from palmcards import metrics, prosody
 from palmcards.align import VERSION as ALIGN_VERSION, align, summary
 from palmcards.asr import Transcription, get_recognizer, initial_prompt  # noqa: F401 (initial_prompt: re-exported)
 from palmcards.audio import prepare_audio, resample, trim_silence  # noqa: F401 (re-exported)
-from palmcards.config import ALIGN, CUES, SPEECH
+from palmcards.config import ALIGN, METRICS, PROSODY, SPEECH
 from palmcards.notes import Notes
 from palmcards.prosody import Prosody
 from palmcards.session import Session, TakeRecord, read_wav
@@ -71,7 +69,7 @@ def take_prosody(wav: Path, t_start: float, cache: Path, silent: bool,
                  reuse_stale: bool = False) -> tuple[Prosody, dict]:
     """The take's pitch and loudness, and where they came from: the cache if
     it was made from this WAV with today's extraction settings ("verified"),
-    else measured again and cached. With reuse_stale (re-judging only), a
+    else measured again and cached. With reuse_stale (re-measuring only), a
     mismatched or old cache is used as it is and reported "stale" or
     "unknown"."""
     expected = prosody.provenance(wav, SPEECH.rate, t_start)
@@ -84,7 +82,7 @@ def take_prosody(wav: Path, t_start: float, cache: Path, silent: bool,
             changed = sorted(k for k in expected if meta is not None and meta.get(k) != expected[k])
             return p, {"status": status, **(meta or {}), **({"changed": changed} if changed else {})}
     if silent:
-        p = Prosody(prosody.EMPTY, prosody.EMPTY, prosody.EMPTY, CUES.hop_s)
+        p = Prosody(prosody.EMPTY, prosody.EMPTY, prosody.EMPTY, PROSODY.hop_s)
     else:
         audio, rate = read_wav(wav)
         p = prosody.analyse(resample(audio, rate), SPEECH.rate, t_start)
@@ -113,39 +111,20 @@ def words_on_clock(result: dict, t_start: float, offset_s: float) -> list[dict]:
 
 # --- jobs ----------------------------------------------------------------------
 
-def baseline_wpm(baseline: dict | None) -> float | None:
-    """A drill's baseline pace: exactly that full take's, from its verdicts,
-    or None if it has none (never another take's instead). The supervisor
-    runs the drill after that take's own analysis."""
-    if not baseline:
-        return None
-    path = Path(baseline["verdicts"])
-    return json.loads(path.read_text()).get("take_wpm") if path.exists() else None
-
-
 def capture_gaps(take: TakeRecord) -> list[list[float]]:
     """Where the recording lost audio, as app-clock (start, end) intervals."""
-    from palmcards.cues import GAP_UNKNOWN_S
-
     out = []
     for g in (take.capture or {}).get("discontinuities", []):
         start = take.t_start + g["at_s"]
-        length = g["samples"] / take.sample_rate if g["samples"] else GAP_UNKNOWN_S
+        length = g["samples"] / take.sample_rate if g["samples"] else METRICS.gap_unknown_s
         out.append([round(start, 3), round(start + length, 3)])
     return out
-
-
-def baseline_take(session: Session, take: TakeRecord) -> TakeRecord | None:
-    """The full take a drill's pace is judged against: the latest saved full take before it."""
-    earlier = [t for t in session.takes if t.number < take.number and t.drill is None and t.status == "saved"]
-    return earlier[-1] if earlier else None
 
 
 def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = False) -> dict:
     """Everything the worker needs, as plain JSON (it never parses the notes)."""
     from palmcards.analysis import analysis_config
 
-    base = baseline_take(session, take) if take.drill is not None else None
     sentences = [[w.norm for w in s.words] for s in notes.sentences]
     if take.drill is not None:  # only the drilled sentence can be matched
         sentences = [words if i == take.drill else [] for i, words in enumerate(sentences)]
@@ -157,7 +136,6 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
         "wav": str(session.dir / take.wav),
         "transcript": str(session.dir / take.transcript_name),
         "prosody": str(session.dir / take.prosody_name),
-        "verdicts": str(session.dir / take.verdicts_name),
         "t_start": take.t_start,
         "language": session.language,
         "silent": take.silent,
@@ -165,7 +143,6 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
         "texts": [s.text for s in notes.sentences],
         "words": [[w.text for w in s.words] for s in notes.sentences],
         "marks": [[[m.kind, m.word] for m in s.marks] for s in notes.sentences],
-        "baseline": {"take": base.number, "verdicts": str(session.dir / base.verdicts_name)} if base else None,
         "gaps": capture_gaps(take),
         "duration_s": take.duration_s,
         "gesture_log": str(session.dir.parent / session.gesture_log) if session.gesture_log else None,
@@ -178,7 +155,7 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
 
 
 def run_job(job: dict) -> dict:
-    """Transcribe (unless re-aligning), align and judge one take."""
+    """Transcribe (unless re-aligning), align and measure one take."""
     path = Path(job["transcript"])
     t0 = time.perf_counter()
     # pyin runs on the CPU while Whisper runs on the GPU.
@@ -190,7 +167,7 @@ def run_job(job: dict) -> dict:
                 Path(job["wav"]), job["t_start"], Path(job["prosody"]), job["silent"],
                 reuse_stale=bool(job.get("realign")))
         except Exception:
-            print(f"take {job['take']}: pitch and loudness failed; stress and intonation will be unclear",
+            print(f"take {job['take']}: pitch and loudness failed; the voice metric will be missing",
                   file=sys.stderr)
             traceback.print_exc()
 
@@ -223,44 +200,31 @@ def run_job(job: dict) -> dict:
     fillers = ALIGN.fillers if calibrated else ()  # the filler list is English
     alignment = align(job["sentences"], data["words"], fillers)
     thread.join()
-    judged = cues.verdicts(job["marks"], alignment, data["words"], measured.get("prosody"),
-                           baseline_wpm(job.get("baseline")), drill=job.get("drill") is not None,
-                           gaps=job.get("gaps", []), language=language, calibrated=calibrated)
-    judged["take"] = job["take"]
-    # What produced these verdicts, so they can be checked or reproduced later.
-    judged["provenance"] = {
+    log = Path(job["gesture_log"]) if job.get("gesture_log") else None
+    prov = measured.get("provenance", {"status": "failed"})
+    measured_take = metrics.take_metrics(
+        alignment, data["words"], job["t_start"], job.get("duration_s", 0.0), log,
+        log.with_suffix(".trace.jsonl") if log else None, metrics.planned_pause_words(alignment, job["marks"]),
+        job.get("vision"), Path(job["face"]) if job.get("face") else None, job.get("calibration"),
+        measured.get("prosody"), "pitch and loudness failed (see the worker's log)", job.get("gaps", []))
+    # What produced these metrics, so they can be checked or reproduced later.
+    measured_take["provenance"] = {
         "notes_revision": job.get("revision"),
         "analysis_config": job.get("config"),
         "asr": data.get("asr", {"model": data.get("model"), "revision": None}),
         "align": {"version": ALIGN_VERSION, "settings": asdict(ALIGN), "fillers": list(fillers)},
-        "scoring": {"version": cues.VERSION},
-        "prosody": measured.get("provenance", {"status": "failed"}),
+        "prosody": prov,
         "gaps": job.get("gaps", []),
     }
-    vpath = Path(job["verdicts"])
-    tmp = vpath.with_suffix(".tmp")
-    tmp.write_text(json.dumps(judged, indent=1) + "\n")
-    tmp.replace(vpath)
-    from palmcards import metrics
-
-    log = Path(job["gesture_log"]) if job.get("gesture_log") else None
-    measured_take = metrics.take_metrics(
-        alignment, data["words"], job["t_start"], job.get("duration_s", 0.0), log,
-        log.with_suffix(".trace.jsonl") if log else None, metrics.planned_pause_words(alignment, job["marks"]),
-        job.get("vision"), Path(job["face"]) if job.get("face") else None, job.get("calibration"))
     return {
         **_identity(job),
         "ok": True,
         "metrics": measured_take,
         "transcript": path.name,
         "alignment": alignment,
-        "verdicts": vpath.name,
-        "verdict_data": judged,
-        "marks": judged["counts"],
-        "summary": f"{summary(alignment)}; {cues.summary(judged)}",
+        "summary": f"{summary(alignment)}; {metrics.summary(measured_take)}",
         "report": report(alignment, data["words"], job["texts"], job["t_start"]) + "\n"
-                  + cues.report(judged, job["words"], job["texts"])
-                  + (f"\n  metrics  {metrics.summary(measured_take)}" if metrics.summary(measured_take) else ""),
+                  + metrics.report(measured_take, job["texts"]),
         "seconds": round(time.perf_counter() - t0, 2),
     }
 
@@ -379,7 +343,7 @@ def _run_cli(args) -> int:
         have = take.transcript is not None and (session.dir / take.transcript).exists()
         realign = args.realign and have
         report_only = have and not (args.force or realign) and take.alignment is not None \
-            and take.verdicts is not None and (session.dir / take.verdicts).exists()
+            and take.metrics is not None
         try:
             notes = session.notes_for(take)
             if not session.verified(take):
@@ -394,18 +358,16 @@ def _run_cli(args) -> int:
             notes = session.current_notes_unverified()
         if have and not (args.force or realign):
             if not report_only:
-                realign = True  # transcribed before milestone 6: judge it now
+                realign = True  # transcribed but never measured: measure it now
             else:
                 t = json.loads((session.dir / take.transcript).read_text())
                 texts = [s.text for s in notes.sentences]
                 print(f"take {take.number} (saved; --force to transcribe again, --realign to re-align)")
                 print(report(take.alignment, t["words"], texts, take.t_start))
-                judged = json.loads((session.dir / take.verdicts).read_text())
-                print(cues.report(judged, [[w.text for w in s.words] for s in notes.sentences], texts))
+                print(metrics.report(take.metrics, texts))
                 continue
         result = run_job(make_job(session, take, notes, realign=realign))
-        session.set_result(take.number, result["transcript"], result["alignment"], result["verdicts"],
-                           result["marks"], result.get("metrics"))
+        session.set_result(take.number, result["transcript"], result["alignment"], result.get("metrics"))
         resolve_jobs(session.dir, take.number, "succeeded")  # any job the app left unfinished for it
         print(f"take {take.number} ({'re-aligned' if realign else 'transcribed'} in {result['seconds']:.1f} s)")
         print(result["report"])

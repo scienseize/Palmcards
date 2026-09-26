@@ -47,9 +47,7 @@ class Colors:
     node_outline: RGBA = (240, 240, 240, 200)
     node_outline_dim: RGBA = (240, 240, 240, 90)  # the ring's action nodes (stress, hear it)
     # Review.
-    verdict: dict[str, RGB] = field(default_factory=lambda: {
-        "hit": (95, 205, 115), "missed": (240, 90, 75), "unclear": (160, 160, 160)})
-    detail_text: RGBA = (235, 235, 235, 235)  # verdict lines under a focused sentence
+    detail_text: RGBA = (235, 235, 235, 235)  # the takes' lines under a focused sentence
     # Persistent alert line (recording or analysis trouble) and the panel's scrollbar.
     alert_fill: RGBA = (170, 40, 30, 230)
     label_fill: RGBA = (10, 10, 12, 190)  # behind the state label and small hints, for busy scenes
@@ -105,12 +103,7 @@ class Chips:
     radius: tuple[int, int] = (3, 5)
     hover_scale: float = 1.0  # x text: word under the cursor
     focus_scale: float = 1.3  # x text: the focused word
-    # Verdict chips on marks: padding (min px, text size // this), and an
-    # opacity that follows the words around them (x their alpha, clamped).
-    verdict_pad: tuple[int, int] = (2, 8)
-    verdict_alpha_gain: float = 2
-    verdict_alpha: tuple[int, int] = (70, 235)
-    symbol_scale: float = 0.7  # x text: verdict symbols (✓ ✗ ? –) and the panel's more markers
+    symbol_scale: float = 0.7  # x text: the panel's more markers
 
 
 @dataclass(frozen=True)
@@ -123,20 +116,19 @@ class Label:
 
 @dataclass(frozen=True)
 class Detail:
-    """Review: verdict lines under the focused sentence."""
+    """Review: a line per take under the focused sentence."""
     scale: float = 0.7  # x text and x line height
     min_columns: int = 10
-    indent: str = "  "  # wrapped continuation lines
-    bullet_y: float = 0.45  # of a detail line, where the verdict dot sits
+    indent: str = "    "  # wrapped continuation lines (past the line's "▸ " marker)
 
 
 @dataclass(frozen=True)
 class Summary:
-    """Review, while browsing: the latest take's summary card, bottom right."""
+    """Review, while browsing: the take table (the last few full takes side by side), bottom right."""
     scale: float = 0.6  # x text
     right: int = 16  # px from the frame's right edge
     bottom: int = 16  # px from the frame's bottom edge
-    gap: int = 4  # px between lines
+    gap: int = 0  # px between lines: one block
 
 
 @dataclass(frozen=True)

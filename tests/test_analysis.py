@@ -65,11 +65,8 @@ def spawner(tmp_path, mode):
     return spawn
 
 
-def job(take, baseline=None, size=0):
-    j = {"take": take, "revision": "r1", "config": "c1", "blob": "x" * size}
-    if baseline is not None:
-        j["baseline"] = {"take": baseline, "verdicts": "/nowhere"}
-    return j
+def job(take, size=0):
+    return {"take": take, "revision": "r1", "config": "c1", "blob": "x" * size}
 
 
 def collect(sup, until, timeout=10.0):
@@ -189,13 +186,22 @@ def test_a_worker_that_never_reads_fails_the_job_without_hanging(tmp_path):
     sup.close(1)
 
 
-def test_a_drill_waits_for_the_take_it_borrows_its_pace_from(tmp_path):
+def test_jobs_run_in_the_order_submitted_drills_included(tmp_path):
     sup = Supervisor(spawn=spawner(tmp_path, "slow_job"))
-    sup.submit(tmp_path, job(3, baseline=2))  # the drill, submitted first
+    sup.submit(tmp_path, job(3))  # a drill waits for nothing now: Review compares it with the full takes
     sup.submit(tmp_path, job(2))
     results = collect(sup, lambda rs: len(rs) >= 2)
-    assert [r["take"] for r in results] == [2, 3]
+    assert [r["take"] for r in results] == [3, 2]
     sup.close(1)
+
+
+def test_job_records_from_before_still_load(tmp_path):
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "jobs" / "abc.json").write_text(json.dumps({
+        "id": "abc", "session": str(tmp_path), "take": 4, "revision": "r1", "config": "c1", "state": "queued",
+        "depends_on": 3, "baseline_verdicts": "/x/take-03.verdicts.json"}))  # a drill's, when it borrowed a pace
+    (j,) = unfinished_jobs(tmp_path)
+    assert (j.take, j.state) == (4, "queued")
 
 
 def test_retry_runs_a_failed_job_again(tmp_path):
@@ -219,5 +225,5 @@ def test_the_real_worker_answers_its_job(tmp_path):
     (r,) = collect(sup, lambda rs: rs, timeout=60)
     assert r["ok"] and (r["take"], r["revision"]) == (1, take.revision) and r["id"]
     assert r["alignment"]["sentences"][0]["status"] == "skipped"
-    assert (session.dir / "take-01.verdicts.json").exists()
+    assert r["metrics"]["speech"]["sentences"][0]["status"] == "skipped" and "verdicts" not in r
     assert sup.close(5) == []

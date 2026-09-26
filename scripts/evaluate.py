@@ -1,4 +1,4 @@
-"""Compare PalmCards' verdicts, word timings and gesture events with human labels.
+"""Compare PalmCards' word timings and gesture events with human labels.
 
   python scripts/evaluate.py LABELS.json [...] [--split tune|holdout] [--json OUT]
   python scripts/evaluate.py --gaze RUN [--take N] [--sweep] [--json OUT]
@@ -7,9 +7,6 @@
 Each labels file describes one take (format and protocol: docs/evaluation.md).
 Reports, over all the files given (optionally one split only):
 
-  marks     for marks a person judged hit or missed: agreement where PalmCards
-            also judged (hit/missed), its false hits and false misses, and
-            how often it abstained (unclear) or called the sentence skipped
   words     |PalmCards' word start - the labelled start|: median, p90, and
             words PalmCards did not align at all
   gestures  mode events in the gesture log outside every labelled
@@ -28,8 +25,9 @@ Tune on one check take, then confirm on another: a setting picked on a take
 always looks better on that take than it will on the next.
 
 --table writes one row per take (every session under the data folder, or the
-RUNs given) as CSV, to OUT or the terminal: the take, its verdict counts,
-speech (pace, fillers, pauses, restarts, ad-libs), hands (shape changes,
+RUNs given) as CSV, to OUT or the terminal: the take, speech (pace,
+fillers, pauses, restarts, ad-libs), voice (pitch range and spread, loudness
+range, voiced seconds), hands (shape changes,
 in view, wrist and fingertip movement, face touches), gaze (on screen, away,
 unclear) and posture (shoulder tilt, head height; shares tilted and dropped).
 A value the take's metrics left None is empty, and `missing` says why.
@@ -67,15 +65,7 @@ def evaluate(labels: dict, root: Path | None = None) -> dict:
     root = root or data_dir()
     session = Session.load(root / labels["session"])
     take = session.take(labels["take"])
-    verdicts = json.loads((session.dir / take.verdicts).read_text()) if take.verdicts else {"sentences": []}
-    by_sentence = {s["sentence"]: s["marks"] for s in verdicts["sentences"]}
-    out = {"marks": [], "words": [], "false_triggers": None, "minutes": None}
-    for m in labels.get("marks", []):
-        if m["label"] not in ("hit", "missed"):
-            continue  # a person's "unclear" is not a reference
-        marks = by_sentence.get(m["sentence"], [])
-        system = marks[m["mark"]]["verdict"] if m["mark"] < len(marks) else "absent"
-        out["marks"].append((m["label"], system))
+    out = {"words": [], "false_triggers": None, "minutes": None}
     if labels.get("words") and take.alignment and take.transcript:
         words = json.loads((session.dir / take.transcript).read_text())["words"]
         for w in labels["words"]:
@@ -96,21 +86,11 @@ def evaluate(labels: dict, root: Path | None = None) -> dict:
 
 
 def summarise(results: list[dict]) -> dict:
-    pairs = [p for r in results for p in r["marks"]]
-    judged = [(h, s) for h, s in pairs if s in ("hit", "missed")]
-    agree = sum(h == s for h, s in judged)
     offsets = [abs(o) for r in results for o in r["words"] if o is not None]
     unaligned = sum(o is None for r in results for o in r["words"])
     minutes = sum(r["minutes"] or 0 for r in results)
     triggers = sum(r["false_triggers"] or 0 for r in results)
     return {
-        "marks": {"labelled": len(pairs), "judged_by_both": len(judged),
-                  "agreement": round(agree / len(judged), 3) if judged else None,
-                  "false_hits": sum(h == "missed" and s == "hit" for h, s in judged),
-                  "false_misses": sum(h == "hit" and s == "missed" for h, s in judged),
-                  "abstained": sum(s == "unclear" for _, s in pairs),
-                  "called_skipped": sum(s == "skipped" for _, s in pairs),
-                  "abstention_rate": round(sum(s == "unclear" for _, s in pairs) / len(pairs), 3) if pairs else None},
         "words": {"labelled": len(offsets) + unaligned, "unaligned": unaligned,
                   "median_error_s": round(float(np.median(offsets)), 3) if offsets else None,
                   "p90_error_s": round(float(np.percentile(offsets, 90)), 3) if offsets else None},
@@ -192,6 +172,10 @@ METRIC_COLUMNS = (
     ("unplanned_long_pauses", "speech", "unplanned_long_pauses", "value"),
     ("restarts", "speech", "restarts", "value"),
     ("ad_libs", "speech", "ad_libs", "value"),
+    ("pitch_range_st", "voice", "pitch_range_st", "value"),
+    ("pitch_sd_st", "voice", "pitch_sd_st", "value"),
+    ("loudness_range_db", "voice", "loudness_range_db", "value"),
+    ("voiced_s", "voice", "voiced_s", "value"),
     ("shape_changes_per_min", "hands", "shape_changes_per_min", "value"),
     ("hand_in_view_share", "hands", "in_view_share", "value"),
     ("wrist_movement_palms_s", "hands", "movement_palms_s", "value"),
@@ -207,7 +191,7 @@ METRIC_COLUMNS = (
     ("head_dropped_share", "posture", "head_dropped_share", "value"),
 )
 TAKE_COLUMNS = ("session", "take", "started", "duration_s", "status", "drill", "gaze_check", "revision",
-                "calibration", "metrics_version", "hit", "missed", "unclear", "skipped")
+                "calibration", "metrics_version")
 COLUMNS = TAKE_COLUMNS + tuple(c for c, *_ in METRIC_COLUMNS) + ("missing",)
 
 
@@ -217,12 +201,10 @@ def take_rows(folder: Path) -> list[dict]:
     rows = []
     for take in session.takes:
         m = take.metrics or {}
-        marks = take.marks or {}
         row = {"session": folder.name, "take": take.number, "started": take.started, "duration_s": take.duration_s,
                "status": take.status, "drill": "" if take.drill is None else take.drill,
                "gaze_check": "yes" if take.gaze_check else "", "revision": take.revision or "",
-               "calibration": (take.vision or {}).get("calibration") or "", "metrics_version": m.get("version", ""),
-               **{k: marks.get(k, "") for k in ("hit", "missed", "unclear", "skipped")}}
+               "calibration": (take.vision or {}).get("calibration") or "", "metrics_version": m.get("version", "")}
         missing = [] if m else ["metrics: none (analysed before they existed, or not yet: python -m palmcards.speech RUN --realign)"]
         for column, group, key, part in METRIC_COLUMNS:
             g = m.get(group)

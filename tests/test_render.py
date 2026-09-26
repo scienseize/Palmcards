@@ -215,21 +215,29 @@ def test_marks_know_their_index_for_verdict_chips():
         ("[slow]", "slow"), ("*", "stress"), ("*", "stress")]
 
 
-def test_review_draws_verdict_chips_and_the_focus_detail():
+def test_review_draws_the_take_table_and_the_focused_sentences_takes():
+    from palmcards.review import Board
+    from tests.test_review import FULL, analysed, metrics
+
     ov = overlay()
-    verdicts = (("hit", "missed"), ("unclear", "skipped"), (), (), (), (), ())
     plain = np.full((720, 1280, 3), 128, np.uint8)
     ov.draw(plain, ViewState(app="review"))
-    chips = np.full((720, 1280, 3), 128, np.uint8)
-    ov.draw(chips, ViewState(app="review", mark_verdicts=verdicts))
-    assert (plain != chips).any()
+    notes = parse_text(TEXT)
+    board = Board(notes)
+    board.add(1, analysed(FULL, notes), metrics([(8, 2, 0)] * 7), duration_s=61.0)
+    board.add(2, analysed(FULL, notes), metrics([(8, 2, 0)] * 7, pace=131.0), duration_s=55.0)
+    table = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(table, ViewState(app="review", summary=board.take_table()))
+    changed = np.argwhere((plain != table).any(axis=2))
+    assert len(changed) and changed[:, 1].min() > ov.x + ov.margin + ov.box_w  # bottom right, clear of the text
 
-    detail = (("hit", '/ before "Truly."  HIT  0.40 s pause'), ("", "Pace 140 wpm, take 150"), ("", "No fillers."))
-    view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), mark_verdicts=verdicts,
-                     detail=detail, status="TAKE 2  2 OF 3  /  L-HAND: TAKES  /  PINCH + LIFT: DRILL")
-    inv_with = ov._focus_panel(ov._panel_unit(view), detail, verdicts).inv
+    detail = ("  Take 1: 140 wpm, no fillers, pitch range 4.5 st, on screen 80%",
+              "▸ Take 2: 131 wpm, 1 filler, pitch range 5 st, on screen 75%")
+    view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), detail=detail,
+                     status="TAKE 2  2 OF 2  /  L-HAND, THEN POINT: TAKES  /  PINCH + LIFT: DRILL")
+    inv_with = ov._focus_panel(ov._panel_unit(view), detail).inv
     inv_without = ov._focus_panel(ov._panel_unit(view)).inv
-    assert (1 - inv_with).sum() > (1 - inv_without).sum() * 1.3  # the verdict lines are drawn
+    assert (1 - inv_with).sum() > (1 - inv_without).sum() * 1.3  # the takes' lines are drawn
     ov.draw(np.full((720, 1280, 3), 128, np.uint8), view)
     assert ov.label_lines(view)[1].startswith("TAKE 2")
 
@@ -279,7 +287,7 @@ def test_the_current_sentence_is_orange_in_rehearse():
 
 def test_long_review_details_reach_the_last_line():
     ov = overlay()
-    detail = tuple(("missed", f"mark {i}: a reason long enough to wrap onto a second line of the panel") for i in range(30))
+    detail = tuple(f"  Take {i}: a line long enough to wrap onto a second line of the panel" for i in range(30))
     view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), detail=detail)
     panel = ov.panel(view)
     vh = ov.panel_view_h(panel)
@@ -300,14 +308,6 @@ def test_a_word_longer_than_a_row_is_split_and_still_hit():
     x = ov.x + ov.margin + ov.pad + (col + 1) * ov.char_w
     y = ov.y + ov.margin + ov.pad + (ri + 0.5) * ov.line_h
     assert ov.hit_test(x, y, 0.0) == Hit(0, 1)
-
-
-def test_verdict_lines_carry_a_symbol_not_just_a_colour():
-    ov = overlay()
-    plain = ov._focus_panel((1,), (("", "hit or not"),)).inv
-    marked = ov._focus_panel((1,), (("hit", "hit or not"),)).inv
-    assert (plain != marked).any()
-
 
 def test_the_alert_line_and_keys_help_are_drawn():
     ov = overlay()

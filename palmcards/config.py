@@ -249,7 +249,6 @@ class Analysis:
     job_timeout_s: float = 900.0  # a job running longer gets its worker stopped (Whisper on a long take is slow)
     max_attempts: int = 2  # runs of a job before a worker crash marks it failed
     shutdown_s: float = 20.0  # closing the app waits this long for running analysis, then defers it
-    baseline_wait_s: float = 30.0  # a drill waits this long for its full take's analysis to be submitted
 
 
 @dataclass(frozen=True)
@@ -285,8 +284,9 @@ class Align:
 
 
 @dataclass(frozen=True)
-class Cues:
-    # Prosody: librosa pyin on the take resampled to 16 kHz (SPEECH.rate).
+class Prosody:
+    # Pitch and loudness of a take (palmcards.prosody, for the voice metric):
+    # librosa pyin on the take resampled to 16 kHz (SPEECH.rate).
     fmin_hz: float = 65.0  # speech range, low male to high female voice
     fmax_hz: float = 400.0
     frame_length: int = 1024  # samples; 64 ms holds two periods of fmin
@@ -296,30 +296,6 @@ class Cues:
     # voiced loudness) are ignored: breath, hum and creak after a word, which
     # pyin tracks at the bottom of its range.
     voiced_floor_db: float = 18.0
-    # Pauses: silence between the words around the mark.
-    short_pause_s: float = 0.3
-    long_pause_s: float = 0.7
-    # Pace: sentence words per minute against the take's average.
-    slow_ratio: float = 0.85
-    fast_ratio: float = 1.15
-    pace_min_words: int = 4  # fewer aligned words: unclear
-    # Stress: the word's peak against the other words' peaks. Pitch and
-    # loudness drift down through a sentence, so with enough other words the
-    # comparison is with a line fitted through them, else with their median.
-    stress_pad_s: float = 0.05  # Whisper's word edges are approximate
-    stress_min_s: float = 0.08  # shorter words: unclear
-    stress_min_voiced: int = 3  # frames with a pitch, for the pitch measure
-    stress_min_others: int = 2  # words to compare with
-    stress_trend_min: int = 4  # other words needed to fit the drift
-    stress_loud_db: float = 3.0  # louder by this much, or ...
-    stress_pitch_st: float = 2.0  # ... higher by this many semitones
-    peak_percentile: float = 90.0  # a word's "peak", robust to one bad frame
-    # Ending intonation: line fitted to the last voiced stretch of the sentence.
-    ending_window_s: float = 0.5
-    ending_pad_s: float = 0.15  # looked at past the last word's end
-    ending_min_voiced_s: float = 0.15  # less voiced sound: unclear
-    ending_slope_st_s: float = 3.0  # semitones per second, up for rise, down for fall
-    tail_min_probability: float = 0.3  # an ending is judged only if its last word was heard at least this surely
 
 
 @dataclass(frozen=True)
@@ -348,6 +324,12 @@ class Metrics:
     min_words: int = 10  # fewer words: no pace
     min_take_s: float = 10.0  # a shorter take: no fillers per minute
     long_pause_s: float = 1.5  # a silence this long that no pause mark asked for
+    # Per sentence: pace needs this many aligned words (fewer: no pace for it).
+    sentence_min_words: int = 4
+    gap_unknown_s: float = 0.05  # a lost stretch of audio of unknown length counts as this long
+    # Voice (pitch and loudness, palmcards.prosody), over voiced sound while a sentence is being said.
+    min_voiced_s: float = 5.0  # less voiced sound in the take: no voice metric
+    sentence_min_voiced_s: float = 0.5  # less in a sentence: no pitch range for it
     # Hands, from the take's features (palmcards.features), without --trace.
     min_hand_s: float = 1.0  # less time with a hand in view: no movement rate
     move_max_gap_s: float = 0.2  # movement is summed between hand results at most this far apart
@@ -440,7 +422,7 @@ RECORDING = Recording()
 SPEECH = Speech()
 ANALYSIS = Analysis()
 ALIGN = Align()
-CUES = Cues()
+PROSODY = Prosody()
 FOLLOW = Follow()
 VOICE = Voice()
 LLM = Llm()

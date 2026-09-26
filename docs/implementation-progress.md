@@ -1551,3 +1551,33 @@ Changes: an open palm (or m) on a focused sentence no longer asks for marks; on 
 Tests: pytest (full) -> 493 passed (the suggestion tests removed; the pointer tests moved to Review's
   take chips; an open palm on a focused sentence changes nothing). Replays: 12 ok.
 ```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: no delivery marks, stage 2 of 4: Review compares takes on metrics; verdicts removed
+Changes:
+  palmcards/cues.py and tests/test_cues.py deleted: nothing is judged. CUES in config became PROSODY
+    (the pyin settings only; the mark thresholds went).
+  palmcards/metrics.py (version 4): speech per sentence (status, pace from its first to its last word,
+    METRICS.sentence_min_words aligned words, None + why where the recording lost audio; the fillers
+    that count toward it), and a voice group from the take's pitch and loudness: pitch range (10th-90th
+    percentile, semitones from the speaker's median) and spread, loudness range, voiced seconds, pitch
+    range per sentence; None + reason under METRICS.min_voiced_s. metrics.report for the terminal.
+  palmcards/speech.py: no verdicts file, no drill baseline; metrics carry the provenance the verdicts
+    did (notes revision, analysis config, ASR, alignment, prosody cache, lost audio).
+  palmcards/analysis.py: a drill no longer waits for a baseline take; job records from before (with
+    depends_on / baseline_verdicts) still load.
+  palmcards/review.py: the board holds each analysed take's per-sentence rows (from its metrics, or
+    from its alignment for takes measured before version 4): take_table() sets the last 4 full takes
+    side by side (length, WPM, fillers/min, long pauses, restarts, pitch range, on screen, face
+    touches, shoulders tilted); detail() lists the focused sentence in every take that said it, the one
+    it shows (and plays) marked. Pointing at the take chips is unchanged.
+  palmcards/render.py: no verdict chips or symbols; the take table bottom right while browsing Review.
+  palmcards/session.py: set_result(number, transcript, alignment, metrics); the take's verdicts and
+    marks fields are legacy, kept as found. scripts/evaluate.py: mark agreement removed; the take table
+    has the voice columns instead of verdict counts.
+Checked on a copy of 20260926-193557 (two takes): --realign printed per-sentence pace and pitch range
+  and the voice metric (pitch range 8.6 and 9.7 st); the take table and the focused panel drawn from it.
+Docs (CLAUDE.md, README) are rewritten in stage 4.
+Tests: pytest (full) -> 466 passed; replays 12 ok.
+```

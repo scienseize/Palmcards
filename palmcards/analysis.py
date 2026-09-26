@@ -23,11 +23,6 @@ close() is bounded: the worker is asked to finish (stdin closed), then
 terminated, then killed. Unfinished jobs stay on disk (queued) and are
 reported; they are found again with unfinished_jobs() and run by
 `python -m palmcards.speech`, which does the same work (speech.run_job).
-
-A drill's pace is judged against the latest full take before it (by take
-number, not whichever verdicts file happens to exist); its job waits until
-that take's job has finished, or, if no job for it is known, until its
-verdicts exist, at most ANALYSIS.baseline_wait_s (then the pace is unclear).
 """
 
 from __future__ import annotations
@@ -40,12 +35,12 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from palmcards.config import ALIGN, ANALYSIS, CUES, GAZE, METRICS, SPEECH
+from palmcards.config import ALIGN, ANALYSIS, GAZE, METRICS, PROSODY, SPEECH
 
 ROOT = Path(__file__).resolve().parent.parent
 TERMINAL = ("succeeded", "failed")
@@ -53,7 +48,7 @@ TERMINAL = ("succeeded", "failed")
 
 def analysis_config() -> str:
     """Short hash of every setting that shapes an analysis result."""
-    data = json.dumps([asdict(SPEECH), asdict(ALIGN), asdict(CUES), asdict(METRICS), asdict(GAZE)], sort_keys=True,
+    data = json.dumps([asdict(SPEECH), asdict(ALIGN), asdict(PROSODY), asdict(METRICS), asdict(GAZE)], sort_keys=True,
                       default=str)
     return hashlib.sha256(data.encode()).hexdigest()[:12]
 
@@ -81,8 +76,6 @@ class Job:
     created: str = field(default_factory=_now)
     updated: str = field(default_factory=_now)
     error: str | None = None
-    depends_on: int | None = None  # a drill: the take whose pace it borrows
-    baseline_verdicts: str | None = None  # ... and that take's verdicts file
 
     @property
     def folder(self) -> Path:
@@ -105,7 +98,9 @@ def unfinished_jobs(session_dir: str | Path) -> list[Job]:
     for path in sorted(folder.glob("*.json")):
         if path.name.endswith(".input.json"):
             continue
-        job = Job(**json.loads(path.read_text()))
+        data = json.loads(path.read_text())
+        known = {f.name for f in fields(Job)}  # records from before may carry fields since removed
+        job = Job(**{k: v for k, v in data.items() if k in known})
         if job.state not in TERMINAL:
             out.append(job)
     return out
@@ -140,7 +135,6 @@ class Supervisor:
         self._admitted = 0  # jobs submitted and not yet finished
         self.log: list[str] = []  # what went wrong, for the terminal
         self._jobs: list[Job] = []  # every job this run, in order (supervisor thread only)
-        self._accepted: dict[str, float] = {}  # job id -> when it was accepted (monotonic)
         self._proc: subprocess.Popen | None = None
         self._generation = 0
         self._running: Job | None = None
@@ -254,11 +248,8 @@ class Supervisor:
             self._dispatch()
 
     def _accept(self, session_dir: str, job_input: dict) -> None:
-        baseline = job_input.get("baseline") or {}
         job = Job(id=secrets.token_hex(6), session=session_dir, take=job_input["take"],
-                  revision=job_input.get("revision"), config=job_input.get("config", ""),
-                  depends_on=baseline.get("take"), baseline_verdicts=baseline.get("verdicts"))
-        self._accepted[job.id] = time.monotonic()
+                  revision=job_input.get("revision"), config=job_input.get("config", ""))
         try:
             job.folder.mkdir(parents=True, exist_ok=True)
             _write_json(job.input_path, {**job_input, "job": job.id})
@@ -269,21 +260,10 @@ class Supervisor:
         self._jobs.append(job)
         self._set(job, "queued")
 
-    def _ready(self, job: Job) -> bool:
-        """A drill waits for the full take whose pace it borrows."""
-        if job.depends_on is None:
-            return True
-        known = [j for j in self._jobs if j.session == job.session and j.take == job.depends_on]
-        if known:
-            return all(j.state in TERMINAL for j in known)
-        if job.baseline_verdicts and Path(job.baseline_verdicts).exists():
-            return True
-        return time.monotonic() - self._accepted.get(job.id, 0.0) > ANALYSIS.baseline_wait_s
-
     def _dispatch(self) -> None:
         if self._running is not None or self._closing:
             return
-        job = next((j for j in self._jobs if j.state == "queued" and self._ready(j)), None)
+        job = next((j for j in self._jobs if j.state == "queued"), None)
         if job is None:
             return
         if self._proc is None or self._proc.poll() is not None:

@@ -7,8 +7,8 @@
       notes/r1a2b3c4d5e6f.json  the parsed notes each take was rehearsed against
       take-01.wav
       take-01.transcript.json   (milestone 5, see palmcards.speech)
-      take-01.prosody.npz       (milestone 6: pitch and loudness, palmcards.prosody)
-      take-01.verdicts.json     (milestone 6: a verdict per delivery mark, palmcards.cues)
+      take-01.prosody.npz       (pitch and loudness, for the voice metric; palmcards.prosody)
+      take-01.verdicts.json     (legacy: delivery-mark verdicts, before 2026-09-26; not read)
       take-01.face.npz          (milestone 7: face, pose and hand features, palmcards.features)
       take-02.wav
       llm-usage.jsonl           (milestone 8: each LLM call's tokens, never its text; palmcards.llm)
@@ -93,8 +93,10 @@ class TakeRecord:
     sections: list[dict] = field(default_factory=list)  # {"section": i, "t": s into the take}
     transcript: str | None = None  # take-NN.transcript.json, once transcribed
     alignment: dict | None = None  # see palmcards.align
-    verdicts: str | None = None  # take-NN.verdicts.json, once judged
-    marks: dict | None = None  # verdict counts: {"hit": 5, "missed": 2, "unclear": 1, "skipped": 0}
+    # Legacy, kept as found: take-NN.verdicts.json and its counts, from when
+    # delivery marks were judged (removed 2026-09-26). Never written now.
+    verdicts: str | None = None
+    marks: dict | None = None
     drill: int | None = None  # a drill: the one sentence (Notes.sentences index) it rehearsed
     revision: str | None = None  # the notes revision it was recorded with; None before schema 2
     # "saved": recorded and finished normally; "interrupted": cut short (the app
@@ -122,10 +124,6 @@ class TakeRecord:
     @property
     def prosody_name(self) -> str:
         return self._sibling(".prosody.npz")
-
-    @property
-    def verdicts_name(self) -> str:
-        return self._sibling(".verdicts.json")
 
     @property
     def face_name(self) -> str:
@@ -449,13 +447,10 @@ class Session:
         on_disk = [int(m.group(1)) for p in self.dir.glob("take-*") if (m := TAKE_FILE.match(p.name))]
         return max([t.number for t in self.takes] + on_disk + [0]) + 1
 
-    def set_result(self, number: int, transcript: str, alignment: dict, verdicts: str | None = None,
-                   marks: dict | None = None, metrics: dict | None = None) -> None:
-        """Record a take's transcript file, its alignment to the notes, its verdicts file and metrics."""
+    def set_result(self, number: int, transcript: str, alignment: dict, metrics: dict | None = None) -> None:
+        """Record a take's transcript file, its alignment to the notes and its metrics."""
         take = self.take(number)
         take.transcript, take.alignment = transcript, alignment
-        if verdicts is not None:
-            take.verdicts, take.marks = verdicts, marks
         if metrics is not None:
             take.metrics = metrics
         self.save()

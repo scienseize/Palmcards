@@ -8,7 +8,7 @@ from palmcards.config import SPEECH
 from palmcards.notes import parse_text
 from palmcards.session import Session, write_wav
 from palmcards.speech import (
-    baseline_wpm, initial_prompt, make_job, prepare_audio, resample, run_job, trim_silence, words_on_clock,
+    initial_prompt, make_job, prepare_audio, resample, run_job, trim_silence, words_on_clock,
 )
 
 
@@ -68,10 +68,10 @@ def test_initial_prompt_has_fillers():
 
 def job_for(tmp_path, **kw) -> dict:
     job = {"take": 1, "wav": str(tmp_path / "take-01.wav"), "transcript": str(tmp_path / "take-01.transcript.json"),
-           "prosody": str(tmp_path / "take-01.prosody.npz"), "verdicts": str(tmp_path / "take-01.verdicts.json"),
+           "prosody": str(tmp_path / "take-01.prosody.npz"),
            "t_start": 3.0, "language": "en", "silent": False, "sentences": [["hello", "there"]],
            "texts": ["Hello there /."], "words": [["Hello", "there"]], "marks": [[["short_pause", 2]]],
-           "baseline_from": [], "realign": False}
+           "realign": False}
     return job | kw
 
 
@@ -81,10 +81,9 @@ def test_silent_take_skips_whisper(tmp_path):
     assert result["alignment"]["sentences"][0]["status"] == "skipped"
     data = json.loads((tmp_path / "take-01.transcript.json").read_text())
     assert data["words"] == [] and data["t_start"] == 3.0
-    # Judged too: the only mark is in a sentence that wasn't said.
-    assert result["verdicts"] == "take-01.verdicts.json" and result["marks"]["skipped"] == 1
-    saved = json.loads((tmp_path / "take-01.verdicts.json").read_text())
-    assert saved["take"] == 1 and saved["sentences"][0]["marks"][0]["verdict"] == "skipped"
+    # Measured, never judged: no verdicts.
+    assert result["metrics"]["speech"]["sentences"][0]["status"] == "skipped" and "verdicts" not in result
+    assert result["metrics"]["voice"]["value"] is None and not (tmp_path / "take-01.verdicts.json").exists()
     assert (tmp_path / "take-01.prosody.npz").exists()
 
 
@@ -98,10 +97,10 @@ def test_realign_uses_saved_transcript(tmp_path):
     s = result["alignment"]["sentences"][0]
     assert (s["status"], s["start"], s["end"]) == ("spoken", 4.0, 4.7)
     assert "0:01.0-0:01.7" in result["report"]
-    assert "no delivery marks" in result["summary"]
+    assert result["metrics"]["speech"]["sentences"][0]["wpm"] is None  # two words: too few for a pace
 
 
-def test_drill_job_matches_only_its_sentence_and_borrows_the_pace(tmp_path):
+def test_drill_job_matches_only_its_sentence(tmp_path):
     text = "Hello there my friend. [slow] Good evening to you all."
     notes = parse_text(text)
     (tmp_path / "notes.txt").write_text(text)
@@ -111,35 +110,6 @@ def test_drill_job_matches_only_its_sentence_and_borrows_the_pace(tmp_path):
     job = make_job(session, drill, notes)
     assert job["sentences"] == [[], ["good", "evening", "to", "you", "all"]]
     assert job["marks"] == [[], [["slow", None]]]
-    assert job["baseline"] == {"take": 1, "verdicts": str(session.dir / "take-01.verdicts.json")}
     assert job["drill"] == 1 and job["revision"] == drill.revision and job["config"]
-    assert make_job(session, full, notes)["baseline"] is None
-    # Take 1 is judged after the drill was submitted, before the worker reaches it.
-    assert baseline_wpm(job["baseline"]) is None
-    (session.dir / full.verdicts_name).write_text(json.dumps({"take_wpm": 150.0}))
-    assert baseline_wpm(job["baseline"]) == 150.0
-
-
-def test_a_drill_borrows_the_latest_full_take_only_never_an_older_one(tmp_path):
-    text = "Hello there my friend. [slow] Good evening to you all."
-    (tmp_path / "notes.txt").write_text(text)
-    session = Session.create(tmp_path / "notes.txt", root=tmp_path / "sessions")
-    add = lambda **kw: session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)], **kw)
-    first, second = add(), add()
-    (session.dir / first.verdicts_name).write_text(json.dumps({"take_wpm": 150.0}))  # take 2 has none (failed)
-    job = make_job(session, add(drill=1), parse_text(text))
-    assert job["baseline"]["take"] == 2 and baseline_wpm(job["baseline"]) is None
-    second.status = "interrupted"  # an interrupted take is not a baseline
-    assert make_job(session, add(drill=1), parse_text(text))["baseline"]["take"] == 1
-
-
-def test_a_drill_without_a_baseline_has_an_unclear_pace(tmp_path):
-    from palmcards import cues
-
-    alignment = {"sentences": [{"sentence": 0, "status": "spoken", "coverage": 1.0, "start": 1.0, "end": 3.0,
-                                "words": [0, 1, 2, 3, 4], "misheard": []}],
-                 "fillers": [], "restarts": [], "extras": [], "unsure": []}
-    words = [{"text": w, "start": 1.0 + 0.4 * i, "end": 1.3 + 0.4 * i} for i, w in enumerate("a b c d e".split())]
-    v = cues.verdicts([[["slow", None]]], alignment, words, None, None, drill=True)
-    mark = v["sentences"][0]["marks"][0]
-    assert (mark["verdict"], mark["reason"], v["baseline"]) == ("unclear", "no earlier full take to compare with", "none")
+    assert "baseline" not in job  # Review compares the drill with the full takes; nothing waits for them
+    assert make_job(session, full, notes)["drill"] is None

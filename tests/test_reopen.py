@@ -19,11 +19,14 @@ from tests.test_app_lifecycle import NOTES, Rig
 TEXT = "# One\n\nHello there friend. / Good night all.\n\n# Two\n\nSee you soon.\n"
 
 
-def verdicts(marks_per_sentence):
-    return {"take_wpm": 150.0, "counts": {"hit": 1, "missed": 0, "unclear": 0, "skipped": 0}, "sentences": [
-        {"sentence": i, "status": "spoken", "wpm": 150.0, "fillers": [],
-         "marks": [{"kind": "short_pause", "word": 0, "verdict": v, "reason": "r"} for v in marks]}
-        for i, marks in enumerate(marks_per_sentence)]}
+def alignment(statuses):
+    """A take's alignment with each sentence spoken or skipped."""
+    return {"sentences": [{"sentence": i, "status": st, "coverage": 1.0 if st == "spoken" else 0.0,
+                           "start": 5.0 + 2 * i if st == "spoken" else None,
+                           "end": 6.5 + 2 * i if st == "spoken" else None,
+                           "words": [10 * i + k if st == "spoken" else None for k in range(4)], "misheard": []}
+                          for i, st in enumerate(statuses)],
+            "fillers": [], "restarts": [], "extras": [], "unsure": []}
 
 
 def test_takes_of_an_earlier_revision_show_on_the_current_notes_by_sentence_id():
@@ -34,10 +37,9 @@ def test_takes_of_an_earlier_revision_show_on_the_current_notes_by_sentence_id()
     mapping = index_map(a, b)
     assert mapping == {0: 0, 2: 3}  # "Good night all." was edited; "See you soon." moved down
     board = Board(new)
-    board.add(1, verdicts([["hit"], ["missed"], []]), sentence_map=mapping)
-    shown = board.takes[1]["sentences"]
-    assert [s["status"] for s in shown] == ["spoken", "skipped", "skipped", "spoken"]
-    assert board.mark_verdicts()[0] == ("hit",) and board.said_in(1) == []  # the edited one isn't claimed
+    board.add(1, alignment(["spoken", "spoken", "spoken"]), sentence_map=mapping)
+    assert [board.said_in(i) for i in range(4)] == [[1], [], [], [1]]  # the edited one isn't claimed
+    assert board.rows[1][3]["wpm"] == 160.0  # "See you soon.": 4 words in 1.5 s
 
 
 def test_a_sentence_clip_is_its_words_padded(tmp_path):
@@ -68,12 +70,11 @@ def saved_session(tmp_path):
     audio = np.full(16000 * 3, 0.1, np.float32)
     judged = session.add_take(audio, 16000, 5.0, datetime.now(), [(0.0, 0)])
     session.add_take(audio, 16000, 20.0, datetime.now(), [(0.0, 0)])  # its analysis never finished
-    (session.dir / judged.verdicts_name).write_text(json.dumps(verdicts([[], [], []])))
-    alignment = {"sentences": [{"sentence": 0, "status": "spoken", "start": 5.5, "end": 6.5, "words": [0]},
-                               {"sentence": 1, "status": "skipped", "start": None, "end": None, "words": [None]},
-                               {"sentence": 2, "status": "skipped", "start": None, "end": None, "words": [None]}],
-                 "fillers": [], "restarts": [], "extras": [], "unsure": []}
-    session.set_result(1, judged.transcript_name, alignment, judged.verdicts_name, {})
+    aligned = {"sentences": [{"sentence": 0, "status": "spoken", "start": 5.5, "end": 6.5, "words": [0]},
+                             {"sentence": 1, "status": "skipped", "start": None, "end": None, "words": [None]},
+                             {"sentence": 2, "status": "skipped", "start": None, "end": None, "words": [None]}],
+               "fillers": [], "restarts": [], "extras": [], "unsure": []}
+    session.set_result(1, judged.transcript_name, aligned)
     session.release()
     return session
 
