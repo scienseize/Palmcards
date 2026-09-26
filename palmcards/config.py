@@ -32,7 +32,10 @@ class Body:
     pose_every: int = 15
     pose_offset: int = 2
     max_side: int = 640  # frames are downscaled to this before pose landmarking
-    face_max_side: int = 640  # ... and before face landmarking (the iris needs the detail)
+    # ... and before face landmarking: the whole 1280 x 720 frame, as the iris
+    # needs the detail (at 640 px an eye is ~30 px wide). Benchmarked warm at
+    # face every 6th / pose every 15th frame: 30 fps, level with hands alone.
+    face_max_side: int = 1280
     busy_timeout_s: float = 0.5  # give up on a result that never arrived
     min_detection: float = 0.5
     min_presence: float = 0.5

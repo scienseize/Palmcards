@@ -940,6 +940,11 @@ Next (the user's choice): track the face at full resolution (BODY.face_max_side,
   whole run, and a tracker whose frame count starts again starts its schedule again (test added).
   The app counts frames over the whole run and was not affected; the stage 0 runs used the older
   modulo schedule and are not affected either.
+Benchmark again at 1280 px (sessions/bench-vision-face1280b.json; base and f6p15 interleaved x4,
+  35 s each, thermal state fair from ~3 min): every row 30.0 fps, p90 36.8-37.9 ms, hands 13.1 ms,
+  face 6.6-6.9 ms at 5/s (found 96-100%), pose ~10 ms at 2/s, live read p90 122-126 ms, no audio
+  dropped; face and pose level with hands alone. (The slowdown step of the stage 0 runs did not
+  come in these 5 minutes.) BODY.face_max_side set to 1280.
 ```
 
 ## Decisions (2026-09-26, by the user)
