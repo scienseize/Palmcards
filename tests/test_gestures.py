@@ -206,7 +206,7 @@ def test_cursor_maps_hand_box_and_edges_scroll():
 
 # --- grammar --------------------------------------------------------------------------
 
-def test_word_flow_browse_focus_ring_point_commit():
+def test_word_flow_browse_focus_ring_turn_commit():
     g = Grammar((W, H))
     run(g, hold(one, 0.3))
     assert (g.state.mode, g.state.level) == ("browse", "word")
@@ -221,12 +221,85 @@ def test_word_flow_browse_focus_ring_point_commit():
 
     events, t = run(g, hold(open_palm, 0.3), t)
     assert g.state.op == "ring"
-    run(g, hold(l_hand, 0.3), t)
-    assert g.state.pointing
+    g.set_ring_labels(t, RING_NODES)
+    _, t = run(g, hold(l_hand, 0.3, rotate=-10), t)  # the knob starts wherever the L is
+    assert g.state.turning and g.state.ring_pick == "imparted"
+    _, t = run(g, hold(l_hand, 0.4, rotate=-10 + 32), t)  # two steps clockwise (26.5 deg needed)
+    assert (g.state.ring_pick, g.state.ring_k, g.state.ring_turn) == ("inflicted", 2, 2)
+    steps = [e for e in g.log.entries if e.get("op") == "ring_step"]
+    assert [(e["node"], e["word"], e["dir"]) for e in steps] == [(1, "stamped", 1), (2, "inflicted", 1)]
 
-    events, t = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t + 0.3)
-    assert [e.kind for e in events] == ["commit"]
+    events, t = run(g, hold(pinch, 0.2, rotate=22) + lift(0.4, 0.2 * H, make=lambda **kw: pinch(rotate=22, **kw)), t)
+    assert [(e.kind, e.op) for e in events] == [("commit", "ring")]
     assert (g.state.mode, g.state.level, g.state.op) == ("browse", "word", None)
+
+
+RING_NODES = ("imparted", "stamped", "inflicted", "stress", "hear it")
+
+
+def ring_turned(steps_deg=(0.0,)):
+    """A focused word, its ring open with RING_NODES, an L turned through the given tilts."""
+    g = Grammar((W, H))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, 0.3))
+    g.set_ring_labels(t, RING_NODES)
+    for deg in steps_deg:
+        _, t = run(g, hold(l_hand, 0.3, rotate=deg), t)
+    return g, t
+
+
+def test_turning_left_wraps_round_the_ring():
+    g, _ = ring_turned((0.0, -14.0))
+    assert g.state.ring_pick == "hear it" and g.state.ring_turn == -1
+
+
+def test_turning_back_to_the_start_is_the_original():
+    g, _ = ring_turned((0.0, 30.0, 3.0))
+    assert g.state.ring_pick == "imparted" and g.state.ring_turn == 0
+    words = [e["word"] for e in g.log.entries if e.get("op") == "ring_step"]
+    assert words == ["stamped", "inflicted", "stamped", "imparted"]
+
+
+def test_alternatives_arriving_mid_turn_keep_the_pick():
+    g = Grammar((W, H))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, 0.3))
+    g.set_ring_labels(t, ("imparted", "stress", "hear it"))
+    _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.3, rotate=16), t)
+    assert g.state.ring_pick == "stress"
+    g.set_ring_labels(t, RING_NODES)
+    _, t = run(g, hold(l_hand, 0.2, rotate=16), t)
+    assert g.state.ring_pick == "stress"
+    assert any(e["kind"] == "ring_nodes" and e["nodes"] == list(RING_NODES) for e in g.log.entries)
+    _, t = run(g, hold(l_hand, 0.3, rotate=31), t)
+    assert g.state.ring_pick == "hear it"
+
+
+def test_a_thumb_drifting_in_keeps_turning_the_ring():
+    g, t = ring_turned((0.0,))
+    _, t = run(g, hold(drifted, 0.3, rotate=16), t)
+    assert g.state.turning and g.state.ring_pick == "stamped"
+
+
+def test_closing_into_a_pinch_keeps_the_ring_node():
+    g, t = ring_turned((0.0, 16.0))
+    assert g.state.ring_pick == "stamped"
+    curl = approach(start=16.0) + hold(pinch, 0.2, rotate=-24)
+    events, _ = run(g, curl + lift(0.4, 0.2 * H, make=lambda **kw: pinch(rotate=-24, **kw)), t)
+    assert [(e.kind, e.op) for e in events] == [("commit", "ring")]
+    assert g.state.ring_pick == "stamped"  # not stepped back by the curl's -40 deg (or put back if it was)
+
+
+def test_dropping_the_hand_backs_out_of_the_ring():
+    g, t = ring_turned((0.0, 16.0))
+    events, _ = run(g, [None] * round((TIMING.drop_s + 0.2) / DT), t)
+    assert [(e.kind, e.op) for e in events] == [("back", "ring")]
+    assert g.state.op is None and not g.state.turning
+
+
+def test_a_new_focus_starts_the_ring_again():
+    g, t = ring_turned((0.0, 16.0))
+    _, t = run(g, [None] * round((TIMING.drop_s + 0.2) / DT), t)
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, 0.3), t)
+    assert g.state.op == "ring" and g.state.ring_pick == "imparted" and g.state.ring_turn == 0
 
 
 def curl_into_pinch(n=6, drop=45):
@@ -712,10 +785,10 @@ def test_key_commands_make_the_same_transitions_as_the_gestures():
     assert [(k["command"], k["acted"]) for k in keys][:3] == [("stop", False), ("start", True), ("stop", True)]
 
 
-# --- choosing by pointing (the ring, the marks, Review's takes) --------------------
+# --- choosing by pointing (the marks, Review's takes) ------------------------------
 
-def test_the_ring_pointer_starts_with_an_l_and_follows_the_fingertip():
-    g, t = ring_focus()
+def test_the_pointer_starts_with_an_l_and_follows_the_fingertip():
+    g, t = marks_spread()
     _, t = run(g, hold(one, 0.3), t)
     assert not g.state.pointing and g.state.point is None  # pointing alone doesn't start it: an L does
     _, t = run(g, hold(l_hand, 0.3), t)
@@ -734,7 +807,7 @@ def test_the_ring_pointer_starts_with_an_l_and_follows_the_fingertip():
 
 
 def test_a_pinch_takes_the_point_back_to_before_the_curl():
-    g, t = ring_focus()
+    g, t = marks_spread()
     _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.5, origin=(1000, 600)), t)
     before = g.state.point
     events, t = run(g, curl_into_pinch(drop=60, n=8)[:12], t)  # the index tip sinks as it curls
@@ -742,7 +815,7 @@ def test_a_pinch_takes_the_point_back_to_before_the_curl():
     (ev,) = [e for e in events if e.kind == "rewind"]
     assert ev.value < ev.t and g.state.point == pytest.approx(before, abs=0.02) and g.state.closing
     events, t = run(g, lift(0.4, 0.2 * H), t)
-    assert [(e.kind, e.op) for e in events] == [("commit", "ring")]
+    assert [(e.kind, e.op) for e in events] == [("commit", "marks")]
 
 
 def curl_into_pinch_from_l(n=6):

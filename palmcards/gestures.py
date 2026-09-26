@@ -11,8 +11,8 @@ Pipeline per hand result:
 The grammar (Kat's "gestural editing/writing"):
   shape picks the scope     ONE = word, TWO = sentence, FLAT = paragraph
   close the hand to focus   PINCH (word) or FOLD fingers onto the thumb
-  second shape operates     OPEN = options ring, then an L starts a pointer: the fingertip moves
-                            the pick (word); L tilt = tone dial, OPEN = suggested marks, then an L
+  second shape operates     OPEN = options ring, then an L turns it like a knob (word); L tilt =
+                            tone dial, OPEN = suggested marks, then an L
                             starts a pointer over them and a pinch (no lift) accepts or rejects one
                             (sentence); two L hands = length stretch (paragraph)
   pinch + lift commits      back to Browse at the same level
@@ -44,7 +44,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from palmcards.config import CURSOR, OPS, POSE, REHEARSE, TIMING, TRACKING
+from palmcards.config import CURSOR, KNOB, OPS, POSE, REHEARSE, TIMING, TRACKING
+from palmcards.knob import Knob, RingSelection
 from palmcards.paths import data_dir
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
@@ -75,6 +76,9 @@ ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", 
 LEVEL_OF_SHAPE = {ONE: "word", TWO: "sentence", FLAT: "paragraph"}
 SHAPE_OF_LEVEL = {v: k for k, v in LEVEL_OF_SHAPE.items()}
 FOLD_TIPS = {TWO: (INDEX_TIP, MIDDLE_TIP), FLAT: (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)}
+# The options ring before the app gives its nodes (the word, stress, hear it): replays of
+# recordings without the app's "ring_nodes" lines.
+DEFAULT_RING = ("original", "stress", "hear it")
 
 
 @dataclass
@@ -460,16 +464,24 @@ class GestureEvent:
 class GestureState:
     mode: str = "idle"  # idle | browse | focus
     level: str | None = None  # word | sentence | paragraph
-    op: str | None = None  # ring | tone | marks | stretch (Prepare), take (Review's take dial)
+    op: str | None = None  # ring | tone | marks | stretch (Prepare), take (Review's take chips)
     cursor: tuple[float, float] | None = None  # (u, v) in the hand box
     scroll_rate: float = 0.0  # rows per second
-    # Choosing by pointing (the ring's options, spread marks, Review's takes): an
+    # Choosing by pointing (spread marks, Review's takes): an
     # L starts it, then the index fingertip moves a point; `point` is how far it
     # has moved since the focus, in hand-box widths and heights (the app puts it
     # on screen at the scale of browsing and picks the nearest item). It carries
     # on from its value when picked up again, and is held while pinching.
     pointing: bool = False
     point: tuple[float, float] | None = None
+    # The options ring turned like a knob (palmcards.knob): an L-hand turning;
+    # the node picked (its label; the app gives the labels, Grammar.ring_labels);
+    # the knob's step since it started, unbounded (+ clockwise), so the app turns
+    # the ring the way the hand went.
+    turning: bool = False
+    ring_pick: str | None = None
+    ring_k: int = 0
+    ring_turn: int = 0  # steps taken since the focus, + clockwise: the ring's rotation
     tone: float = 0.0  # -1 cold .. 1 warm
     stretch: float = 1.0  # length ratio
     closing: bool = False  # a pinch is coming or held: the dial or the pointed word is held (and shown so)
@@ -499,6 +511,11 @@ class Grammar:
         self._d0: float | None = None
         self._p0: tuple[float, float] | None = None  # the pointer's zero (hand-box units), while it runs
         self._point_filter = OneEuro()
+        self.ring_labels: tuple[str, ...] = DEFAULT_RING  # set by the app: the ring's nodes
+        self._knob = Knob()
+        self._ring = RingSelection(DEFAULT_RING)
+        self._knob_fresh = True  # the next L starts the knob (step 0); later ones pick it up again
+        self._tilt_filter = OneEuro(KNOB.min_cutoff, KNOB.beta, KNOB.d_cutoff)
         self._point_hist: deque[tuple[float, float, tuple[float, float]]] = deque()  # (t, thumb, point)
         self._point_held = False  # a pinch has the pointer: held at its rewound value
         self._toggle_armed = False  # spread marks: a pinch (after the hand opened again) is being held
@@ -541,6 +558,7 @@ class Grammar:
         self._commit_armed_t = None
         self._tilt0 = self._d0 = self._p0 = None
         self._toggle_armed = False
+        self._reset_ring()
 
     def update(self, hands: list[Hand], t: float) -> list[GestureEvent]:
         return self.step(self.track(hands, t), t)
@@ -666,6 +684,7 @@ class Grammar:
         s = self.state
         s.mode, s.op, s.scroll_rate = "focus", None, 0.0
         s.pointing, s.point, s.tone, s.stretch, s.stretch_ends, s.drop_progress = False, None, 0.0, 1.0, None, 0.0
+        self._reset_ring()
         self._focus_armed = False
         self._commit_armed_t = None
         self._gone_since = None
@@ -683,6 +702,7 @@ class Grammar:
         events.append(ev)
         self.log(t, kind, level=s.level, op=s.op, value=ev.value)
         s.mode, s.op, s.pointing, s.stretch_ends, s.drop_progress = "browse", None, False, None, 0.0
+        s.turning = False
         s.closing = False
         self._focus_armed = False
         self._toggle_armed = False
@@ -723,7 +743,7 @@ class Grammar:
 
     # -- dials and pinches: curling the index to pinch must not turn a dial --
 
-    DIALS = ("tone", "stretch")  # the ring, the marks and the takes are chosen by pointing (_point)
+    DIALS = ("ring", "tone", "stretch")  # the marks and the takes are chosen by pointing (_point)
 
     def _dial_hands(self) -> list[HandTrack]:
         s = self.state
@@ -746,15 +766,17 @@ class Grammar:
         if closing != s.closing:
             s.closing = closing
             self._tilt0 = self._d0 = None  # the dial picks up from its value later
+            self._knob.release()
         if closing:
-            s.pointing = False
+            s.pointing = s.turning = False
 
     def _remember(self, t: float) -> None:
         s = self.state
         if s.op not in self.DIALS:
             return
         thumb = min((h.feat.pinch_dist for h in self._dial_hands()), default=0.0)
-        self._dial_hist.append({"t": t, "thumb": thumb, "tone": s.tone, "stretch": s.stretch})
+        self._dial_hist.append({"t": t, "thumb": thumb, "tone": s.tone, "stretch": s.stretch,
+                                "ring_pick": s.ring_pick, "ring_k": s.ring_k, "ring_turn": s.ring_turn})
         while self._dial_hist and self._dial_hist[0]["t"] < t - 1.0:
             self._dial_hist.popleft()
 
@@ -768,8 +790,12 @@ class Grammar:
         top = max(e["thumb"] for e in recent)
         back = [e for e in recent if e["thumb"] >= top - OPS.rewind_plateau][-1]
         s = self.state
-        before = {k: getattr(s, k) for k in ("tone", "stretch")}
-        s.tone, s.stretch = back["tone"], back["stretch"]
+        keys = ("tone", "stretch", "ring_pick", "ring_k", "ring_turn")
+        before = {k: getattr(s, k) for k in keys}
+        for k in keys:
+            setattr(s, k, back[k])
+        if s.ring_pick in self._ring.labels:  # the knob goes back with it
+            self._ring.pick, self._ring.k, self._knob.k = s.ring_pick, s.ring_k, s.ring_k
         changed = {k: [v, getattr(s, k)] for k, v in before.items() if v != getattr(s, k)}
         if changed:
             self.log(t, "rewind", op=s.op, back_s=round(t - back["t"], 3), **changed)
@@ -832,6 +858,56 @@ class Grammar:
         s.point = back[2]
         return back[0]
 
+    # -- the options ring, turned like a knob --
+
+    def set_ring_labels(self, t: float, labels: tuple[str, ...]) -> None:
+        """The app's ring nodes for the focused word (the word, its alternatives,
+        stress/unstress, hear it). The pick stays on its label when they change
+        (alternatives arriving mid-turn). Logged, so a replay can give them back."""
+        labels = tuple(labels)
+        if labels and labels != self.ring_labels:
+            self.ring_labels = labels
+            self._ring.set_labels(labels)
+            if self.state.ring_pick is not None:
+                self.state.ring_pick = self._ring.pick
+            self.log(t, "ring_nodes", nodes=list(labels))
+
+    def _reset_ring(self) -> None:
+        s = self.state
+        self._ring = RingSelection(self.ring_labels)
+        self._knob = Knob()
+        self._knob_fresh = True
+        s.turning, s.ring_k, s.ring_turn = False, 0, 0
+        s.ring_pick = self._ring.pick if s.op == "ring" else None
+
+    def _turn_ring(self, t: float, p: HandTrack) -> None:
+        """An L turns the ring like a knob (palmcards.knob): the index tilt,
+        smoothed, relative to its angle when the L appeared. A step is logged as
+        an op (node, word, dir). While the thumb closes into a pinch the knob is
+        held (_guard_pinch), and it picks up again from its step."""
+        s = self.state
+        if s.closing:
+            s.turning = False
+            return
+        s.turning = self._holds_l(p, self._knob.zero is not None)
+        if not s.turning:
+            self._knob.release()
+            return
+        if self._knob.zero is None:  # (re)starting: the filter mustn't blend in the hand from before
+            self._tilt_filter.reset()
+        angle = float(self._tilt_filter(np.array([p.feat.tilt]), t)[0])
+        if self._knob.zero is None:
+            if self._knob_fresh:
+                self._knob.start(angle)
+                self._ring.begin()
+                self._knob_fresh = False
+            else:
+                self._knob.regrip(angle)
+        for node, word, d in self._ring.apply(self._knob.update(angle)):
+            s.ring_turn += d
+            self.log(t, "op", op="ring_step", node=node, word=word, dir=d)
+        s.ring_pick, s.ring_k = self._ring.pick, self._ring.k
+
     def _watch_toggle(self, t: float, p: HandTrack, events: list[GestureEvent]) -> None:
         """Spread marks: a pinch held (stable) and let go without a lift is a
         "toggle" (a lift is the commit, which leaves the focus first). Only a
@@ -873,8 +949,9 @@ class Grammar:
             if p.stable == OPEN and s.op != "ring":
                 s.op = "ring"
                 self.log(t, "op", op="ring")
+                self._reset_ring()
             if s.op == "ring":
-                self._point(t, p, events)
+                self._turn_ring(t, p)
         elif s.level == "sentence":
             # An open palm spreads suggested marks, like the word ring; from then
             # on the L-hand no longer turns the tone dial (a tone preview is

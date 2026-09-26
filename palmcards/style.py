@@ -48,6 +48,7 @@ class Colors:
     dark_fill: RGBA = (15, 15, 18, 215)
     node_text: RGBA = (240, 240, 240, 255)
     node_outline: RGBA = (240, 240, 240, 200)
+    node_outline_dim: RGBA = (240, 240, 240, 90)  # the ring's action nodes (stress, hear it)
     # Review.
     verdict: dict[str, RGB] = field(default_factory=lambda: {
         "hit": (95, 205, 115), "missed": (240, 90, 75), "unclear": (160, 160, 160)})
@@ -265,7 +266,7 @@ COLORS = Colors()
 HIGH_CONTRAST = replace(COLORS, dim=(245, 245, 245, 200), dim_mark=(245, 245, 245, 150), faint=(235, 235, 235, 130),
                         faint_mark=(235, 235, 235, 100), backing=(0, 0, 0, 215), label_fill=(0, 0, 0, 230),
                         focus_mark=(255, 255, 255, 200), detail_text=(255, 255, 255, 255),
-                        suggest_mark=(255, 215, 0, 170))
+                        suggest_mark=(255, 215, 0, 170), node_outline_dim=(245, 245, 245, 160))
 TEXT = Text()
 CHIPS = Chips()
 LABEL = Label()

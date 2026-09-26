@@ -17,6 +17,10 @@ the replay must reproduce it.
 Times are seconds from the start of the sample; points are whole pixels in
 the mirrored frame. `expected` holds the grammar and mode entries of the
 gesture log (KINDS); poses are left out, they flicker too much to pin down.
+A step of the options ring's knob keeps its direction (`dir`). What the app
+told the grammar is in `inputs`, given back at its time: the options ring's
+nodes, [{"t": 1.2, "ring_nodes": ["imparted", "stamped", "stress", "hear it"]}]
+(optional; without it the ring has the grammar's DEFAULT_RING).
 `known_issue` explains a sample the current code gets wrong: the sample is
 kept as evidence, and its test is an expected failure until the bug is fixed.
 
@@ -36,6 +40,7 @@ from palmcards.gestures import GestureLog, Hand, ModeMachine
 SAMPLES_DIR = Path(__file__).resolve().parent.parent / "samples" / "gestures"
 KINDS = ("focus", "back", "commit", "op", "zone", "mode")
 DETAIL = ("level", "op", "command", "mode")  # the field that says which focus, op, ...
+EXTRA = ("dir",)  # kept as well: which way the ring's knob stepped
 TIME_TOL = 0.25  # seconds an entry may drift before it counts as a change
 
 
@@ -54,6 +59,9 @@ def entry(e: dict, t0: float = 0.0) -> dict:
         if key in e:
             out[key] = e[key]
             break
+    for key in EXTRA:
+        if key in e:
+            out[key] = e[key]
     return out
 
 
@@ -65,7 +73,10 @@ def replay(sample: dict) -> list[dict]:
     if sample["start_mode"] != "prepare":
         machine.enter(sample["start_mode"], frames[0]["t"] if frames else 0.0)
     log.entries.clear()
+    inputs = sorted(sample.get("inputs", []), key=lambda i: i["t"])
     for frame in frames:
+        while inputs and inputs[0]["t"] <= frame["t"]:
+            machine.grammar.set_ring_labels(frame["t"], tuple(inputs.pop(0)["ring_nodes"]))
         machine.update(hands(frame), frame["t"])
         machine.tick(frame["t"])
     return [entry(e) for e in log.entries if e["kind"] in KINDS]

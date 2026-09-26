@@ -1486,3 +1486,42 @@ Why the tone dial worked and the knob didn't (for the record): the tone commit o
   apart, which the measured wobble (10-25 degrees in fractions of a second) crosses.
 Tests: pytest (full) -> 481 passed (the gain the same both ways; the picker's point; the dot drawn).
 ```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: the word options ring as Kat's "spin synonyms" knob (user's request, spec in the chat)
+Changes:
+  palmcards/knob.py (new): Knob (angle -> step k, unbounded: to k +/- 1 once the angle is
+    step_deg / 2 + hyst_deg = 11.5 deg past step k's centre; within dead_deg = 5 deg of the start angle,
+    step 0; a fast turn takes every step between; regrip carries on with no jump) and RingSelection
+    (the pick by label, wrapping; step 0 is the node it started on; nodes arriving keep the pick).
+  palmcards/config.py: KNOB (step_deg 15, hyst_deg 4, dead_deg 5, One Euro on degrees, rotate_s 0.12,
+    scramble_s 0.15, vacate_s 0.2).
+  palmcards/gestures.py: the ring is turned, not pointed at (_turn_ring): the L's index tilt, One Euro
+    smoothed, relative to the L's first angle. GestureState.turning / ring_pick / ring_k / ring_turn.
+    The app gives the nodes (Grammar.set_ring_labels, logged as "ring_nodes"). Each step is logged as
+    op ring_step (node, word, dir). "ring" joins DIALS, so the pinch hold and rewind cover it.
+  palmcards/render.py: the ring turns so the picked node is at 12 o'clock (nodes laid out
+    counter-clockwise, so a clockwise turn brings the next one up), eased over rotate_s; the picked
+    word previews in the sentence and the label, resolving from random glyphs (resolve_scramble); the
+    picked node's box stays empty for vacate_s; stress and hear it have a dimmer border
+    (COLORS.node_outline_dim) and never swap the text. ViewState.now (app clock) drives it all.
+  main.py: gives the grammar the ring's nodes and follows its knob (TextOverlay.follow_ring); the ring
+    picker and its pointer dot are gone (marks and Review's takes still point).
+  palmcards/replay.py, scripts/cut_gesture_samples.py: replays keep a step's dir; a sample's optional
+    "inputs" (the log's ring_nodes lines) are given back to the grammar at their times.
+Decided with the user: the midpoint rule (11.5 deg to step), not STEP + HYST from the centre (19 deg).
+  So the band against flicker is 2 x hyst_deg = 8 deg: after a step at c + 11.5, turning back to
+  c + 3.5 steps back. The recordings' index wobble was 10-25 deg; check the next --trace recording
+  for steps reversed within ~0.4 s before adding a dwell.
+Pending: the settled look of the picked node (refills highlighted after vacate_s, or stays empty while
+  picked) waits for docs/local/kat-knob-reference.jpg.
+The word-ring-commit replay sample (recorded 2026-09-25, with the old knob) now shows 11 ring steps on
+  its L turns (5 back during a swing from +45 to -36 deg, 6 on to +66 deg, no reversals). With the
+  user's agreement they are in its expected: the cut script takes ring steps from the replay for
+  recordings from before the knob (no ring_nodes lines in the log). The other samples are unchanged.
+Tests: pytest (full) -> 507 passed (test_knob: hysteresis at a boundary, the dead zone, wrap both ways,
+  a fast turn, nodes arriving mid-turn, regrip; grammar: turn and commit, wrap, back to the original,
+  thumb drifting in, the pinch keeping the node, dropping the hand; render: the turn to 12 o'clock and
+  its easing, the short way round, the scramble in the sentence and label, the empty box, the dim border).
+```

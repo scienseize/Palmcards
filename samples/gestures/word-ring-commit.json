@@ -1,6 +1,6 @@
 {
  "name": "word-ring-commit",
- "description": "One finger browses words, pinch focuses, open palm spreads the options ring, pinch + lift commits.",
+ "description": "One finger browses words, pinch focuses, open palm spreads the options ring, an L turns it (steps from the replay: recorded before the knob), pinch + lift commits.",
  "source": "20260925-024808.trace.jsonl",
  "window": [116.0, 130.1],
  "frame_size": [1280, 720],
@@ -9,6 +9,17 @@
  "expected": [
   {"t": 3.846, "kind": "focus", "level": "word"},
   {"t": 6.177, "kind": "op", "op": "ring"},
+  {"t": 7.845, "kind": "op", "op": "ring_step", "dir": -1},
+  {"t": 7.885, "kind": "op", "op": "ring_step", "dir": -1},
+  {"t": 7.885, "kind": "op", "op": "ring_step", "dir": -1},
+  {"t": 7.911, "kind": "op", "op": "ring_step", "dir": -1},
+  {"t": 7.977, "kind": "op", "op": "ring_step", "dir": -1},
+  {"t": 8.414, "kind": "op", "op": "ring_step", "dir": 1},
+  {"t": 8.448, "kind": "op", "op": "ring_step", "dir": 1},
+  {"t": 8.515, "kind": "op", "op": "ring_step", "dir": 1},
+  {"t": 8.582, "kind": "op", "op": "ring_step", "dir": 1},
+  {"t": 8.715, "kind": "op", "op": "ring_step", "dir": 1},
+  {"t": 8.982, "kind": "op", "op": "ring_step", "dir": 1},
   {"t": 11.881, "kind": "commit", "level": "word"}
  ],
  "frames": [

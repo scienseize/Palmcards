@@ -109,16 +109,17 @@ class Cursor:
 @dataclass(frozen=True)
 class Ops:
     tone_range_deg: float = 45.0  # tilt from the start angle for full warm/cold
-    # Choosing by pointing (the ring's options, spread marks, Review's takes):
-    # after an L, the index fingertip moves a point from the item picked; the
-    # nearest item is picked, but only once the point is nearer to it than to
-    # the current one by pick_margin of the gap between them (no flicker
-    # between neighbours). It replaced turning a knob, which followed every
-    # wobble of the index angle (2026-09-26: 85 changes in 21 s on the ring).
-    # The ring and the marks move the point point_gain screen px per px of
-    # fingertip, both ways: at the scale of browsing (0.65 up and down), a
-    # recorded session needed ~360 px of fingertip to cross the ring and
-    # found it too slow. Review's take chips keep the scale of browsing.
+    # Choosing by pointing (spread marks, Review's takes): after an L, the
+    # index fingertip moves a point from the item picked; the nearest item is
+    # picked, but only once the point is nearer to it than to the current one
+    # by pick_margin of the gap between them (no flicker between neighbours).
+    # It replaced turning a knob, which followed every wobble of the index
+    # angle (2026-09-26: 85 changes in 21 s on the ring). The word's options
+    # ring went back to a knob of its own (KNOB). The marks move the point
+    # point_gain screen px per px of fingertip, both ways: at the scale of
+    # browsing (0.65 up and down), a recorded session needed ~360 px of
+    # fingertip to cross the ring and found it too slow. Review's take chips
+    # keep the scale of browsing.
     point_gain: float = 2.0
     pick_margin: float = 0.2
     stretch_min: float = 0.5  # length ratio clamp
@@ -127,11 +128,11 @@ class Ops:
     # turns the angle the dials read (a median 41 deg in the recorded traces,
     # nearly 3 knob steps). So once the thumb tip comes within closing_enter
     # palms of the index tip (leaving again past closing_leave), or a pinch
-    # registers, the dials (tone, stretch) go back to their value from just
+    # registers, the dials (the ring's knob, tone, stretch) go back to their value from just
     # before the thumb started closing (the latest moment in the last
     # rewind_max_s with the thumb within rewind_plateau palms of its farthest
-    # out) and hold there until the thumb opens again. Pointing (the ring, the
-    # marks, the takes, browsing words) goes back the same way, but only when
+    # out) and hold there until the thumb opens again. Pointing (the marks,
+    # the takes, browsing words) goes back the same way, but only when
     # the pinch registers: pointing, the thumb often rests near the index tip. A steady L has the thumb 1.3-1.9 palms from the index
     # tip; a thumb drifting in while turning rarely (about 2% of the time)
     # comes within 0.9. On the 7 recorded L-to-pinch moments this left 1 knob
@@ -140,6 +141,32 @@ class Ops:
     closing_leave: float = 1.0
     rewind_max_s: float = 0.5
     rewind_plateau: float = 0.1
+
+
+@dataclass(frozen=True)
+class Knob:
+    # The word's options ring turned like a knob (Kat's "spin synonyms";
+    # palmcards.knob). The angle is the L-hand's index tilt (landmarks 5 -> 8
+    # from vertical, + toward screen right), One Euro smoothed, relative to
+    # its angle when the L appears. Step k's centre is k * step_deg from there;
+    # the knob moves to k +/- 1 once the angle is step_deg / 2 + hyst_deg past
+    # k's centre (11.5 deg), so it doesn't flicker at a boundary. Within
+    # dead_deg of the start angle it is back on the node it started on.
+    # Earlier knobs (10 and 15 deg a step, hysteresis 0.2 of a step) followed
+    # the index's wobble: 85 changes in 21 s on a recording (2026-09-26).
+    step_deg: float = 15.0
+    hyst_deg: float = 4.0
+    dead_deg: float = 5.0
+    # One Euro filter on the angle, in degrees (not the cursor's pixels).
+    min_cutoff: float = 1.0
+    beta: float = 0.05
+    d_cutoff: float = 1.0
+    # Animation: the ring turns to its new angle (eased) over rotate_s; the
+    # previewed word's glyphs resolve over scramble_s; the picked node's box
+    # stays empty for vacate_s while its word moves into the sentence.
+    rotate_s: float = 0.12
+    scramble_s: float = 0.15
+    vacate_s: float = 0.2
 
 
 @dataclass(frozen=True)
@@ -414,6 +441,7 @@ POSE = Pose()
 TIMING = Timing()
 CURSOR = Cursor()
 OPS = Ops()
+KNOB = Knob()
 REHEARSE = Rehearse()
 RECORDING = Recording()
 SPEECH = Speech()

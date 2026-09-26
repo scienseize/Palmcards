@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -98,7 +100,7 @@ def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
-    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "L-HAND, THEN POINT TO PICK")
+    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "L-HAND, THEN TURN TO PICK")
     # Only what works is offered: the word itself, (un)stressing it, and hearing it.
     assert ov.ring_labels(focus) == ("being", "unstress", "hear it")  # *being* is stressed
     assert ov.ring_labels(ViewState(mode="focus", level="word", focus=Hit(0, 1)))[1] == "stress"
@@ -488,3 +490,122 @@ def test_the_pointer_shows_as_a_dot_while_choosing():
     ov.draw(plain, view)
     assert (frame[495:506, 895:906] != plain[495:506, 895:906]).any()
 
+
+
+# --- the options ring turned like a knob ----------------------------------------------
+
+def knob_view(**kw):
+    return ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"),
+                     alternatives=("present", "around"), **kw)  # being, present, around, unstress, hear it
+
+
+def test_resolve_scramble_resolves_left_to_right():
+    from palmcards.render import resolve_scramble
+
+    assert resolve_scramble("stamped", 1.0, 7) == "stamped"
+    for p in (0.0, 0.3, 0.6, 0.99):
+        out = resolve_scramble("stamped", p, 7)
+        assert len(out) == len("stamped")
+        done = int(7 * p)
+        assert out[:done] == "stamped"[:done]
+    assert resolve_scramble("well-known", 0.0, 3)[4] == "-"  # only letters scramble
+    assert resolve_scramble("stamped", 0.0, 1) != resolve_scramble("stamped", 0.0, 2)  # a new seed each frame
+
+
+def test_the_ring_turns_the_picked_node_to_the_top():
+    from palmcards.config import KNOB
+
+    ov = overlay()
+    view = knob_view(now=10.0)
+    ov.follow_ring(view, "being", 0)
+    at_rest = ov.ring_nodes(view)
+    assert min(range(5), key=lambda i: at_rest[i][1]) == 0  # the word itself at 12 o'clock
+    ov.follow_ring(view, "present", 1)  # one step clockwise
+    assert (view.ops.picked, view.ops.rot_from, view.ops.rot_to) == (1, 0.0, 1.0)
+    halfway = ov.ring_nodes(replace(view, now=10.0 + KNOB.rotate_s / 2))
+    settled = ov.ring_nodes(replace(view, now=10.0 + KNOB.rotate_s))
+    assert min(range(5), key=lambda i: settled[i][1]) == 1  # "present" came up to 12 o'clock
+    cx = settled[1][0]
+    assert settled[0][0] > cx  # and the word itself went on round, clockwise, to the right
+    assert at_rest[1][0] < halfway[1][0] < settled[1][0] + 1  # on its way up from the left
+    assert halfway[1] != settled[1]
+
+
+def test_turning_back_past_the_word_wraps_the_short_way():
+    ov = overlay()
+    view = knob_view(now=5.0)
+    ov.follow_ring(view, "being", 0)
+    ov.follow_ring(view, "hear it", -1)
+    assert (view.ops.picked, view.ops.rot_to) == (4, -1.0)  # turned back one node, not on four
+
+
+def test_a_new_word_scrambles_into_the_sentence_and_the_label():
+    from palmcards.config import KNOB
+
+    ov = overlay()
+    view = knob_view(now=3.0)
+    ov.follow_ring(view, "being", 0)
+    assert ov.label_lines(view)[0] == 'FOCUS BY WORD  "being"'
+    ov.follow_ring(view, "present", 1)
+    during = ov.label_lines(replace(view, now=3.0 + KNOB.scramble_s / 3))[0]
+    assert during != 'FOCUS BY WORD  "present"' and len(during) == len('FOCUS BY WORD  "present"')
+    view.now = 3.0 + KNOB.scramble_s + 0.001
+    assert ov.label_lines(view) == ('FOCUS BY WORD  "present"', 'PINCH + LIFT: USE "PRESENT"')
+    # An action node puts the word itself back in the sentence (scrambling
+    # back from "present"), never its own name.
+    ov.follow_ring(view, "unstress", 3)
+    view.now += KNOB.scramble_s + 0.001
+    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', 'PINCH + LIFT: UNSTRESS "BEING"')
+    # From the word itself, stepping onto an action node changes nothing in the sentence: no scramble.
+    view = knob_view(now=3.0)
+    ov.follow_ring(view, "being", 0)
+    ov.follow_ring(view, "hear it", -1)
+    assert view.ops.scrambled_t is None
+    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "PINCH + LIFT: HEAR IT")
+
+
+def test_the_picked_box_stays_empty_while_its_word_moves_up():
+    from palmcards.config import KNOB
+
+    ov = overlay()
+
+    def drawn(v):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, v)
+        return frame
+
+    view = knob_view(now=1.0)
+    ov.follow_ring(view, "being", 0)
+    ov.follow_ring(view, "present", 1)
+    assert max(KNOB.rotate_s, KNOB.scramble_s) < KNOB.vacate_s - 0.01  # the turn and the scramble over by then
+    empty = drawn(replace(view, now=1.0 + KNOB.vacate_s - 0.01))
+    full = drawn(replace(view, now=1.0 + KNOB.vacate_s + 0.01))
+    x, y = (int(v) for v in ov.ring_nodes(replace(view, now=5.0))[1])
+    assert (empty[y - 6:y + 6, x - 20:x + 20] != full[y - 6:y + 6, x - 20:x + 20]).any()
+
+
+def test_nodes_arriving_keep_the_pick_and_do_not_turn_the_ring():
+    ov = overlay()
+    view = ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), now=2.0)
+    ov.follow_ring(view, "being", 0)
+    ov.follow_ring(view, "unstress", 1)
+    changed = view.ops.changed_t
+    view.alternatives, view.now = ("present", "around"), 2.5
+    ov.follow_ring(view, "unstress", 1)
+    assert (view.ops.picked, view.ops.pick_label, view.ops.changed_t) == (3, "unstress", changed)
+    assert view.ops.turned_t is None and view.ops.rot_to == 3.0
+
+
+def test_the_ring_action_nodes_have_a_dimmer_border(monkeypatch):
+    import palmcards.render as render
+
+    ov = overlay()
+    view = knob_view(now=9.0)
+    ov.follow_ring(view, "being", 0)
+    frame = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(frame, view)
+    monkeypatch.setattr(render, "C", replace(render.C, node_outline_dim=render.C.node_outline))
+    same = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(same, view)
+    assert (frame != same).any()
+    assert render.COLORS.node_outline_dim[3] < render.COLORS.node_outline[3]

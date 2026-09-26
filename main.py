@@ -22,7 +22,8 @@ the right of the frame; it steers the highlight in the text on the left.
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
                            focus
   open palm (word)         options ring: the word, alternatives (with --llm), stress/unstress it, "hear it";
-                           make an L, then point: the fingertip moves the pick to the nearest option
+                           make an L and turn it like a knob: one option per ~15 degrees, tilting right
+                           turns the ring clockwise; the picked word previews in the sentence
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
   open palm (sentence)     suggested marks (with --llm), faded where they would go; make an L, then point
                            to move the outline to the nearest mark, pinch (no lift) to accept or reject one,
@@ -165,12 +166,12 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     elif gs.mode == "idle":
         view.hover = None
     ops = view.ops
-    ops.kind, ops.pointing, ops.tone, ops.stretch = gs.op, gs.pointing, gs.tone, gs.stretch
-    ops.stretch_ends, ops.closing = gs.stretch_ends, gs.closing  # ops.picked: pointing (Takes.pickers["ring"])
+    ops.kind, ops.pointing, ops.tone, ops.stretch = gs.op, gs.pointing or gs.turning, gs.tone, gs.stretch
+    ops.stretch_ends, ops.closing = gs.stretch_ends, gs.closing  # ops.picked: the ring's knob (follow_ring)
 
 
 def point_scale(grammar: Grammar) -> tuple[float, float]:
-    """Screen px per hand-box unit of pointing for the ring and the marks:
+    """Screen px per hand-box unit of pointing for the suggested marks:
     OPS.point_gain px per px of fingertip, the same both ways."""
     x0, y0, x1, y1 = grammar.cursor.box
     return (x1 - x0) * OPS.point_gain, (y1 - y0) * OPS.point_gain
@@ -440,9 +441,9 @@ class Takes:
 
     def reset_pick(self) -> None:
         """A new focus, or leaving one: the pickers start again on the first item
-        (the word itself, the first mark, the take shown) and no mark is accepted
-        (dropping the hand discards them all)."""
-        self.pickers = {kind: Picker() for kind in ("ring", "marks", "take")}
+        (the first mark, the take shown) and no mark is accepted (dropping the
+        hand discards them all). The word's ring is the grammar's knob."""
+        self.pickers = {kind: Picker() for kind in ("marks", "take")}
         self.pick_accepted = set()
 
     @property
@@ -1216,7 +1217,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 until = None
             if until is not None:
                 note_until = until
-        view.app = modes.mode
+        view.app, view.now = modes.mode, start - t0
         view.llm = takes.llm
         view.llm_busy = bool(takes.assistant and takes.assistant.pending)
         view.title = "GAZE CHECK" if takes.gaze_check and modes.mode in ("count_in", "rehearse") \
@@ -1250,11 +1251,11 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                         takes.suggestion_view(view.focus.sentence)
             else:
                 view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = "", None, (), None
-            if word_key and grammar.state.op == "ring":  # the pick follows the pointer to the nearest option
-                view.ops.picked = takes.pickers["ring"].update(start - t0, grammar.state.point,
-                                                               overlay.ring_nodes(view), point_scale(grammar))
-            chooser = {"ring": "ring", "marks": "marks"}.get(grammar.state.op) if view.mode == "focus" else None
-            view.point_at = takes.pickers[chooser].at if chooser and grammar.state.pointing else None
+            if word_key and grammar.state.op == "ring":  # the knob turns the ring (its nodes come from here)
+                grammar.set_ring_labels(start - t0, overlay.ring_labels(view))
+                overlay.follow_ring(view, grammar.state.ring_pick, grammar.state.ring_turn)
+            marks = view.mode == "focus" and grammar.state.op == "marks" and grammar.state.pointing
+            view.point_at = takes.pickers["marks"].at if marks else None
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)

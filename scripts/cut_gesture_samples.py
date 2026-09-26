@@ -5,11 +5,18 @@
 Reads sessions/gesture-logs/<stem>.trace.jsonl (MediaPipe's hand landmarks,
 recorded live with `main.py --trace`) and the gesture log next to it, and
 writes one samples/gestures/<name>.json per entry in SEGMENTS: the frames in
-the window, rebased to t = 0, points rounded to whole pixels, and as
-`expected` what the app recognised live in that window.
+the window, rebased to t = 0, points rounded to whole pixels, as
+`expected` what the app recognised live in that window, and as `inputs` what
+the app told the grammar (the options ring's nodes, from the log's
+"ring_nodes" lines: the last one before the window, at t = 0, and those in it).
 
 The traces themselves stay in sessions/ (gitignored); only the samples are
 committed. They hold hand landmarks only: no image, no face, no voice.
+
+Recordings from before the options ring was a knob (no "ring_nodes" lines in
+the log) have no ring steps in their log; their `expected` takes the steps
+from the replay instead, so the sample still pins down how the knob reads
+those turns.
 
 Before writing, each sample is replayed through the current gesture code.
 It must reproduce the live result, or, for a known issue, must still show
@@ -30,7 +37,8 @@ FRAME_SIZE = (1280, 720)  # capture.Camera's size when these were recorded
 # (name, trace stem, window in app seconds, mode it starts in, description, known issue or None)
 SEGMENTS = [
     ("word-ring-commit", "20260925-024808", (116.0, 130.1), "prepare",
-     "One finger browses words, pinch focuses, open palm spreads the options ring, pinch + lift commits.", None),
+     "One finger browses words, pinch focuses, open palm spreads the options ring, an L turns it "
+     "(steps from the replay: recorded before the knob), pinch + lift commits.", None),
     ("sentence-fold-back", "20260925-024808", (137.8, 143.7), "prepare",
      "Two fingers browse sentences, folding them onto the thumb focuses, dropping the hand backs out.", None),
     ("sentence-tone-back", "20260925-024808", (171.4, 183.9), "prepare",
@@ -76,6 +84,10 @@ def main() -> int:
                     {"label": h["label"], "points": [round(v) for xy in h["points"] for v in xy]}
                     for h in fr["hands"]]})
         live = [json.loads(line) for line in live_log.open()]
+        nodes = [e for e in live if e["kind"] == "ring_nodes" and e["t"] <= b]
+        before = [e for e in nodes if e["t"] < a][-1:]
+        inputs = [{"t": round(max(e["t"] - a, 0.0), 3), "ring_nodes": e["nodes"]}
+                  for e in before + [e for e in nodes if e["t"] >= a]]
         sample = {
             "name": name,
             "description": description,
@@ -85,8 +97,12 @@ def main() -> int:
             "start_mode": mode,
             "expected": [entry(e, a) for e in live if e["kind"] in KINDS and a <= e["t"] <= b],
             "known_issue": issue,
+            **({"inputs": inputs} if inputs else {}),
             "frames": frames,
         }
+        if not any(e["kind"] == "ring_nodes" for e in live):  # before the knob: its steps from the replay
+            steps = [e for e in replay(sample) if e.get("op") == "ring_step"]
+            sample["expected"] = sorted(sample["expected"] + steps, key=lambda e: e["t"])
         problems = differences(sample["expected"], replay(sample))
         if issue and not problems:
             print(f"STALE {name}: the known issue no longer shows; drop the note")

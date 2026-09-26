@@ -10,12 +10,12 @@ cursor_to_text() maps the relative hand-box cursor to such a point.
 
 On top of the text: the two-line state label (Kat's `BROWSE BY WORD`), and
 Prepare's operations: the options ring (the original word, its alternatives
-when the optional LLM is on, stress and "hear it"; an L-hand turned like a
-knob picks one), and the tone gauge and
-stretch line; without the LLM these two only preview, and say so. An open
-palm on a focused sentence spreads the LLM's suggested marks in it, faded
-(style COLORS.suggest_mark), where they would go; the one the L-hand knob is
-on is outlined, and the ones accepted with a pinch are solid. While the
+when the optional LLM is on, stress and "hear it"; an L-hand turns it like a
+knob, the picked node at 12 o'clock, its word scrambling into the sentence),
+and the tone gauge and stretch line; without the LLM these two only preview,
+and say so. An open palm on a focused sentence spreads the LLM's suggested
+marks in it, faded (style COLORS.suggest_mark), where they would go; the one
+pointed at is outlined, and the ones accepted with a pinch are solid. While the
 cloud LLM is on, a CLOUD LLM chip sits at the bottom left ("SENDING" while a
 request is out).
 
@@ -48,6 +48,7 @@ looks (colours, fonts, sizes, spacing, positions) is in palmcards/style.py.
 from __future__ import annotations
 
 import math
+import random
 import re
 import textwrap
 import time
@@ -58,7 +59,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from palmcards.config import CURSOR, REHEARSE
+from palmcards.config import CURSOR, KNOB, REHEARSE
 from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
 from palmcards.notes import MarkKind, Sentence, reading_place
 from palmcards.style import (
@@ -111,6 +112,26 @@ def load_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(TEXT.font, size)
 
 
+def resolve_scramble(text: str, progress: float, seed: int) -> str:
+    """Random glyphs resolving into `text` left to right: at progress 0 every
+    letter is scrambled, at 1 it is the text. Same length throughout (the
+    font is monospace, so the width holds); `seed` picks the glyphs (a new one
+    each frame makes them flicker)."""
+    if progress >= 1.0:
+        return text
+    done = int(len(text) * max(progress, 0.0))
+    rng = random.Random(seed)
+    return "".join(c if i < done or not c.isalpha() else rng.choice(SCRAMBLE) for i, c in enumerate(text))
+
+
+def ring_rotation(ops: "OpsView", now: float) -> float:
+    """Where the options ring is in its turn (nodes, unwrapped): eased out."""
+    if ops.turned_t is None:
+        return ops.rot_to
+    p = min(max((now - ops.turned_t) / KNOB.rotate_s, 0.0), 1.0)
+    return ops.rot_from + (ops.rot_to - ops.rot_from) * (1 - (1 - p) ** 3)
+
+
 @dataclass(frozen=True)
 class Hit:
     sentence: int
@@ -122,8 +143,23 @@ class OpsView:
     """What the operation stubs show; filled from the gesture state."""
 
     kind: str | None = None  # ring | tone | marks | stretch
-    picked: int = 0  # ring node, 0 = original word, clockwise from the top
-    pointing: bool = False
+    picked: int = 0  # ring node (ring_labels order), 0 = original word
+    pointing: bool = False  # choosing: pointing at the marks, turning the ring
+    # The ring turned like a knob (follow_ring): its rotation in nodes, unwrapped
+    # (+ clockwise), eases from rot_from to rot_to over KNOB.rotate_s from
+    # turned_t. `turn` is the grammar's ring_turn it has followed. `preview` is
+    # the word shown in the sentence (the picked word node, else the word
+    # itself); it scrambles in from scrambled_t, and the picked node's box stays
+    # empty for KNOB.vacate_s from changed_t.
+    rot_from: float = 0.0
+    rot_to: float = 0.0
+    turned_t: float | None = None
+    turn: int = 0
+    nodes: int = 0
+    pick_label: str | None = None
+    changed_t: float | None = None
+    preview: str | None = None
+    scrambled_t: float | None = None
     tone: float = 0.0  # -1 cold .. 1 warm
     stretch: float = 1.0
     stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
@@ -133,6 +169,7 @@ class OpsView:
 @dataclass
 class ViewState:
     current: int = 0  # sentence drawn in orange when no hand is up
+    now: float = 0.0  # app clock, s: the options ring's animations
     mode: str = "idle"  # idle | browse | focus
     level: str | None = None  # word | sentence | paragraph
     hover: Hit | None = None
@@ -455,7 +492,7 @@ class TextOverlay:
         if state.mode == "focus":
             first = f"FOCUS BY {level}"
             if state.level == "word" and state.focus is not None and state.focus.word is not None:
-                first += f'  "{self.word_text(state.focus)}"'
+                first += f'  "{self.focus_word(state)}"'
         elif state.mode == "browse":
             first = f"BROWSE BY {level}"
         else:
@@ -470,8 +507,8 @@ class TextOverlay:
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
-            second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "L-HAND, THEN POINT TO PICK"
-            if ops.pointing:
+            second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "L-HAND, THEN TURN TO PICK"
+            if ops.pointing or ops.picked:
                 picked = self.ring_labels(state)[ops.picked]
                 word = self.word_text(state.focus).upper() if state.focus and state.focus.word is not None else ""
                 second = {HEAR_IT: "PINCH + LIFT: HEAR IT", STRESS: f'PINCH + LIFT: STRESS "{word}"',
@@ -518,6 +555,51 @@ class TextOverlay:
         where = f"{picks.index(cur) + 1}/{len(picks)} {mark_label(state.suggest_sentence, cur)}"
         commit = f"PINCH + LIFT: ADD {accepted}" if accepted else "L-HAND, THEN POINT: ANOTHER"
         return f"{where}: {'ACCEPTED' if on else 'NOT ACCEPTED'}  /  PINCH: {'REJECT' if on else 'ACCEPT'}  /  {commit}"
+
+    def ring_words(self, state: ViewState) -> int:
+        """How many of ring_labels are words (the word itself and its
+        alternatives); the rest are actions (stress/unstress, hear it)."""
+        return len(self.ring_labels(state)) - 2 if state.focus is not None and state.focus.word is not None else 0
+
+    def follow_ring(self, state: ViewState, pick: str | None, turn: int) -> None:
+        """The options ring follows the grammar's knob (GestureState.ring_pick,
+        ring_turn): the ring turns the way the hand went, the short way when
+        the nodes changed under it (alternatives arriving: they reflow, no
+        turn); a new word in the sentence scrambles in; a newly picked node's
+        box empties while its word moves up."""
+        ops, now = state.ops, state.now
+        labels = self.ring_labels(state)
+        if not labels:
+            return
+        picked = labels.index(pick) if pick in labels else 0
+        n = len(labels)
+        if n != ops.nodes:
+            ops.rot_from = ops.rot_to = float(picked)
+            ops.turned_t, ops.nodes = None, n
+        else:
+            aim = ops.rot_to + (turn - ops.turn)  # where the knob's steps take it
+            target = picked + n * round((aim - picked) / n)
+            if target != ops.rot_to:
+                ops.rot_from, ops.rot_to, ops.turned_t = ring_rotation(ops, now), float(target), now
+        ops.turn = turn
+        if ops.pick_label is not None and labels[picked] != ops.pick_label:
+            ops.changed_t = now
+        ops.pick_label, ops.picked = labels[picked], picked
+        preview = labels[picked] if picked < self.ring_words(state) else labels[0]
+        if ops.preview is not None and preview != ops.preview:
+            ops.scrambled_t = now
+        ops.preview = preview
+
+    def focus_word(self, state: ViewState) -> str:
+        """The focused word as the sentence shows it: on the options ring, the
+        picked word (scrambling in for KNOB.scramble_s after a change)."""
+        ops = state.ops
+        if ops.kind != "ring" or ops.preview is None:
+            return self.word_text(state.focus)
+        if ops.scrambled_t is not None and state.now - ops.scrambled_t < KNOB.scramble_s:
+            return resolve_scramble(ops.preview, (state.now - ops.scrambled_t) / KNOB.scramble_s,
+                                    int(state.now * 60))
+        return ops.preview
 
     def ring_labels(self, state: ViewState) -> tuple[str, ...]:
         """The word as it is, stress (or unstress) it, hear it. Word alternatives
@@ -864,8 +946,10 @@ class TextOverlay:
 
     def ring_nodes(self, state: ViewState) -> list[tuple[float, float]]:
         """Where each of the focused word's options sits on screen (ring_labels
-        order): around the word, clockwise from the top, shifted so every
-        node stays on screen. Empty when the word is not on screen."""
+        order): around the word, the picked one at 12 o'clock and the next ones
+        counter-clockwise from it, so turning the ring clockwise (the knob,
+        ring_rotation) brings the next one up; shifted so every node stays on
+        screen. Empty when the word is not on screen."""
         if state.focus is None or state.focus.word is None or (box := self.word_box(state.focus, state.scroll)) is None:
             return []
         labels = self.ring_labels(state)
@@ -877,9 +961,10 @@ class TextOverlay:
         cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         rcx = min(max(cx, edge), self.frame_w - edge)
         rcy = min(max(cy, ry + self.line_h), self.frame_h - ry - self.line_h)
+        rot = ring_rotation(state.ops, state.now) if state.ops.nodes == n else float(state.ops.picked)
         out = []
         for i in range(n):
-            a = math.radians(-90 + i * 360 / n)
+            a = math.radians(-90 - (i - rot) * 360 / n)
             out.append((rcx + rx * math.cos(a), rcy + ry * math.sin(a)))
         return out
 
@@ -932,6 +1017,9 @@ class TextOverlay:
         labels = self.ring_labels(state)
         size = round(self.font_size * RING.node_scale)
         cx, cy = center
+        words = self.ring_words(state)
+        changed = state.ops.changed_t
+        vacated = changed is not None and state.now - changed < KNOB.vacate_s
         for i, (label, (nx, ny)) in enumerate(zip(labels, self.ring_nodes(state))):
             # Curved connector: quadratic Bezier bowed to one side.
             mx, my = (cx + nx) / 2, (cy + ny) / 2
@@ -940,10 +1028,13 @@ class TextOverlay:
             curve = (1 - ts) ** 2 * np.array(center) + 2 * (1 - ts) * ts * np.array(ctrl) + ts ** 2 * np.array((nx, ny))
             stroke = RING.picked_stroke if i == state.ops.picked else RING.stroke
             cv2.polylines(frame, [curve.astype(np.int32)], False, bgr(C.yellow), stroke, cv2.LINE_AA)
-            if i == state.ops.picked:
+            outline = C.node_outline if i < words else C.node_outline_dim  # stress, hear it: actions
+            if i == state.ops.picked and vacated and i < words:  # its word has gone up into the sentence
+                chip = self._chip(" " * len(label), size, C.node_text, C.dark_fill, outline)
+            elif i == state.ops.picked:
                 chip = self._chip(label, size, C.chip_text, C.chip_fill)
             else:
-                chip = self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)
+                chip = self._chip(label, size, C.node_text, C.dark_fill, outline)
             box = self._blend_centered(frame, chip, nx, ny)
             if i == state.ops.picked and state.ops.closing:  # the pinch will take this node: it is held
                 g = RING.closing_box
@@ -1039,7 +1130,7 @@ class TextOverlay:
                 center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
                 if state.ops.kind == "ring":
                     self._draw_ring(frame, state, center)
-                text = self.ring_labels(state)[state.ops.picked] if state.ops.kind == "ring" else self.word_text(state.focus)
+                text = self.focus_word(state)
                 if state.loading:  # glyph scramble: the word is being rewritten
                     text = "".join(SCRAMBLE[(ord(c) + int(time.time() * 12)) % len(SCRAMBLE)] if c.isalpha() else c
                                    for c in text)
