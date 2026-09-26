@@ -906,6 +906,22 @@ Unverified assumptions and remaining risks: the GAZE starting values; prompted g
   a real talk; one person, one Mac, so far.
 Next action: the user records two gaze-check takes; tune GAZE on the first (--sweep), confirm on the
   second; then stage 3.
+Gaze-check takes (the user, session 20260926-122645-sample_notes-455f98, window not full screen;
+  each take calibrated afresh: c1 separation 3.35, c2 5.83; face found 95-100%):
+  starting values: take 1 kappa 0.482 (agreement 0.654), take 2 kappa 0.522 (0.675). Mostly "camera"
+    prompts classed away: recall 0.36 and 0.31. Head pitch during the prompts differed from the
+    calibration's by 3-8 degrees (take 2: camera -4.7 in the calibration, +3.8 under the prompts).
+  sweep on take 1 alone: 25 settings tie at kappa 0.741, and on take 2 those range 0.47-0.88, so one
+    take could not choose. Set, looking at both takes: floor_pitch 3.0 and floor_iris_y 0.02 (twice
+    the sideways cues' weight removed from the vertical ones), camera_radius 4, notes_radius 6.
+    take 1 kappa 0.741 (agreement 0.827; recall camera 0.71, notes 0.93, away 0.84);
+    take 2 kappa 0.876 (0.919; camera 0.93, notes 0.98, away 0.82).
+  Both takes were used to choose, so neither is a hold-out: a third check take recorded after the
+    change confirms or not. Away prompts to the left are the usual miss (classed notes: the notes
+    are left of the camera). Take 2's 12 unclear readings: 9 looking to the right (the head turned
+    far enough to lose the face), 3 looking down at the desk (lids below the blink line).
+  The user's earlier rehearsal take with the new settings: camera 23%, notes 69%, away 7% while
+    speaking (was 5 / 26 / 70%).
 ```
 
 ## Decisions (2026-09-26, by the user)

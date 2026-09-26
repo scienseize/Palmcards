@@ -305,15 +305,19 @@ class Gaze:
     # Each face reading is compared with the calibration's two baselines
     # (palmcards.gaze): a distance over head yaw, pitch and iris position, each
     # feature divided by its scale (mad_scale x the larger of the two steps'
-    # MADs, at least its floor). Starting values; tune with the gaze check
-    # (main.py --gaze-check, scripts/evaluate.py --gaze).
+    # MADs, at least its floor). Set from two gaze-check takes (2026-09-26, one
+    # person; kappa 0.74 and 0.88, up from 0.48 and 0.52): the vertical cues get
+    # twice the floor of the sideways ones because head pitch drifted 3-8 degrees
+    # between the calibration and the prompts; the radii are wider than a
+    # 2-second calibration's spread suggests. Not yet confirmed on a take
+    # recorded after the change.
     floor_yaw: float = 1.5  # degrees
-    floor_pitch: float = 1.5  # degrees
+    floor_pitch: float = 3.0  # degrees
     floor_iris_x: float = 0.012  # eye widths
-    floor_iris_y: float = 0.010  # eye widths
+    floor_iris_y: float = 0.020  # eye widths
     mad_scale: float = 2.0
-    camera_radius: float = 3.0  # nearer the camera baseline than the notes' and within this: camera
-    notes_radius: float = 4.0  # ... the notes' (wider: the notes are more than one line)
+    camera_radius: float = 4.0  # nearer the camera baseline than the notes' and within this: camera
+    notes_radius: float = 6.0  # ... the notes' (wider: the notes are more than one line)
     min_separation: float = 2.0  # baselines closer than this can't tell camera from notes: all unclear
     min_frames: int = 20  # judged readings while speaking needed for a take's shares
     speech_pad_s: float = 0.2  # a sentence's time, widened by this on each side
