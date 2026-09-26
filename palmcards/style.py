@@ -3,12 +3,15 @@ drawing code (palmcards/render.py) uses, in one place.
 
 Colours are RGB, or RGBA where they are drawn with Pillow and blended;
 OpenCV calls convert them with bgr(). Sizes that grow with the text are
-multiples of the text size (`TEXT.size`, "x text") or of its line height
-("lines"); the rest are pixels. Positions are fractions of the frame unless
+multiples of the notes' size or of their line height ("lines"), or of the UI
+size (labels, hints, pills: `TEXT.ui_rows_per_frame`); the rest are pixels. Positions are fractions of the frame unless
 they say px.
 
-Where the hand box and the command zone sit is behaviour, not style: the
-gesture code hit-tests against them, so they stay in palmcards/config.py.
+The frame is split into three vertical zones (`LAYOUT`): the text column on
+the left holds everything the user reads, nothing is drawn over the face in
+the middle, and the hand zone on the right holds only what belongs to the
+hand. Where the hand box and the command zone sit is behaviour, not style:
+the gesture code hit-tests against them, so they stay in palmcards/config.py.
 """
 
 from __future__ import annotations
@@ -29,13 +32,26 @@ def bgr(c: RGB | RGBA) -> tuple[int, int, int]:
 
 @dataclass(frozen=True)
 class Colors:
-    # Text: the highlighted unit, the rest dimmed, context fainter still.
+    # Text, Kat's style: off-white notes; the unit under the hand on an orange
+    # fill in dark text, the rest of its paragraph on a slate-blue fill, one
+    # tight fill per row; an orange bar beside the paragraph. Without a hand
+    # the current sentence is orange. Dimmed while something else has focus.
+    text: RGBA = (238, 238, 238, 245)
+    unit_fill: RGBA = (255, 140, 0, 235)
+    unit_text: RGBA = (20, 20, 20, 255)
+    context_fill: RGBA = (62, 74, 122, 165)
     orange: RGBA = (255, 140, 0, 255)
-    orange_soft: RGBA = (255, 140, 0, 150)  # the label's second line
-    dim: RGBA = (220, 220, 220, 110)
-    faint: RGBA = (220, 220, 220, 45)
+    orange_soft: RGBA = (255, 140, 0, 200)  # the label's second line: the operation
+    dim: RGBA = (225, 225, 225, 165)  # Rehearse: the section's other sentences; a focused word's sentence
+    faint: RGBA = (220, 220, 220, 60)  # context around a focused unit
     focus_text: RGBA = (245, 245, 245, 255)  # enlarged unit in the focus panel
-    backing: RGBA = (10, 10, 12, 150)  # soft dark box behind the text
+    # While the options ring is open the text stays readable, dimmed, under the bubble map.
+    ring_sentence: RGBA = (220, 220, 220, 120)
+    ring_context: RGBA = (220, 220, 220, 95)
+    # A soft dark halo around every glyph instead of a box behind the text:
+    # the video stays visible between the lines. Its alpha is the halo's strength.
+    shadow: RGBA = (0, 0, 0, 110)
+    hint: RGBA = (255, 140, 0, 150)  # the label's third line: the gesture hint
     # Chips and nodes.
     chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node
     chip_text: RGBA = (20, 20, 20, 255)
@@ -43,11 +59,13 @@ class Colors:
     node_text: RGBA = (240, 240, 240, 255)
     node_outline: RGBA = (240, 240, 240, 200)
     node_outline_dim: RGBA = (240, 240, 240, 90)  # the ring's action node (hear it)
+    node_fill: RGBA = (12, 14, 34, 235)  # the options ring's nodes: Kat's navy boxes
+    connector: RGB = (255, 196, 40)  # the options ring's spokes
     # Review.
     detail_text: RGBA = (235, 235, 235, 235)  # the takes' lines under a focused sentence
     # Persistent alert line (recording or analysis trouble) and the panel's scrollbar.
     alert_fill: RGBA = (170, 40, 30, 230)
-    label_fill: RGBA = (10, 10, 12, 190)  # behind the state label and small hints, for busy scenes
+    label_fill: RGBA = (10, 10, 12, 190)  # behind the bottom-left pills
     alert_text: RGBA = (255, 255, 255, 255)
     scroll_track: RGB = (90, 90, 90)
     scroll_thumb: RGB = (235, 235, 235)
@@ -67,23 +85,67 @@ class Colors:
     debug_box: RGB = (160, 160, 160)  # hand box, zone outline, cursor ring
     debug_band: RGB = (100, 100, 100)  # hand box scroll bands
     stats: RGB = (200, 200, 200)
-    hand_area: RGB = (140, 140, 140)  # the hand box, drawn faintly while a hand is up
+    hand_area: RGB = (235, 235, 235)  # the hand box's corners while a hand is up (blended, HANDS.area_alpha)
     debug_text: RGB = (255, 255, 255)
+
+
+@dataclass(frozen=True)
+class Layout:
+    """The frame's three vertical zones, as fractions of its width. `hand`
+    only documents where the hand box is (CURSOR.hand_box in config.py)."""
+    text: tuple[float, float] = (0.06, 0.43)  # labels, notes, ring, gauge, Review's take chips
+    face: tuple[float, float] = (0.43, 0.55)  # nothing drawn here but fingertip dots
+    hand: tuple[float, float] = (0.55, 0.95)  # hand box, command zone, their hints, Review's take table, the tutorial
+
+
+@dataclass(frozen=True)
+class Scrim:
+    """Kat's dark left side: the video is darkened under the text column,
+    fully up to `full`, then fading out by the column's right edge
+    (LAYOUT.text), so nothing darkens the face. 0 alpha turns it off."""
+    alpha: float = 0.5
+    full: float = 0.28  # x frame width
+
+
+@dataclass(frozen=True)
+class Fill:
+    """The tight fills behind a highlighted unit's rows, and the bar beside its paragraph."""
+    pad_x: int = 2  # px beyond the row's text
+    bar_w: int = 2  # px
+    bar_x: int = 1  # px from the text box's left edge
+
+
+@dataclass(frozen=True)
+class Shadow:
+    """The halo behind text (colour and strength: Colors.shadow)."""
+    blur: float = 0.06  # x the text size: the halo's Gaussian radius
+    gain: float = 2.0  # the blurred alpha is scaled by this, so thin strokes still cast a solid halo
+    gamma: float = 0.5  # the text's alpha to this power first: dim text keeps more of the halo than its own opacity
 
 
 @dataclass(frozen=True)
 class Text:
     # Shipped with the app (Menlo, the old default, is derived from it); licence beside it.
     font: Path = FONTS_DIR / "DejaVuSansMono.ttf"
-    rows_per_frame: int = 26  # text size = frame height / this ...
-    min_size: int = 18  # ... but at least this, px
-    line_spacing: float = 1.45  # line height, x the font's own
-    columns: int = 34
-    visible_rows: int = 5
-    left: float = 0.05  # text box's left edge; it is centred vertically
-    # Everything below scales with the line height: padding inside the box is
-    # half a line, the backing's blur half that, the margin around it twice the blur.
-    focus_scales: tuple[float, ...] = (1.3, 1.15, 1.0)  # focus panel: largest that fits the box wins
+    # The notes: frame height / rows_per_frame, made smaller (not below
+    # min_size) until a row holds min_columns characters in the text column.
+    rows_per_frame: int = 40
+    min_columns: int = 40
+    min_size: int = 12  # px
+    # Everything else the user reads (labels, pills, hints, the take table): frame height / this.
+    ui_rows_per_frame: int = 28
+    ui_min_size: int = 16  # px
+    line_spacing: float = 1.25  # line height, x the font's own
+    # The text box fills the text column (LAYOUT.text): as many columns as
+    # fit, and from under the label down to the pills as many rows as fit
+    # (None), like Kat's block down the whole left side.
+    visible_rows: int | None = None
+    # A focused word: the notes zoomed by this, the word moved to the middle of the box.
+    word_zoom: float = 1.6
+    fade: float = 0.5  # lines: rows partly scrolled out fade out over this at the box's top and bottom
+    # Everything below scales with the line height: padding inside the box is half a line.
+    focus_scales: tuple[float, ...] = (1.4, 1.2, 1.0)  # focus panel: largest that fits the box wins
+    focus_min_columns: int = 16  # ... with at least this many columns (Review's take chips narrow the panel)
     panel_max_h: float = 0.9  # a tall focus panel grows up to this share of the frame
     word_box_h: float = 0.8  # lines: a word's box, whose middle its chip is centred on
     # A focused panel too tall for the frame turns its pages by itself, so its
@@ -94,27 +156,32 @@ class Text:
 
 @dataclass(frozen=True)
 class Chips:
-    """Text on a rounded rectangle: labels, word chips, ring nodes."""
+    """Text on a rounded rectangle: word chips, ring nodes, pills. Scales
+    are x the notes' size (word chip, ring nodes) or x the UI size (the rest)."""
     pad_x: tuple[int, int] = (4, 4)  # (min px, text size // this)
     pad_y: tuple[int, int] = (2, 8)
     radius: tuple[int, int] = (3, 5)
-    hover_scale: float = 1.0  # x text: word under the cursor
-    focus_scale: float = 1.3  # x text: the focused word
-    symbol_scale: float = 0.7  # x text: the panel's more markers
+    hover_scale: float = 1.0  # x the notes' size: word under the cursor
+    symbol_scale: float = 0.7  # x the UI size: the panel's more markers
 
 
 @dataclass(frozen=True)
 class Label:
-    """Kat's two-line state label, above the text box."""
-    first_scale: float = 0.9  # x text
+    """Kat's state label above the text box, no box: the state, the
+    operation (dimmer), the gesture hint (smallest, dimmest). Each wraps to
+    the text column, up to max_rows rows. Scales x the UI size."""
+    first_scale: float = 0.9
     second_scale: float = 0.7
+    third_scale: float = 0.6
+    max_rows: tuple[int, int, int] = (1, 2, 2)
     min_top: int = 4  # px from the frame's top edge
+    pill_scale: float = 0.6  # the pills at the bottom left (CLOUD LLM, H: KEYS) and the keys help
 
 
 @dataclass(frozen=True)
 class Detail:
     """Review: a line per take under the focused sentence."""
-    scale: float = 0.7  # x text and x line height
+    scale: float = 0.9  # x the notes' size and line height
     min_columns: int = 10
     indent: str = "    "  # wrapped continuation lines (past the line's "▸ " marker)
 
@@ -122,7 +189,7 @@ class Detail:
 @dataclass(frozen=True)
 class Summary:
     """Review, while browsing: the take table (the last few full takes side by side), bottom right."""
-    scale: float = 0.6  # x text
+    scale: float = 0.6  # x the UI size
     right: int = 16  # px from the frame's right edge
     bottom: int = 16  # px from the frame's bottom edge
     gap: int = 0  # px between lines: one block
@@ -130,37 +197,52 @@ class Summary:
 
 @dataclass(frozen=True)
 class Ring:
-    """Options ring around a focused word."""
-    rx: float = 4.4  # lines
-    ry: float = 2.6
-    node_scale: float = 0.85  # x text
-    edge_px: int = 8  # kept clear of the frame's sides
-    bow: float = 0.25  # how far the curved connectors bow to one side
+    """Options ring around a focused word, Kat's bubble map: nodes on an
+    ellipse round the word (pulled into the text column, pushed apart where
+    they overlap), short curved spokes from the word's edge to each node's."""
+    rx: float = 4.4  # lines of the zoomed text (TEXT.word_zoom)
+    ry: float = 3.4
+    node_scale: float = 0.8  # x the zoomed text's size
+    node_pad: tuple[float, float] = (0.45, 0.22)  # x the node's text size
+    node_radius: int = 1  # px: nearly square
+    node_outline_w: int = 2  # px
+    node_gap: int = 6  # px kept between nodes, and between a node and the word
+    relax_steps: int = 30
+    edge_px: int = 8  # kept inside the frame's left edge and the text column's right
+    spoke_gap: int = 4  # px between a spoke's ends and the word or node
+    bow: float = 0.12  # how far the spokes bow to one side
     curve_points: int = 16
-    stroke: int = 1
-    picked_stroke: int = 2
+    stroke: int = 3
     closing_box: int = 3  # px: the box around the picked node while the thumb closes into a pinch
-    take_gap: int = 6  # px between Review's take chips
+    # Review's take chips: a column at the text column's right edge.
+    take_scale: float = 0.6  # x the UI size
+    take_pitch: float = 0.142  # x the text box's height, between chip centres (pointing at them depends on it)
+    take_gap: int = 8  # px between the chips and the panel's text
 
 
 @dataclass(frozen=True)
 class Gauge:
-    """Vertical tone dial, right of the text box."""
+    """Vertical tone dial, in the text box's right padding."""
     step_px: int = 2
     width: int = 4
     knob_r: int = 8
     knob_outline: int = 2
     closing_knob_outline: int = 4  # while the thumb closes into a pinch: the value is held
+    label_scale: float = 0.6  # x the UI size: the ends' labels, cold above, warm below
+    labels: tuple[str, str] = ("formal", "conversational")
 
 
 @dataclass(frozen=True)
 class Zone:
-    """Command zone contents (the zone's place is REHEARSE.zone in config.py)."""
+    """Command zone contents (the zone's place is REHEARSE.zone in config.py):
+    corner marks like the hand box, hints as plain lines. Scales x the UI size."""
     stroke: int = 1
     active_stroke: int = 2
+    corner: float = 0.1  # the corner marks' arms, x the zone's width
+    alpha: float = 0.45  # the corner marks' opacity; full while a hand is in the zone
     inset_right: int = 2  # px, so the outline's right edge stays on screen
     inset_top: int = 1
-    hint_scale: float = 0.6  # x text
+    hint_scale: float = 0.55
     hint_gap: int = 4  # px between hints
     rec_scale: float = 0.75
     rec_dx: int = 10  # px right of the zone's centre
@@ -177,16 +259,22 @@ class Zone:
 
 @dataclass(frozen=True)
 class CountIn:
-    scale: float = 5  # x text
-    y: float = 0.65  # centred between the text box and the right edge, at this height
+    scale: float = 5  # x the UI size
+    y: float = 0.65  # centred in the hand zone (LAYOUT.hand), below the command zone, at this height
 
 
 @dataclass(frozen=True)
 class Hands:
     tip_r: int = 4  # fingertip dots
     active_tip_r: int = 9  # index fingertip
-    stretch_stroke: int = 2  # line between the two index tips
+    stretch_stroke: int = 2  # line between the two index tips, drawn under the text
     closing_stretch_stroke: int = 5  # ... while a thumb closes into a pinch: the length is held
+    stretch_alpha: float = 0.45
+    # The hand box's corners while a hand is up: small and faint.
+    area_arm: float = 0.06  # x the box's width
+    area_min_arm: int = 8  # px
+    area_stroke: int = 1
+    area_alpha: float = 0.3
     # Debug.
     landmark_stroke: int = 2
     landmark_r: int = 3
@@ -197,6 +285,7 @@ class Hands:
 @dataclass(frozen=True)
 class Debug:
     """OpenCV text: the stats line, and the gesture debug view's readout."""
+    show_stats: bool = False  # the frame rate and latency line (hidden unless debugging)
     stats_from_right: int = 560  # px
     stats_from_bottom: int = 20
     stats_scale: float = 0.6
@@ -222,7 +311,7 @@ class Player:
         "unsure": (150, 150, 150, 200),
     })
     caption_current: RGBA = (60, 60, 60, 230)  # behind the word being said
-    caption_scale: float = 0.8  # x text
+    caption_scale: float = 0.8  # x the UI size
     caption_y: float = 0.83
     caption_gap: int = 4  # px between words
     caption_right: int = 20  # px kept clear at the right
@@ -246,10 +335,17 @@ class Player:
 
 
 COLORS = Colors()
+LAYOUT = Layout()
+SCRIM = Scrim()
+FILL = Fill()
+SHADOW = Shadow()
 # Preferences > high contrast (key c): dimmed text much brighter, context
-# readable, a darker backing; the highlight stays orange.
-HIGH_CONTRAST = replace(COLORS, dim=(245, 245, 245, 200), faint=(235, 235, 235, 130),
-                        backing=(0, 0, 0, 215), label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255),
+# readable, a stronger halo; the highlight stays orange.
+HIGH_CONTRAST = replace(COLORS, text=(255, 255, 255, 255), context_fill=(50, 62, 115, 215),
+                        dim=(245, 245, 245, 215), faint=(235, 235, 235, 130),
+                        ring_sentence=(245, 245, 245, 110), ring_context=(235, 235, 235, 55),
+                        shadow=(0, 0, 0, 240), hint=(255, 140, 0, 200), orange_soft=(255, 140, 0, 220),
+                        label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255),
                         node_outline_dim=(245, 245, 245, 160))
 TEXT = Text()
 CHIPS = Chips()

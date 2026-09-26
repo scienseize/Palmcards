@@ -32,14 +32,17 @@ def test_units_are_the_words_and_punctuation():
     assert [sp.role for u in sentence_units(first) for sp in u] == ["punct"] + ["word"] * 5
 
 
-def test_layout_wraps_and_starts_each_sentence_on_new_row():
+def test_layout_flows_sentences_and_leaves_a_blank_row_between_paragraphs():
     sentences = parse_text(TEXT).sentences
-    rows = layout(sentences, 34)
+    rows = layout(sentences, 40)
     for r in rows:
-        end = max(c + len(sp.text) for c, sp in r.spans)
-        assert end <= 34
-    assert [r.sentence for r in rows][:2] == [0, 1]
-    assert sum(r.sentence == 2 for r in rows) >= 2  # long sentence wrapped
+        assert not r.spans or max(c + len(sp.text) for c, sp in r.spans) <= 40
+    # Sentences 0 and 1 are one paragraph: "Truly." runs on after the first.
+    assert {sp.sentence for _, sp in rows[0].spans} == {0, 1}
+    assert rows[1].spans == [] and rows[2].sentence == 2  # a blank row, then the next paragraph
+    assert sum(any(sp.sentence == 2 for _, sp in r.spans) for r in rows) >= 2  # long sentence wrapped
+    last = [r for r in rows if any(sp.sentence == 3 for _, sp in r.spans)][0]
+    assert {sp.sentence for _, sp in last.spans} >= {3, 4}  # "Third. Fourth. ..." share a row
 
 
 def test_hit_test_finds_words_and_respects_scroll():
@@ -47,8 +50,8 @@ def test_hit_test_finds_words_and_respects_scroll():
     assert ov.hit_test(*span_center(ov, 0, 3), scroll=0) == Hit(0, 3)  # "being"
     # Scrolled by 2 rows, row 2 sits where row 0 was.
     ri = 2
-    word = next(s.word for _, s in ov.rows[ri].spans if s.role == "word")
-    assert ov.hit_test(*span_center(ov, ri, word, scroll=2), scroll=2) == Hit(ov.rows[ri].sentence, word)
+    sp = next(s for _, s in ov.rows[ri].spans if s.role == "word")
+    assert ov.hit_test(*span_center(ov, ri, sp.word, scroll=2), scroll=2) == Hit(sp.sentence, sp.word)
 
 
 def test_hit_test_outside_box_and_on_punctuation():
@@ -78,14 +81,15 @@ def test_draw_composites_in_place():
 
 
 def test_cursor_maps_onto_rows_and_snaps_to_nearest_word():
-    ov = overlay()
+    ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720), visible_rows=4)  # fewer rows than the text has
     # Top-left of the hand box lands on the first row; the leading "————"
     # is not a word, so snapping picks "Thank".
     assert ov.hit_test(*ov.cursor_to_text(0.0, 0.0), 0, snap=True) == Hit(0, 0)
     assert ov.hit_test(*ov.cursor_to_text(0.0, 0.0), 0) == Hit(0, None)
-    # Bottom of the hand box lands on the last visible row.
+    # Bottom of the hand box lands on the last visible row (a blank one: the paragraph above it).
     hit = ov.hit_test(*ov.cursor_to_text(0.5, 1.0), 0, snap=True)
-    assert hit is not None and hit.sentence == ov.rows[ov.visible_rows - 1].sentence
+    last = next(r for r in reversed(ov.rows[:ov.visible_rows]) if r.spans)
+    assert hit is not None and hit.sentence in {sp.sentence for _, sp in last.spans}
 
 
 def test_paragraph_unit_groups_sentences():
@@ -123,7 +127,7 @@ def test_labels_promise_a_rewrite_only_when_an_llm_is_on():
         assert ov.label_lines(tone)[1] == "SENTENCE TONE: COLD  /  PINCH + LIFT: ASK FOR A REWRITE"
         stretch = ViewState(mode="focus", level="paragraph", focus=Hit(4, None), ops=OpsView(kind="stretch", stretch=1.5),
                             llm=llm)
-        assert ov.label_lines(stretch)[1] == "PARAGRAPH LENGTH: LONGER  x1.50  /  PINCH + LIFT: ASK FOR A REWRITE"
+        assert ov.label_lines(stretch)[1] == "PARAGRAPH LENGTH: FULLER +50%  /  PINCH + LIFT: ASK FOR A REWRITE"
         word = ViewState(mode="focus", level="word", focus=Hit(0, 1), llm=llm)
         assert ov.label_lines(word)[1].startswith("OPEN PALM: ALTERNATIVES, HEAR IT")
     stretch.llm = ""
@@ -160,7 +164,7 @@ def test_draw_focus_states_and_stubs():
 
 
 def test_long_paragraph_focus_panel_grows_to_fit():
-    long = " ".join(f"Sentence number {i} has a few more words in it." for i in range(8))
+    long = " ".join(f"Sentence number {i} has a few more words in it." for i in range(30))
     ov = TextOverlay(parse_text(long).sentences, (1280, 720))
     view = ViewState(mode="focus", level="paragraph", focus=Hit(0, None))
     assert ov._focus_panel(ov._panel_unit(view)).height > ov.box_h
@@ -218,7 +222,8 @@ def test_review_draws_the_take_table_and_the_focused_sentences_takes():
     table = np.full((720, 1280, 3), 128, np.uint8)
     ov.draw(table, ViewState(app="review", summary=board.take_table()))
     changed = np.argwhere((plain != table).any(axis=2))
-    assert len(changed) and changed[:, 1].min() > ov.x + ov.margin + ov.box_w  # bottom right, clear of the text
+    assert len(changed) and changed[:, 1].min() > ov.col_x1  # bottom right, clear of the text column
+    assert changed[:, 0].min() > 720 / 2
 
     detail = ("  Take 1: 140 wpm, no fillers, pitch range 4.5 st, on screen 80%",
               "▸ Take 2: 131 wpm, 1 filler, pitch range 5 st, on screen 75%")
@@ -240,7 +245,7 @@ def test_a_drill_shows_only_its_sentence():
 
 # --- everything reachable (review finding F2) -------------------------------------
 
-LONG_SECTION = "# Long\n\n" + " ".join(f"This is sentence number {i} of the long section." for i in range(1, 21))
+LONG_SECTION = "# Long\n\n" + " ".join(f"This is sentence number {i} of the long section." for i in range(1, 61))
 LABEL_RESERVE = lambda ov: LABEL.min_top + ov.label_h + ov.pad // 2
 
 
@@ -327,14 +332,15 @@ def test_the_calibration_steps_in_the_count_in():
 def test_the_take_summary_card_shows_while_browsing_review():
     ov = overlay()
     card = ("TAKE 1  1:01", "5 HIT, 2 MISSED", "ON SCREEN 82%  AWAY 14%")
-    right = slice(ov.x + ov.margin + ov.box_w + ov.pad, 1280)
-    bottom = slice(560, 720)
-    drawn, plain, focused = (np.full((720, 1280, 3), 128, np.uint8) for _ in range(3))
+    column = slice(ov.col_x1, 1280)  # right of the text column ...
+    under = slice(720 // 2, 720)  # ... in the bottom half
+    drawn, plain, focused, focused_plain = (np.full((720, 1280, 3), 128, np.uint8) for _ in range(4))
     ov.draw(drawn, ViewState(app="review", mode="browse", level="sentence", summary=card))
     ov.draw(plain, ViewState(app="review", mode="browse", level="sentence"))
     ov.draw(focused, ViewState(app="review", mode="focus", level="sentence", focus=Hit(0, None), summary=card))
-    assert (drawn[bottom, right] != plain[bottom, right]).any()
-    assert (focused[bottom, right] == 128).all()  # not over a focused panel
+    ov.draw(focused_plain, ViewState(app="review", mode="focus", level="sentence", focus=Hit(0, None)))
+    assert (drawn[under, column] != plain[under, column]).any()  # bottom right
+    assert (focused == focused_plain).all()  # not with a focused panel
 
 def test_a_closing_pinch_is_shown_on_the_dial_it_will_act_on():
     ov = overlay()
@@ -359,15 +365,23 @@ def test_where_the_ring_nodes_and_the_take_chips_are():
                      alternatives=("present", "around"))
     nodes = ov.ring_nodes(ring)
     assert len(nodes) == len(ov.ring_labels(ring)) == 4
-    box = ov.word_box(ring.focus, ring.scroll)
+    box = ov.focus_word_box(ring)
     assert nodes[0][1] < box[1]  # the word itself at the top, the rest clockwise round it
+    # Kat's bubble map: the zoomed word's row mid-box, the nodes round it inside the text column, none over another.
+    assert abs((box[1] + box[3]) / 2 - (ov.y + ov.box_h / 2)) < ov.line_h * 2
+    size = ov._node_size()
+    assert all(0 < x < ov.col_x1 for x, _ in nodes)
+    for i, a in enumerate(nodes):
+        for b in nodes[i + 1:]:
+            assert abs(a[0] - b[0]) > 10 or abs(a[1] - b[1]) > size
     assert ov.ring_nodes(replace(ring, focus=Hit(0, None))) == []
 
     review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None),
                        takes=("TAKE 1", "TAKE 2", "TAKE 3 (DRILL)"), take_shown=1)
     points = ov.take_points(review)
     assert len(points) == 3 and points[0][1] < points[1][1] < points[2][1]  # a column beside the sentence
-    assert all(x > ov.x + ov.margin + ov.box_w for x, _ in points)  # clear of the text
+    text_right = ov.x + ov.panel(review).color.shape[1] - ov.pad  # the panel narrows for them
+    assert all(text_right < x < ov.col_x1 for x, _ in points)  # clear of the text, in the text column
 
     def drawn(v):
         frame = np.full((720, 1280, 3), 128, np.uint8)
@@ -450,24 +464,24 @@ def test_a_new_word_scrambles_into_the_sentence_and_the_label():
     assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "PINCH + LIFT: HEAR IT")
 
 
-def test_the_picked_box_stays_empty_while_its_word_moves_up():
+def test_the_picked_node_is_highlighted_at_once_and_while_turning():
+    # A recorded session stepped the knob every 0.1-0.2 s: a box left empty for a moment
+    # after each step meant the pick was never shown while turning.
     from palmcards.config import KNOB
+    from palmcards.style import COLORS
 
     ov = overlay()
-
-    def drawn(v):
-        frame = np.full((720, 1280, 3), 128, np.uint8)
-        ov.draw(frame, v)
-        return frame
-
     view = knob_view(now=1.0)
     ov.follow_ring(view, "being", 0)
     ov.follow_ring(view, "present", 1)
-    assert max(KNOB.rotate_s, KNOB.scramble_s) < KNOB.vacate_s - 0.01  # the turn and the scramble over by then
-    empty = drawn(replace(view, now=1.0 + KNOB.vacate_s - 0.01))
-    full = drawn(replace(view, now=1.0 + KNOB.vacate_s + 0.01))
-    x, y = (int(v) for v in ov.ring_nodes(replace(view, now=5.0))[1])
-    assert (empty[y - 6:y + 6, x - 20:x + 20] != full[y - 6:y + 6, x - 20:x + 20]).any()
+    for now in (1.0 + 1 / 30, 1.0 + KNOB.rotate_s / 2, 3.0):  # just after the step, mid-turn, settled
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        v = replace(view, now=now)
+        ov.draw(frame, v)
+        x, y = (int(c) for c in ov.ring_nodes(v)[1])
+        patch = frame[y - 4:y + 4, x - 30:x + 30].reshape(-1, 3).astype(int)
+        orange = np.array(COLORS.chip_fill[2::-1])  # BGR
+        assert (np.abs(patch - orange).sum(axis=1) < 60).mean() > 0.3, now
 
 
 def test_nodes_arriving_keep_the_pick_and_do_not_turn_the_ring():
@@ -495,3 +509,36 @@ def test_the_ring_action_node_has_a_dimmer_border(monkeypatch):
     ov.draw(same, view)
     assert (frame != same).any()
     assert render.COLORS.node_outline_dim[3] < render.COLORS.node_outline[3]
+
+
+# --- the three zones: text column, face, hand ----------------------------------------
+
+def test_nothing_is_drawn_over_the_face():
+    from palmcards.style import LAYOUT
+
+    ov = overlay()
+    table = ("         TAKE 1  TAKE 2  TAKE 3  TAKE 4", "LENGTH     0:32    0:41    0:38    0:36")
+    views = [
+        ViewState(mode="browse", level="word", hover=Hit(1, 0), status="RAISE A FIST: START A TAKE", llm="cloud"),
+        ViewState(mode="browse", level="sentence", hover=Hit(1, 0), status="RAISE A FIST: START A TAKE"),
+        ViewState(mode="browse", level="paragraph", hover=Hit(0, 0)),
+        ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=1),
+                  alternatives=("present", "around", "attending")),
+        ViewState(mode="focus", level="sentence", focus=Hit(2, None), ops=OpsView(kind="tone", tone=0.4), llm="cloud"),
+        # The stretch line runs between the two hands, like the fingertip dots: left out here.
+        ViewState(mode="focus", level="paragraph", focus=Hit(4, None), ops=OpsView(kind="stretch", stretch=0.8)),
+        ViewState(app="count_in", count_in=2),
+        ViewState(app="rehearse", current=1, rec_s=4.0, status="SECTION 1/1: THE ONLY ONE", zone_active=True),
+        ViewState(app="review", mode="browse", level="sentence", hover=Hit(2, None), summary=table,
+                  status="TAKE 1: 9/9 SPOKEN, 216 WPM, 0 FILLERS/MIN  /  RAISE A FIST: NEW TAKE"),
+        ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), takes=("TAKE 1", "TAKE 2 (DRILL)"),
+                  detail=("  Take 1: 140 wpm, no fillers, pitch range 4.5 st, on screen 80%",)),
+        ViewState(alert="ANALYSIS FAILED FOR TAKE 2: SOMETHING WENT WRONG, PRESS R", keys_help=True,
+                  tutorial=(2, 6, "HOLD UP ONE FINGER: BROWSE BY WORD")),
+    ]
+    x0, x1 = (int(f * 1280) for f in LAYOUT.face)
+    for view in views:
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, view)
+        assert (frame[:, x0:x1] == 128).all(), view
+        assert (frame[:, :ov.col_x1] != 128).any()  # and the text column has it

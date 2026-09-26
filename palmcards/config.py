@@ -155,11 +155,11 @@ class Knob:
     beta: float = 0.05
     d_cutoff: float = 1.0
     # Animation: the ring turns to its new angle (eased) over rotate_s; the
-    # previewed word's glyphs resolve over scramble_s; the picked node's box
-    # stays empty for vacate_s while its word moves into the sentence.
+    # previewed word's glyphs resolve over scramble_s. (The picked node's box
+    # used to stay empty for a moment; turning steadily, the pick was never
+    # shown, so it is always drawn, highlighted.)
     rotate_s: float = 0.12
     scramble_s: float = 0.15
-    vacate_s: float = 0.2
 
 
 @dataclass(frozen=True)
