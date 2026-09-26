@@ -54,3 +54,43 @@ def test_agreement_abstention_word_error_and_false_triggers(tmp_path):
                                 "false_misses": 0, "abstained": 1, "called_skipped": 0, "abstention_rate": 0.333}
     assert summary["words"] == {"labelled": 3, "unaligned": 1, "median_error_s": 0.125, "p90_error_s": 0.185}
     assert summary["gestures"] == {"minutes": 1.0, "false_triggers": 1, "per_minute": 1.0}
+
+
+def test_the_take_table_has_a_row_per_take_with_its_metrics_and_why_any_is_missing(tmp_path):
+    import csv
+    import io
+
+    root = tmp_path / "sessions"
+    (tmp_path / "n.md").write_text("Hello there. Good night all.")
+    session = Session.create(tmp_path / "n.md", root=root)
+    for _ in range(2):
+        session.add_take(np.zeros(800, np.float32), 8000, 10.0, datetime.now(), [(0.0, 0)])
+    take = session.take(1)
+    take.marks = {"hit": 2, "missed": 1, "unclear": 0, "skipped": 0}
+    take.vision = {"state": "recorded", "file": "take-01.face.npz", "calibration": "c1"}
+    take.metrics = {
+        "version": 3,
+        "speech": {"pace_wpm": {"value": 140.0}, "fillers_per_min": {"value": None, "reason": "take too short (5 s)"},
+                   "unplanned_long_pauses": {"value": 0}, "restarts": {"value": 1}, "ad_libs": {"value": 0}},
+        "hands": {"shape_changes_per_min": {"value": 3.0}, "in_view_share": {"value": 0.2},
+                  "movement_palms_s": {"value": 1.1}, "fingertip_movement_palms_s": {"value": 2.0},
+                  "face_touches": {"value": 2, "seconds": 1.4}},
+        "gaze": {"screen_share": {"value": 0.9}, "away_share": {"value": 0.1}, "unclear_share": {"value": 0.05}},
+        "posture": {"value": None, "reason": "no posture baseline: no usable eye calibration"},
+    }
+    session.save()
+    session.release()
+    m = evaluate_module()
+    rows = m.take_table([session.dir.name], root)
+    assert [r["take"] for r in rows] == [1, 2]
+    one, two = rows
+    assert one["calibration"] == "c1" and one["hit"] == 2 and one["pace_wpm"] == 140.0
+    assert one["face_touches"] == 2 and one["face_touch_s"] == 1.4 and one["gaze_screen_share"] == 0.9
+    assert one["fillers_per_min"] == "" and one["tilted_share"] == ""
+    assert "fillers_per_min: take too short (5 s)" in one["missing"]
+    assert one["missing"].count("posture: no posture baseline") == 1  # the group's reason once
+    assert two["pace_wpm"] == "" and "metrics: none" in two["missing"]
+    out = io.StringIO()
+    m.write_table(rows, out)
+    back = list(csv.DictReader(io.StringIO(out.getvalue())))
+    assert list(back[0]) == list(m.COLUMNS) and back[0]["gaze_away_share"] == "0.1"

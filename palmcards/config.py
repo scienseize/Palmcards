@@ -349,6 +349,11 @@ class Gaze:
 
 
 @dataclass(frozen=True)
+class Review:
+    min_gaze_readings: int = 3  # a sentence needs this many judged face readings for its gaze line
+
+
+@dataclass(frozen=True)
 class Llm:
     # The optional LLM (palmcards.llm): off unless provider is set. "ollama"
     # runs a model on this Mac (install Ollama, `ollama pull <model>`).
@@ -385,3 +390,4 @@ VOICE = Voice()
 LLM = Llm()
 METRICS = Metrics()
 GAZE = Gaze()
+REVIEW = Review()

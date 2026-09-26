@@ -25,6 +25,7 @@ user runs them. They are never inferred from unit tests.
 | M7 stage 1 — Capture and calibration | Checked on hardware (2026-09-26) | Face, pose and hand features during every take (take-NN.face.npz with provenance); the eye calibration in the session's first count-in (dot, then the orange line; `e` redoes it), kept in session.json (schema 3); face/pose wait for a later frame when one is late | 413 passed; the user's session 20260926-115417: calibration ok, `e` redid it, a covered camera failed it with its reason; takes at 5/s face, 2/s pose, 30/s hands, face found 100% | The two calibration targets barely differ (see log); a face-box overlap is not a face touch in a close-up frame; stage 2 (gaze) |
 | M7 stage 2 — Gaze | Screen vs away validated on held-out checks (one person); camera vs notes not | palmcards/gaze.py (classes against the calibration, the take's gaze metric while speaking, per sentence), the gaze check (`main.py --gaze-check`, `scripts/evaluate.py --gaze [--sweep]`) | 424 passed; on the user's last real take the defaults gave 70% away while speaking: not believable | A gaze-check take to tune `GAZE`, a second to confirm |
 | M7 stage 3 — Posture and movement | Checked on one scripted take (touches 3/3, head drop and tilt found) | Posture against the calibration; hand movement and face touches from the take's features, no --trace; features v2 (fingertip to the face outline, hand size against the face) | 433 passed; earlier real takes: posture near the calibration, wrist 0.5-3.1 palms/s | A take with counted face touches and hands in front of the face |
+| M7 stage 4 — Review and export | Implemented, validation pending | Gaze line per focused sentence, take summary card in Review, per-take CSV (`scripts/evaluate.py --table`) | 438 passed; rendered offline from the user's scripted take; the table over all 30 takes | The user sees it in the app |
 
 ## Log
 
@@ -1031,6 +1032,39 @@ Scripted take (the user, session 20260926-132125-sample_notes-306f4b, 54 s, feat
     pose readings; hand in view 15%, wrist 0.98 and fingertips 1.8 palms/s.
   Limits seen: a hand close to the camera in front of the face can hide the face and not be tracked
     as a hand, so hand metrics miss it; looking down at the lap loses the face.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Milestone 7, stage 4 (Review and export)
+Status: implemented, validation pending (the app on hardware)
+Current HEAD / optional commit ID: b29b58d -> stage 4 commit (see git log)
+Pre-existing changes preserved: yes.
+Decisions (the user): the gaze is labelled ON SCREEN / AWAY (not "eye contact": camera vs notes
+  did not validate); "the evaluation export" is a new per-take CSV (nothing with columns existed).
+Files and behavior changed:
+  palmcards/review.py: Board keeps each take's metrics and its per-sentence gaze counts (mapped
+    like the verdicts for takes of an older notes revision); detail() adds "On screen 80%, away
+    20%[, unclear n%]." (shares of every reading while the sentence was said, adding to 100), "Gaze:
+    too few readings (n)." or "Gaze not measured."; take_summary() and latest() for the card.
+  palmcards/render.py, style.py (SUMMARY): the card, bottom right, clear of the text box, first
+    line orange, only while browsing Review (not over a focused panel). ViewState.summary.
+  main.py: metrics handed to the board (reopened sessions too); the card made again only when the
+    latest take or its metrics change.
+  palmcards/config.py: REVIEW.min_gaze_readings.
+  scripts/evaluate.py: --table [RUN ...] [--csv OUT]: a row per take, the metric columns listed in
+    docs/evaluation.md, empty where None, `missing` with the reasons.
+  CLAUDE.md, README.md, docs/evaluation.md (The take table).
+  Tests: tests/test_review.py (+3), tests/test_render.py (+1), tests/test_evaluate.py (+1).
+Tests run and exact outcome: pytest (full) -> 438 passed.
+Manual / hardware checks performed: Review drawn offline (no window) from the user's scripted take
+  (306f4b): the card reads TAKE 1 0:54 / 5 HIT, 5 MISSED / 149 WPM 0 FILLERS/MIN / ON SCREEN 83%
+  AWAY 3% UNCLEAR 15% / HANDS IN VIEW 15% 3 FACE TOUCHES / SHOULDERS TILTED 13% HEAD DROPPED 8%;
+  a focused sentence ends "On screen 100%, away 0%." The table over every session: 30 takes in 20
+  sessions; 14 without metrics (older analyses; --realign recomputes them).
+Unverified assumptions and remaining risks: seen in the app only as an offline render; rounded
+  shares can add to 99-101%.
+Next action: the user opens Review after a take and focuses a sentence; milestone 7 then done.
 ```
 
 ## Decisions (2026-09-26, by the user)

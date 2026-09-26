@@ -2,6 +2,7 @@
 
   python scripts/evaluate.py LABELS.json [...] [--split tune|holdout] [--json OUT]
   python scripts/evaluate.py --gaze RUN [--take N] [--sweep] [--json OUT]
+  python scripts/evaluate.py --table [RUN ...] [--csv OUT]
 
 Each labels file describes one take (format and protocol: docs/evaluation.md).
 Reports, over all the files given (optionally one split only):
@@ -26,6 +27,13 @@ the camera and notes radii) and lists the best by the screen-vs-away kappa.
 Tune on one check take, then confirm on another: a setting picked on a take
 always looks better on that take than it will on the next.
 
+--table writes one row per take (every session under the data folder, or the
+RUNs given) as CSV, to OUT or the terminal: the take, its verdict counts,
+speech (pace, fillers, pauses, restarts, ad-libs), hands (shape changes,
+in view, wrist and fingertip movement, face touches), gaze (on screen, away,
+unclear) and posture (shoulder tilt, head height; shares tilted and dropped).
+A value the take's metrics left None is empty, and `missing` says why.
+
 Synthetic tests check this arithmetic, not whether PalmCards is right: only
 real, consented, labelled takes can say that.
 """
@@ -33,6 +41,7 @@ real, consented, labelled takes can say that.
 from __future__ import annotations
 
 import argparse
+import csv
 import itertools
 import json
 import sys
@@ -176,6 +185,91 @@ def gaze_report(r: dict) -> str:
     return "\n".join(lines)
 
 
+# (column, metrics group, metric key, what of it): the take table's metric columns.
+METRIC_COLUMNS = (
+    ("pace_wpm", "speech", "pace_wpm", "value"),
+    ("fillers_per_min", "speech", "fillers_per_min", "value"),
+    ("unplanned_long_pauses", "speech", "unplanned_long_pauses", "value"),
+    ("restarts", "speech", "restarts", "value"),
+    ("ad_libs", "speech", "ad_libs", "value"),
+    ("shape_changes_per_min", "hands", "shape_changes_per_min", "value"),
+    ("hand_in_view_share", "hands", "in_view_share", "value"),
+    ("wrist_movement_palms_s", "hands", "movement_palms_s", "value"),
+    ("fingertip_movement_palms_s", "hands", "fingertip_movement_palms_s", "value"),
+    ("face_touches", "hands", "face_touches", "value"),
+    ("face_touch_s", "hands", "face_touches", "seconds"),
+    ("gaze_screen_share", "gaze", "screen_share", "value"),
+    ("gaze_away_share", "gaze", "away_share", "value"),
+    ("gaze_unclear_share", "gaze", "unclear_share", "value"),
+    ("shoulder_tilt_deg", "posture", "shoulder_tilt_deg", "value"),
+    ("tilted_share", "posture", "tilted_share", "value"),
+    ("head_height_change", "posture", "head_height_change", "value"),
+    ("head_dropped_share", "posture", "head_dropped_share", "value"),
+)
+TAKE_COLUMNS = ("session", "take", "started", "duration_s", "status", "drill", "gaze_check", "revision",
+                "calibration", "metrics_version", "hit", "missed", "unclear", "skipped")
+COLUMNS = TAKE_COLUMNS + tuple(c for c, *_ in METRIC_COLUMNS) + ("missing",)
+
+
+def take_rows(folder: Path) -> list[dict]:
+    """The take table's rows for one session."""
+    session = Session.load(folder)
+    rows = []
+    for take in session.takes:
+        m = take.metrics or {}
+        marks = take.marks or {}
+        row = {"session": folder.name, "take": take.number, "started": take.started, "duration_s": take.duration_s,
+               "status": take.status, "drill": "" if take.drill is None else take.drill,
+               "gaze_check": "yes" if take.gaze_check else "", "revision": take.revision or "",
+               "calibration": (take.vision or {}).get("calibration") or "", "metrics_version": m.get("version", ""),
+               **{k: marks.get(k, "") for k in ("hit", "missed", "unclear", "skipped")}}
+        missing = [] if m else ["metrics: none (analysed before they existed, or not yet: python -m palmcards.speech RUN --realign)"]
+        for column, group, key, part in METRIC_COLUMNS:
+            g = m.get(group)
+            if not m:
+                row[column] = ""
+                continue
+            entry = (g or {}).get(key) if isinstance(g, dict) else None
+            if entry is None and isinstance(g, dict) and g.get("value", 0) is None:  # the whole group: None + reason
+                row[column] = ""
+                if f"{group}: {g['reason']}" not in missing:
+                    missing.append(f"{group}: {g['reason']}")
+                continue
+            if entry is None:
+                row[column] = ""
+                missing.append(f"{column}: not in metrics version {m.get('version', '?')}")
+                continue
+            value = entry.get(part)
+            row[column] = "" if value is None else value
+            if value is None and entry.get("reason"):
+                missing.append(f"{column}: {entry['reason']}")
+        row["missing"] = "; ".join(missing)
+        rows.append(row)
+    return rows
+
+
+def take_table(runs: list[str] | None = None, root: Path | None = None) -> list[dict]:
+    """Rows for the RUNs given (folders or names under the data folder), or for every session."""
+    root = root or data_dir()
+    if runs:
+        folders = [Path(r) if (Path(r) / "session.json").exists() else root / r for r in runs]
+    else:
+        folders = sorted(p for p in root.glob("2*") if (p / "session.json").exists())
+    rows = []
+    for folder in folders:
+        try:
+            rows += take_rows(folder)
+        except Exception as exc:  # an unreadable session is reported, not a reason to stop
+            print(f"{folder.name}: skipped ({exc})", file=sys.stderr)
+    return rows
+
+
+def write_table(rows: list[dict], out) -> None:
+    writer = csv.DictWriter(out, fieldnames=COLUMNS)
+    writer.writeheader()
+    writer.writerows(rows)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("labels", type=Path, nargs="*")
@@ -183,8 +277,22 @@ def main() -> int:
     ap.add_argument("--gaze", metavar="RUN", help="report a gaze-check take of this session")
     ap.add_argument("--take", type=int, help="with --gaze: the take (default: the latest gaze check)")
     ap.add_argument("--sweep", action="store_true", help="with --gaze: score a grid of GAZE settings")
+    ap.add_argument("--table", nargs="*", metavar="RUN", help="one CSV row per take (every session, or these)")
+    ap.add_argument("--csv", type=Path, help="with --table: write the CSV here (default: the terminal)")
     ap.add_argument("--json", type=Path)
     args = ap.parse_args()
+    if args.table is not None:
+        rows = take_table(args.table)
+        if args.csv:
+            if args.csv.exists():
+                print(f"error: {args.csv} already exists", file=sys.stderr)
+                return 1
+            with open(args.csv, "w", newline="") as f:
+                write_table(rows, f)
+            print(f"{len(rows)} takes written to {args.csv}")
+        else:
+            write_table(rows, sys.stdout)
+        return 0
     if args.gaze:
         result = gaze_check(args.gaze, args.take)
         print(gaze_report(result))

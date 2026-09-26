@@ -66,6 +66,14 @@ Each gaze-check take calibrates in its count-in, then shows `GAZE.check_each` pr
 
 `--sweep` scores the take again over a grid of `GAZE` scale floors and radii, best screen-vs-away kappa first. Tune on one check take and confirm on another, recorded after the change; a setting chosen on a take always looks better on that take. Prompted gaze is easier than a real talk (the eyes go where they are told and stay), so a check shows the classifier can tell the targets apart, not how often it is right while someone speaks. Takes from other people need their consent, as for labelled takes.
 
+## The take table
+
+```sh
+.venv/bin/python scripts/evaluate.py --table [RUN ...] [--csv takes.csv]
+```
+
+One CSV row per take, every session under the data folder unless RUNs are given: the take (session, number, start, length, status, drill, gaze check, notes revision, calibration, metrics version), its verdict counts, and the take metrics: speech (`pace_wpm`, `fillers_per_min`, `unplanned_long_pauses`, `restarts`, `ad_libs`), hands (`shape_changes_per_min`, `hand_in_view_share`, `wrist_movement_palms_s`, `fingertip_movement_palms_s`, `face_touches`, `face_touch_s`), gaze (`gaze_screen_share`, `gaze_away_share`, `gaze_unclear_share`) and posture (`shoulder_tilt_deg`, `tilted_share`, `head_height_change`, `head_dropped_share`). An empty value is one the metrics left None; the `missing` column says why (too little evidence, recorded before a feature existed, no calibration, not analysed: `python -m palmcards.speech RUN --realign` computes the metrics of older takes again). Refuses to overwrite a file.
+
 ## Measured so far
 
 **Gaze** (2026-09-26, one person, MacBook Air, window not full screen; five gaze-check takes in three sessions; `docs/implementation-progress.md` has the details). Screen vs away, the settings in `GAZE` chosen on the first two takes: kappa 0.84 and 0.87 there, and 0.65, 0.79, 0.72 on the three recorded after (screen recall 0.95, away 0.82 over all five). Camera vs notes on the takes recorded after: 0.36, 0.45 (tuning take), 0.62. Head pitch read 3-9° differently in the calibration than moments later, silent readings included; with the notes below the camera, that is the whole difference. So the take metric reports screen vs away only.

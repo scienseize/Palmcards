@@ -130,6 +130,15 @@ class Detail:
 
 
 @dataclass(frozen=True)
+class Summary:
+    """Review, while browsing: the latest take's summary card, bottom right."""
+    scale: float = 0.6  # x text
+    right: int = 16  # px from the frame's right edge
+    bottom: int = 16  # px from the frame's bottom edge
+    gap: int = 4  # px between lines
+
+
+@dataclass(frozen=True)
 class Ring:
     """Options ring around a focused word."""
     rx: float = 4.4  # lines
@@ -256,6 +265,7 @@ RING = Ring()
 GAUGE = Gauge()
 ZONE = Zone()
 COUNT_IN = CountIn()
+SUMMARY = Summary()
 HANDS = Hands()
 DEBUG = Debug()
 PLAYER = Player()

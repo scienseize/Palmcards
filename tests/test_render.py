@@ -300,3 +300,16 @@ def test_the_calibration_steps_in_the_count_in():
     right = slice(ov.x + ov.margin + ov.box_w + 1, 1280)
     below_zone = slice(round(720 * 0.5), 720)
     assert (counting[below_zone, right] != calibrating[below_zone, right]).any()
+
+
+def test_the_take_summary_card_shows_while_browsing_review():
+    ov = overlay()
+    card = ("TAKE 1  1:01", "5 HIT, 2 MISSED", "ON SCREEN 82%  AWAY 14%")
+    right = slice(ov.x + ov.margin + ov.box_w + ov.pad, 1280)
+    bottom = slice(560, 720)
+    drawn, plain, focused = (np.full((720, 1280, 3), 128, np.uint8) for _ in range(3))
+    ov.draw(drawn, ViewState(app="review", mode="browse", level="sentence", summary=card))
+    ov.draw(plain, ViewState(app="review", mode="browse", level="sentence"))
+    ov.draw(focused, ViewState(app="review", mode="focus", level="sentence", focus=Hit(0, None), summary=card))
+    assert (drawn[bottom, right] != plain[bottom, right]).any()
+    assert (focused[bottom, right] == 128).all()  # not over a focused panel

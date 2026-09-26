@@ -57,7 +57,7 @@ from palmcards.config import CURSOR, REHEARSE
 from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
 from palmcards.notes import MarkKind, Sentence
 from palmcards.style import (
-    CHIPS, COLORS, COUNT_IN, DEBUG, DETAIL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
+    CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, PLAYER, RING, TEXT, ZONE, bgr,
 )
 
 if TYPE_CHECKING:
@@ -145,6 +145,7 @@ class ViewState:
     # the take the sentence shows, "" where there is none.
     mark_verdicts: tuple[tuple[str, ...], ...] = ()
     detail: tuple[tuple[str, str], ...] = ()  # Review focus: (verdict or "", line) under the sentence
+    summary: tuple[str, ...] = ()  # Review, browsing: the latest take's summary card (palmcards.review)
     panel_scroll: float = 0.0  # px into the focus panel's content (clamped when drawn)
     alert: str = ""  # persistent: recording or analysis trouble, until it is dealt with
     keys_help: bool = False  # the keyboard fallback, shown with `h`
@@ -902,6 +903,8 @@ class TextOverlay:
             cv2.line(frame, a, b, bgr(C.stretch_line), HANDS.stretch_stroke, cv2.LINE_AA)
         if state.app in ("count_in", "rehearse", "review"):
             self._draw_zone(frame, state)
+        if state.app == "review" and state.summary and state.mode != "focus":
+            self._draw_summary(frame, state.summary)
         if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
             # In the clear space between the notes and the right edge, below the zone.
             chip = self._chip(str(state.count_in), round(self.font_size * COUNT_IN.scale), C.orange, None)
@@ -920,6 +923,18 @@ class TextOverlay:
             chip = self._chip("H: KEYS", round(self.font_size * ZONE.hint_scale), C.dim, C.label_fill)
             _blend(frame, self.x + self.margin, self.frame_h - chip[0].shape[0] - LABEL.min_top, *chip)
         return frame
+
+    def _draw_summary(self, frame: np.ndarray, lines: tuple[str, ...]) -> None:
+        """The take's summary card: a line per chip, right-aligned at the bottom right,
+        clear of the text box; the first line (the take) in orange."""
+        size = round(self.font_size * SUMMARY.scale)
+        chips = [self._chip(t, size, C.orange if i == 0 else C.node_text, C.dark_fill) for i, t in enumerate(lines)]
+        y = self.frame_h - SUMMARY.bottom - sum(c[0].shape[0] + SUMMARY.gap for c in chips)
+        clear = self.x + self.margin + self.box_w + self.pad
+        for color, inv in chips:
+            h, w = color.shape[:2]
+            _blend(frame, max(self.frame_w - SUMMARY.right - w, clear), y, color, inv)
+            y += h + SUMMARY.gap
 
     def _draw_tutorial(self, frame: np.ndarray, step: int, of: int, text: str) -> None:
         """One gesture at a time, bottom centre, with where it is in the steps."""

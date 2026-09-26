@@ -246,6 +246,7 @@ class Takes:
         self.board = Board(notes)  # verdicts of the judged takes, for Review
         self.drill: int | None = None  # the sentence the current count-in or take drills
         self.dial_seen = 0  # take-dial steps already applied
+        self._summary_key, self._summary = None, ()  # Review's take summary card, and what it was made from
         self.vision: Watcher | None = None  # face and pose (milestone 7); run() opens it
         self.vision_off = "face and pose tracking not opened"  # why there is none
         self.calibrate_next = False  # e: calibrate the eyes again at the next count-in
@@ -282,7 +283,7 @@ class Takes:
             path = self.session.dir / take.verdicts if take.verdicts else None
             if path is not None and path.exists():
                 self.board.add(take.number, json.loads(path.read_text()), take.drill,
-                               self.session.sentence_map(take))
+                               self.session.sentence_map(take), take.metrics)
 
     def restore(self) -> bool:
         """A reopened session: its judged takes onto the board, and takes whose
@@ -460,6 +461,14 @@ class Takes:
             self.dial_seen = gs.take_step
         view.mark_verdicts = self.board.mark_verdicts()
         view.detail = self.board.detail(focused) if focused is not None and view.level == "sentence" else ()
+        n = self.board.latest()
+        if focused is None and n is not None:  # the latest take's summary card, made again when it changes
+            key = (n, n in self.board.metrics, id(self.board))
+            if key != self._summary_key:
+                self._summary_key, self._summary = key, self.board.take_summary(n, self.session.take(n).duration_s)
+            view.summary = self._summary
+        else:
+            view.summary = ()
 
     def on_transcribed(self, result: dict) -> str:
         """A take's transcript and alignment arrived. Returns a label note."""
@@ -471,7 +480,7 @@ class Takes:
         self.session.set_result(n, result["transcript"], result["alignment"], result["verdicts"], result["marks"],
                                 result.get("metrics"))
         take = self.session.take(n)
-        self.board.add(n, result["verdict_data"], take.drill)
+        self.board.add(n, result["verdict_data"], take.drill, metrics=result.get("metrics"))
         self.log(time.perf_counter() - self.t0, "transcribed", take=n, seconds=result["seconds"])
         print(f"take {n} (transcribed and judged in {result['seconds']:.1f} s)\n{result['report']}")
         if take.drill is not None:

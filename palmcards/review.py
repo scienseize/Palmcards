@@ -6,13 +6,16 @@ the last full take). The take dial on a focused sentence steps through the
 takes in which that sentence was said, and the choice stays after backing
 out, until a newer take says the sentence again.
 
-The app hands this the verdicts (palmcards.cues) as each take is judged;
-it builds what the overlay draws: the verdict of every mark, the focus
-panel's lines and the take label.
+The app hands this the verdicts (palmcards.cues) and metrics
+(palmcards.metrics) as each take is judged; it builds what the overlay
+draws: the verdict of every mark, the focus panel's lines (with where the
+speaker looked while saying the sentence), the take label, and the take's
+summary card.
 """
 
 from __future__ import annotations
 
+from palmcards.config import REVIEW
 from palmcards.cues import ENDINGS, PACES, mark_label
 from palmcards.notes import Notes
 
@@ -32,12 +35,19 @@ class Board:
         self.takes: dict[int, dict] = {}  # take number -> verdicts (palmcards.cues)
         self.drills: dict[int, int] = {}  # take number -> drilled sentence
         self.picked: dict[int, int] = {}  # sentence -> take chosen with the dial
+        self.metrics: dict[int, dict] = {}  # take number -> metrics (palmcards.metrics), when analysed
+        self.gaze: dict[int, dict[int, dict]] = {}  # take number -> sentence shown -> gaze counts
 
     def add(self, number: int, verdicts: dict, drill: int | None = None,
-            sentence_map: dict[int, int] | None = None) -> None:
+            sentence_map: dict[int, int] | None = None, metrics: dict | None = None) -> None:
         """A judged take. `sentence_map` maps its sentences onto the notes shown
         (a take recorded with an earlier notes revision); sentences edited
         since have no place and are left out."""
+        if metrics is not None:
+            self.metrics[number] = metrics
+            per = (metrics.get("gaze") or {}).get("sentences") or []
+            self.gaze[number] = {sentence_map[g["sentence"]] if sentence_map is not None else g["sentence"]: g
+                                 for g in per if sentence_map is None or g["sentence"] in sentence_map}
         if sentence_map is not None:
             placed = {sentence_map[s["sentence"]]: s for s in verdicts["sentences"] if s["sentence"] in sentence_map}
             verdicts = {**verdicts, "sentences": [
@@ -124,6 +134,65 @@ class Board:
             lines.append(("", f"Pace {s['wpm']:.0f} wpm" + (f", take {base:.0f}" if base else "")))
         fillers = s["fillers"]
         lines.append(("", f"Fillers: {', '.join(fillers)}" if fillers else "No fillers."))
+        if line := self._gaze_line(n, sentence):
+            lines.append(("", line))
+        return tuple(lines)
+
+    def _gaze_line(self, number: int, sentence: int) -> str:
+        """Where the speaker looked while saying the sentence in that take, or why it isn't known."""
+        m = self.metrics.get(number)
+        if m is None:
+            return ""
+        gaze = m.get("gaze") or {}
+        if gaze.get("value", 0) is None:
+            return "Gaze not measured."
+        g = self.gaze.get(number, {}).get(sentence)
+        judged = g["screen"] + g["away"] if g else 0
+        if judged < REVIEW.min_gaze_readings:
+            return f"Gaze: too few readings ({judged})."
+        return f"{_gaze_shares(g['screen'], g['away'], g['unclear']).capitalize()}."
+
+    def latest(self) -> int | None:
+        """The newest judged take."""
+        return max(self.takes, default=None)
+
+    def take_summary(self, number: int, duration_s: float | None = None) -> tuple[str, ...]:
+        """The take's summary card: marks, speech, gaze, hands, posture; "NOT MEASURED"
+        where a metric has too little to go on (its reason is in session.json)."""
+        if number not in self.takes:
+            return ()
+        head = f"TAKE {number}" + (" (DRILL)" if number in self.drills else "")
+        if duration_s:
+            m_, s_ = divmod(round(duration_s), 60)
+            head += f"  {m_}:{s_:02d}"
+        lines = [head, self.summary(number)]
+        m = self.metrics.get(number)
+        if m is None:
+            return tuple(lines + ["METRICS NOT MEASURED YET"])
+        v = lambda d, k: (d.get(k) or {}).get("value")  # noqa: E731
+        speech = m.get("speech", {})
+        said = [f"{v(speech, 'pace_wpm'):.0f} WPM" if v(speech, "pace_wpm") is not None else "",
+                f"{v(speech, 'fillers_per_min'):g} FILLERS/MIN" if v(speech, "fillers_per_min") is not None else ""]
+        lines.append("  ".join(p for p in said if p) or "PACE NOT MEASURED")
+        gaze = m.get("gaze") or {}
+        if (c := gaze.get("counts")) and v(gaze, "screen_share") is not None:
+            lines.append(_gaze_shares(c["camera"] + c["notes"], c["away"], c["unclear"]).upper().replace(",", " "))
+        else:
+            lines.append("GAZE NOT MEASURED")
+        hands = m.get("hands", {})
+        parts = []
+        if v(hands, "in_view_share") is not None:
+            parts.append(f"HANDS IN VIEW {100 * v(hands, 'in_view_share'):.0f}%")
+        if v(hands, "face_touches") is not None:
+            n = v(hands, "face_touches")
+            parts.append(f"{n} FACE TOUCH{'ES' if n != 1 else ''}")
+        lines.append("  ".join(parts) or "HANDS NOT MEASURED")
+        posture = m.get("posture") or {}
+        if v(posture, "tilted_share") is not None:
+            lines.append(f"SHOULDERS TILTED {100 * v(posture, 'tilted_share'):.0f}%  "
+                         f"HEAD DROPPED {100 * v(posture, 'head_dropped_share'):.0f}%")
+        else:
+            lines.append("POSTURE NOT MEASURED")
         return tuple(lines)
 
     def summary(self, number: int) -> str:
@@ -134,3 +203,12 @@ class Board:
             return "NO MARKS"
         parts = [f"{c['hit']} HIT"] + [f"{c[k]} {k.upper()}" for k in ("missed", "unclear", "skipped") if c[k]]
         return ", ".join(parts)
+
+
+def _gaze_shares(screen: int, away: int, unclear: int) -> str:
+    """ "on screen 83%, away 3%, unclear 14%": shares of every reading while speaking, adding up to 100."""
+    total = max(screen + away + unclear, 1)
+    parts = [f"on screen {100 * screen / total:.0f}%", f"away {100 * away / total:.0f}%"]
+    if unclear:
+        parts.append(f"unclear {100 * unclear / total:.0f}%")
+    return ", ".join(parts)

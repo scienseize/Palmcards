@@ -56,3 +56,52 @@ def test_a_sentence_not_said_in_any_take():
     assert b.shown(2) == 1 and b.take_label(2) == "TAKE 1: NOT SAID"
     assert b.detail(2)[-1] == ("", "Not said in this take.")
     assert b.mark_verdicts()[2] == ("skipped",)
+
+
+def metrics(sentences, screen_share=0.8, posture=True, touches=2):
+    """Take metrics with gaze counts per sentence: [(screen, away, unclear)]."""
+    per = [{"sentence": i, "screen": s, "away": a, "unclear": u, "camera": s, "notes": 0}
+           for i, (s, a, u) in enumerate(sentences)]
+    counts = {"camera": sum(s for s, _, _ in sentences), "notes": 0, "away": sum(a for _, a, _ in sentences),
+              "unclear": sum(u for _, _, u in sentences)}
+    return {
+        "version": 3,
+        "speech": {"pace_wpm": {"value": 142.4}, "fillers_per_min": {"value": 1.5}},
+        "hands": {"in_view_share": {"value": 0.15}, "face_touches": {"value": touches, "seconds": 1.2}},
+        "gaze": {"screen_share": {"value": screen_share}, "away_share": {"value": 1 - screen_share},
+                 "unclear_share": {"value": 0.1}, "counts": counts, "sentences": per},
+        "posture": {"tilted_share": {"value": 0.13}, "head_dropped_share": {"value": 0.08}} if posture
+        else {"value": None, "reason": "no posture baseline"},
+    }
+
+
+def test_the_focused_sentence_says_where_the_speaker_looked():
+    b = Board(parse_text(TEXT))
+    b.add(1, judged(FULL), metrics=metrics([(8, 2, 0), (9, 0, 1), (1, 1, 0)]))
+    assert b.detail(0)[-1] == ("", "On screen 80%, away 20%.")
+    assert b.detail(1)[-1] == ("", "On screen 90%, away 0%, unclear 10%.")  # shares of every reading, adding to 100
+    assert b.detail(2)[-1] == ("", "Gaze: too few readings (2).")
+    b.add(2, judged(FULL), metrics={"version": 3, "gaze": {"value": None, "reason": "no calibration"}})
+    assert b.detail(0)[-1] == ("", "Gaze not measured.")
+    b.add(3, judged(FULL))  # analysed without metrics: no gaze line at all
+    assert b.detail(0)[-1][1].endswith("fillers.") or b.detail(0)[-1][1].startswith("Fillers")
+
+
+def test_gaze_follows_the_sentences_of_an_older_notes_revision():
+    b = Board(parse_text(TEXT))
+    b.add(1, judged(FULL), sentence_map={0: 0, 2: 2}, metrics=metrics([(8, 2, 0), (5, 5, 0), (3, 0, 0)]))
+    assert b.detail(0)[-1] == ("", "On screen 80%, away 20%.")
+    assert b.detail(2)[-1] == ("", "On screen 100%, away 0%.")
+
+
+def test_the_take_summary_card():
+    b = Board(parse_text(TEXT))
+    assert b.take_summary(1) == ()
+    b.add(1, judged(FULL), metrics=metrics([(8, 2, 0), (9, 0, 1), (1, 1, 0)], posture=False, touches=1))
+    card = b.take_summary(1, 61.0)
+    assert card[0] == "TAKE 1  1:01" and card[1] == b.summary(1)
+    assert card[2:] == ("142 WPM  1.5 FILLERS/MIN", "ON SCREEN 82%  AWAY 14%  UNCLEAR 5%",
+                        "HANDS IN VIEW 15%  1 FACE TOUCH", "POSTURE NOT MEASURED")
+    b.add(2, judged(FULL), drill=1)
+    assert b.latest() == 2 and b.take_summary(2)[-1] == "METRICS NOT MEASURED YET"
+    assert b.take_summary(2)[0] == "TAKE 2 (DRILL)"
