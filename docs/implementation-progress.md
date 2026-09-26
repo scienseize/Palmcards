@@ -1606,3 +1606,17 @@ Checked on a copy of 20260926-193557: its parser-1 revision loads and verifies; 
   revision keeping the other sentences' ids; export wrote plain text; --realign gave long_pauses.
 Tests: pytest (full) -> 461 passed; replays 12 ok.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: no delivery marks, stage 4 of 4: docs and the study
+Changes: CLAUDE.md: what PalmCards is (it measures takes and sets them side by side; it no longer
+  judges marks), the feedback constraint (observations only), the ring, Review (take table, a line
+  per take in a focused sentence), a short "Delivery marks (removed)" section in place of the marks
+  table and the verdicts file, metrics (speech per sentence, voice, long pauses), session files and
+  the legacy take fields, code layout, milestones annotated. README.md and docs/hardware-smoke-test.md
+  likewise. docs/evaluation.md: H1 now "delivery gets more fluent from the first to the last take"
+  (fillers and long pauses per minute), with the note that filler counts need checking against labels
+  first; H2's reasoning is the side-by-side comparison; mark labels and mark agreement removed.
+The design-note artifact still describes delivery marks; CLAUDE.md says so where it links it.
+```
