@@ -932,6 +932,14 @@ Hold-out gaze check (session 20260926-123218-sample_notes-c36749, recorded after
   can't tell camera from notes; the iris is then the cue, and at 640 px an eye is ~30 px wide. Head
   pitch drifted again (-10.3 in the calibration, about -4 under the prompts). Camera vs notes is
   not reliable across sessions yet.
+Next (the user's choice): track the face at full resolution (BODY.face_max_side, apart from pose).
+  A first benchmark at 1280 px (sessions/bench-vision-face1280.json) only counts for its first
+  f6p15 row (30.0 fps, face 6.7 ms, 5/s, cool Mac): the benchmark counted frames from 0 in each
+  setting, and a reused tracker's schedule (since stage 1: N frames after the last run) then
+  never came due, so later rows ran no face or pose. Fixed: the benchmark counts frames over the
+  whole run, and a tracker whose frame count starts again starts its schedule again (test added).
+  The app counts frames over the whole run and was not affected; the stage 0 runs used the older
+  modulo schedule and are not affected either.
 ```
 
 ## Decisions (2026-09-26, by the user)

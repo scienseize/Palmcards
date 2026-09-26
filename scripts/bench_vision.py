@@ -128,6 +128,7 @@ class Bench:
         self.stopped = False
         self.face = self.pose = None  # made at their first use, kept for every setting
         self.face_side = face_side
+        self.index = 0  # camera frames so far, over every setting (the trackers' schedule counts them)
 
     def run(self, name: str) -> dict | None:
         """One setting: warm up, then measure. None if q/Esc stopped the benchmark."""
@@ -150,7 +151,6 @@ class Bench:
         shown, work, cam, hands_ms, face_ms, pose_ms = [], [], [], [], [], []
         measuring, snap = False, {}
         begin = last = time.perf_counter()
-        i = 0
         while True:
             frame = self.camera.read()
             start = time.perf_counter()
@@ -169,7 +169,7 @@ class Bench:
             self.modes.tick(t)
             for tracker in (face, pose):
                 if tracker is not None:
-                    tracker.maybe_submit(frame, t, i)
+                    tracker.maybe_submit(frame, t, self.index)
                     tracker.poll()
             self.replay.tick()
             self.view.section, self.view.current = self.replay.follower.section, self.replay.follower.sentence
@@ -182,7 +182,7 @@ class Bench:
             cv2.imshow(self.window, frame)
             key = cv2.waitKey(1) & 0xFF
             end = time.perf_counter()
-            i += 1
+            self.index += 1
             if measuring:
                 shown.append(end - last)
                 work.append((now - start) * 1000)

@@ -78,6 +78,9 @@ class LandmarkTask:
         from `offset` on, then each `every` frames after the last one submitted."""
         if self._last_index is None:
             return index >= self.offset
+        if index < self._last_index:  # the frame count started again: start the schedule again
+            self._last_index = None
+            return index >= self.offset
         return index - self._last_index >= self.every
 
     def maybe_submit(self, frame_bgr: np.ndarray, t: float, index: int, late: bool = False) -> bool:

@@ -247,3 +247,11 @@ def test_a_result_from_before_the_take_began_is_not_the_takes():
     w.hands([Hand(hand(900, 600))], 4.0)  # a hand result from before the take, too
     rows, counts = w.end_take()
     assert rows.face == [] and rows.hand == []
+
+
+def test_a_frame_count_that_starts_again_starts_the_schedule_again():
+    tracker, task = face(every=3, offset=1)
+    for i in range(10):
+        if tracker.maybe_submit(FRAME, i / 30, i):
+            task.answer(FOUND)
+    assert tracker.maybe_submit(FRAME, 1.0, 1)  # counting from 0 again: due at its offset, not never
