@@ -1,9 +1,9 @@
 """Where the speaker was looking, from a take's face features and the session's calibration.
 
-    classify(arrays, calibration)  -> a class per face reading, and why none if it can't
+    classify(arrays, calibration)  -> a class per face reading
     take_gaze(arrays, calibration, alignment)
-                                   -> the take's gaze metric: shares while speaking,
-                                      overall and per sentence
+                                   -> the take's gaze metric while speaking: at the
+                                      screen or away, overall and per sentence
     prompt_schedule(seed)          -> the gaze check's timed prompts
 
 Each reading with a face is compared with the calibration's two baselines
@@ -13,12 +13,19 @@ the larger of the two steps' spreads, at least GAZE.floor_*). A reading is
 "camera" when it is nearer the camera baseline and within GAZE.camera_radius,
 "notes" when nearer the notes' and within GAZE.notes_radius, "away" when
 it is too far from both, and "unclear" without a face, during a blink, or
-with a value missing. A calibration whose baselines are too close to tell
-apart (GAZE.min_separation) makes every reading unclear.
+with a value missing.
 
-These are observations, not judgments: how much eye contact suits a talk is
-the speaker's call. Validated only by the gaze check so far (scripts/evaluate.py
---gaze): the prompts a person followed against these classes.
+What the take's metric reports is "screen" (camera or notes) against "away":
+the gaze checks (scripts/evaluate.py --gaze, 2026-09-26, one person) held
+that apart (kappa 0.65-0.79 on takes recorded after the settings were
+chosen), but not camera against notes (0.36-0.62): head pitch read 3-9
+degrees differently in the calibration than moments later, and where the
+notes sit below the camera that is the whole difference. The camera/notes
+split is still counted, marked not validated, with how far apart the
+calibration put the two (GAZE.min_separation is what a split would need).
+
+These are observations, not judgments: where to look during a talk is the
+speaker's call.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ import numpy as np
 
 from palmcards.config import BODY, GAZE
 
-VERSION = 1
+VERSION = 2  # 2: screen vs away; the camera/notes split not validated
 CLASSES = ("camera", "notes", "away", "unclear")
 FEATURES = ("yaw", "pitch", "iris_x", "iris_y")
 AWAY_HINTS = ("DOWN AT THE DESK", "TO YOUR LEFT", "TO YOUR RIGHT", "UP AT THE CEILING")
@@ -64,6 +71,11 @@ def usable(calibration: dict | None) -> str:
         return f"the eye calibration {calibration.get('status', 'failed')}: {calibration.get('reason', '')}"
     if any(calibration[step].get(k) is None for step in ("camera", "notes") for k in FEATURES):
         return "the eye calibration is missing a baseline"
+    return ""
+
+
+def separates(calibration: dict) -> str:
+    """Why this calibration can't split camera from notes, or "" if its baselines are far enough apart."""
     sep = separation(calibration)
     if sep < GAZE.min_separation:
         return f"the eye calibration can't tell camera from notes apart (separation {sep:.1f}, needs " \
@@ -72,7 +84,8 @@ def usable(calibration: dict | None) -> str:
 
 
 def classify(arrays: dict[str, np.ndarray], calibration: dict | None) -> np.ndarray:
-    """A class per face reading (CLASSES); all "unclear" if the calibration can't be used."""
+    """A class per face reading (CLASSES); all "unclear" if the calibration can't be used. Camera
+    and notes together are "screen"; which of the two is not validated (see the module)."""
     n = len(arrays["face_t"])
     out = np.full(n, "unclear", dtype=object)
     if usable(calibration) or n == 0:
@@ -112,8 +125,9 @@ def speaking(t: np.ndarray, alignment: dict) -> tuple[np.ndarray, list[tuple[int
 def take_gaze(arrays: dict[str, np.ndarray] | None, calibration: dict | None, alignment: dict,
               calibration_id: str | None = None, off_reason: str = "") -> dict:
     """The take's gaze metric: while a sentence was being said, the share of the
-    judged readings looking into the camera, at the notes, or away; how many
-    were unclear; and the same counts per sentence."""
+    judged readings looking at the screen (camera or notes) or away; how many were
+    unclear; and the same per sentence. The camera/notes counts are kept, not
+    validated."""
     if arrays is None:
         return _none(off_reason or "no face features for this take")
     if why := usable(calibration):
@@ -121,21 +135,29 @@ def take_gaze(arrays: dict[str, np.ndarray] | None, calibration: dict | None, al
     labels = classify(arrays, calibration)
     during, per = speaking(arrays["face_t"], alignment)
     counts = _counts(labels[during])
-    judged = counts["camera"] + counts["notes"] + counts["away"]
+    screen = counts["camera"] + counts["notes"]
+    judged = screen + counts["away"]
     total = judged + counts["unclear"]
     if judged < GAZE.min_frames:
         return _none(f"too few readings judged while speaking ({judged} of {total}, needs {GAZE.min_frames})")
     basis = f"{judged} face readings judged while speaking ({counts['unclear']} more unclear), " \
             f"calibration {calibration_id or calibration.get('id', '?')}"
+
+    def sentence(i: int, inside: np.ndarray) -> dict:
+        c = _counts(labels[inside])
+        return {"sentence": i, "screen": c["camera"] + c["notes"], "away": c["away"], "unclear": c["unclear"],
+                "camera": c["camera"], "notes": c["notes"]}
+
     return {
         "version": VERSION,
         "calibration": calibration_id or calibration.get("id"),
-        "camera_share": {"value": round(counts["camera"] / judged, 3), "basis": basis},
-        "notes_share": {"value": round(counts["notes"] / judged, 3), "basis": basis},
+        "screen_share": {"value": round(screen / judged, 3), "basis": basis},
         "away_share": {"value": round(counts["away"] / judged, 3), "basis": basis},
         "unclear_share": {"value": round(counts["unclear"] / total, 3), "basis": f"{total} face readings while speaking"},
         "counts": counts,
-        "sentences": [{"sentence": i, **_counts(labels[inside])} for i, inside in per],
+        "split": {"validated": False, "separation": round(separation(calibration), 2),
+                  "note": separates(calibration) or "camera and notes counted apart; not validated"},
+        "sentences": [sentence(i, inside) for i, inside in per],
     }
 
 
@@ -185,6 +207,8 @@ def check_agreement(arrays: dict[str, np.ndarray], calibration: dict | None, pro
     judged = [(target, c) for target, row in confusion.items() for c in ("camera", "notes", "away")
               for _ in range(row[c])]
     agree = sum(a == b for a, b in judged)
+    on_screen = [("away" if a == "away" else "screen", "away" if b == "away" else "screen") for a, b in judged]
+    screen_row = {c: sum(confusion[t][c] for t in ("camera", "notes")) for c in ("camera", "notes", "away")}
     total = sum(sum(row.values()) for row in confusion.values())
     medians = {}
     for target, chunks in features.items():
@@ -193,9 +217,20 @@ def check_agreement(arrays: dict[str, np.ndarray], calibration: dict | None, pro
                            for i, k in enumerate(FEATURES)}
     return {
         "calibration_usable": usable(calibration) or "yes",
+        "separates": (separates(calibration) or "yes") if not usable(calibration) else "-",
         "readings": total,
         "judged": len(judged),
         "unclear_share": round(1 - len(judged) / total, 3) if total else None,
+        # What the take's metric reports: screen (camera or notes) against away.
+        "screen": {
+            "agreement": round(sum(a == b for a, b in on_screen) / len(on_screen), 3) if on_screen else None,
+            "kappa": _kappa(on_screen, ("screen", "away")),
+            "recall": {"screen": round((screen_row["camera"] + screen_row["notes"]) / j, 3)
+                       if (j := sum(screen_row.values())) else None,
+                       "away": round(confusion["away"]["away"] / j, 3)
+                       if (j := sum(confusion["away"][c] for c in ("camera", "notes", "away"))) else None},
+        },
+        # Camera, notes and away apart (not validated).
         "agreement": round(agree / len(judged), 3) if judged else None,
         "kappa": _kappa(judged),
         "recall": {target: round(row[target] / j, 3) if (j := row["camera"] + row["notes"] + row["away"]) else None
@@ -205,12 +240,11 @@ def check_agreement(arrays: dict[str, np.ndarray], calibration: dict | None, pro
     }
 
 
-def _kappa(pairs: list[tuple[str, str]]) -> float | None:
+def _kappa(pairs: list[tuple[str, str]], classes: tuple[str, ...] = ("camera", "notes", "away")) -> float | None:
     """Cohen's kappa: agreement beyond what the class frequencies alone would give."""
     if not pairs:
         return None
     n = len(pairs)
-    classes = ("camera", "notes", "away")
     observed = sum(a == b for a, b in pairs) / n
     expected = sum((sum(a == c for a, _ in pairs) / n) * (sum(b == c for _, b in pairs) / n) for c in classes)
     return round((observed - expected) / (1 - expected), 3) if expected < 1 else None

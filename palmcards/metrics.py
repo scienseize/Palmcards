@@ -16,9 +16,10 @@ the speaker. One without enough to go on is None with the reason, like an
            per second). These are movement, not "fidgeting": what the
            movement means is for the speaker to judge.
   gaze     while a sentence was being said, the share of face readings
-           looking into the camera, at the notes, or away, against the
-           session's eye calibration, with how many were unclear, overall
-           and per sentence (palmcards.gaze; from take-NN.face.npz)
+           at the screen (camera or notes) or away, against the session's
+           eye calibration, with how many were unclear, overall and per
+           sentence (palmcards.gaze; from take-NN.face.npz). Camera vs notes
+           is counted but not reported: it did not hold up in the checks.
   posture  not measured yet: pose features are recorded (take-NN.face.npz);
            posture comes with milestone 7's stage 3.
 

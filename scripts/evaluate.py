@@ -17,12 +17,13 @@ Reports, over all the files given (optionally one split only):
 --gaze reads a gaze-check take (main.py --gaze-check; default: the session's
 latest) and compares its prompts (camera, notes, away) with the gaze
 classifier's class for each face reading inside them, the first
-GAZE.check_settle_s of each prompt left out: agreement and Cohen's kappa over
-the readings judged, recall per target, the confusion table, how many were
-unclear, and each target's median head and iris values (for tuning GAZE).
---sweep scores the same take again over a grid of GAZE settings (the scale
-floors x 1-4, the camera and notes radii) and lists the best by kappa. Tune
-on one check take, then confirm on another: a setting picked on a take
+GAZE.check_settle_s of each prompt left out. First what the take metric
+reports, screen (camera or notes) against away: agreement, Cohen's kappa,
+recall; then camera, notes and away apart (not validated): the same, the
+confusion table, and each target's median head and iris values. --sweep
+scores the take again over a grid of GAZE settings (the scale floors x 1-4,
+the camera and notes radii) and lists the best by the screen-vs-away kappa.
+Tune on one check take, then confirm on another: a setting picked on a take
 always looks better on that take than it will on the next.
 
 Synthetic tests check this arithmetic, not whether PalmCards is right: only
@@ -129,12 +130,12 @@ def gaze_sweep(run: str | Path, take_number: int | None = None, root: Path | Non
                                 floor_iris_x=base.floor_iris_x * f, floor_iris_y=base.floor_iris_y * f,
                                 camera_radius=cam, notes_radius=notes)
             r = gaze.check_agreement(arrays, calibration, take.gaze_check["prompts"], take.gaze_check["t0"])
-            rows.append({"floors_x": f, "camera_radius": cam, "notes_radius": notes, "kappa": r["kappa"],
-                         "agreement": r["agreement"], "recall": r["recall"],
-                         "usable": r["calibration_usable"] == "yes"})
+            rows.append({"floors_x": f, "camera_radius": cam, "notes_radius": notes,
+                         "screen_kappa": r["screen"]["kappa"], "screen_recall": r["screen"]["recall"],
+                         "kappa": r["kappa"], "usable": r["calibration_usable"] == "yes"})
     finally:
         gaze.GAZE = base
-    rows.sort(key=lambda r: -1 if r["kappa"] is None else r["kappa"], reverse=True)
+    rows.sort(key=lambda r: -1 if r["screen_kappa"] is None else r["screen_kappa"], reverse=True)
     return rows[:top]
 
 
@@ -160,10 +161,12 @@ def _gaze_take(run: str | Path, take_number: int | None, root: Path | None):
 
 
 def gaze_report(r: dict) -> str:
+    sc = r["screen"]
     lines = [f"gaze check: take {r['take']} of {r['session']}, calibration {r['calibration']} "
-             f"(separation {r['separation']}; usable: {r['calibration_usable']})",
+             f"(usable: {r['calibration_usable']}; separation {r['separation']}, splits camera/notes: {r['separates']})",
              f"  readings {r['readings']}, judged {r['judged']}, unclear {r['unclear_share']}",
-             f"  agreement {r['agreement']}, kappa {r['kappa']}",
+             f"  screen vs away:  agreement {sc['agreement']}, kappa {sc['kappa']}, recall {sc['recall']}",
+             f"  camera, notes, away apart (not validated):  agreement {r['agreement']}, kappa {r['kappa']}",
              f"  {'prompt':<8} {'camera':>7} {'notes':>7} {'away':>7} {'unclear':>8}  recall   median yaw, pitch, iris x, y"]
     for target, row in r["confusion"].items():
         m = r["medians"][target]
@@ -187,10 +190,11 @@ def main() -> int:
         print(gaze_report(result))
         if args.sweep:
             result["sweep"] = gaze_sweep(args.gaze, args.take)
-            print("  best settings (GAZE floors x, camera radius, notes radius): kappa, agreement, recall")
+            print("  best settings (GAZE floors x, camera radius, notes radius): screen-vs-away kappa and recall; "
+                  "3-class kappa")
             for r in result["sweep"]:
-                print(f"    x{r['floors_x']:g}, {r['camera_radius']:g}, {r['notes_radius']:g}: {r['kappa']}, "
-                      f"{r['agreement']}, {r['recall']}" + ("" if r["usable"] else "  (calibration unusable)"))
+                print(f"    x{r['floors_x']:g}, {r['camera_radius']:g}, {r['notes_radius']:g}: {r['screen_kappa']}, "
+                      f"{r['screen_recall']}; {r['kappa']}" + ("" if r["usable"] else "  (calibration unusable)"))
         if args.json:
             args.json.write_text(json.dumps(result, indent=1) + "\n")
         return 0

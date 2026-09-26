@@ -30,7 +30,7 @@ def test_scales_have_floors_and_follow_the_calibration_spread():
     s = gaze.scales(CAL)
     assert s["yaw"] == GAZE.floor_yaw  # 2 x 0.5 is under the floor
     assert s["iris_x"] == pytest.approx(GAZE.mad_scale * 0.008)
-    assert gaze.separation(CAL) > GAZE.min_separation and gaze.usable(CAL) == ""
+    assert gaze.separation(CAL) > GAZE.min_separation and gaze.usable(CAL) == "" and gaze.separates(CAL) == ""
 
 
 def test_each_reading_gets_a_class():
@@ -43,12 +43,14 @@ def test_no_face_a_blink_or_a_missing_value_is_unclear():
     assert gaze.classify(arrays, CAL).tolist() == ["unclear"] * 3
 
 
-def test_a_calibration_that_cannot_tell_camera_from_notes_leaves_everything_unclear():
+def test_a_calibration_that_cannot_split_camera_from_notes_still_tells_screen_from_away():
     close = {**CAL, "notes": {**CAL["camera"], "yaw": [0.5, 0.2]}}
-    assert "can't tell camera from notes" in gaze.usable(close)
-    assert set(gaze.classify(readings([CAMERA, NOTES]), close)) == {"unclear"}
+    assert gaze.usable(close) == "" and "can't tell camera from notes" in gaze.separates(close)
+    labels = gaze.classify(readings([CAMERA, (0.5, 0.0, 0.53, -0.08), AWAY]), close)
+    assert labels[2] == "away" and set(labels[:2]) <= {"camera", "notes"}
     assert "failed" in gaze.usable({"status": "failed", "reason": "no face"})
     assert gaze.usable(None) == "no eye calibration when the take was recorded"
+    assert set(gaze.classify(readings([CAMERA]), None)) == {"unclear"}
 
 
 def alignment(*spans):
@@ -62,11 +64,13 @@ def test_the_take_metric_counts_only_readings_while_speaking():
     t = np.concatenate([np.arange(10, 14, 0.2), np.arange(15, 19, 0.2), np.arange(20, 24, 0.2)])
     rows = [CAMERA] * 20 + [AWAY] * 20 + [NOTES] * 15 + [AWAY] * 5
     m = gaze.take_gaze(readings(rows, t=t), CAL, alignment((10.0, 13.9), (20.0, 23.9)))
-    assert m["camera_share"]["value"] == pytest.approx(20 / 40) and m["notes_share"]["value"] == pytest.approx(15 / 40)
-    assert m["away_share"]["value"] == pytest.approx(5 / 40) and m["unclear_share"]["value"] == 0.0
-    assert m["sentences"] == [{"sentence": 0, "camera": 20, "notes": 0, "away": 0, "unclear": 0},
-                              {"sentence": 1, "camera": 0, "notes": 15, "away": 5, "unclear": 0}]
-    assert m["calibration"] == "c1" and "40 face readings judged while speaking" in m["camera_share"]["basis"]
+    assert m["screen_share"]["value"] == pytest.approx(35 / 40) and m["away_share"]["value"] == pytest.approx(5 / 40)
+    assert m["unclear_share"]["value"] == 0.0 and "camera_share" not in m  # the split is not reported as a share
+    assert m["counts"] == {"camera": 20, "notes": 15, "away": 5, "unclear": 0}
+    assert m["split"]["validated"] is False and m["split"]["separation"] > GAZE.min_separation
+    assert m["sentences"] == [{"sentence": 0, "screen": 20, "away": 0, "unclear": 0, "camera": 20, "notes": 0},
+                              {"sentence": 1, "screen": 15, "away": 5, "unclear": 0, "camera": 0, "notes": 15}]
+    assert m["calibration"] == "c1" and "40 face readings judged while speaking" in m["screen_share"]["basis"]
 
 
 def test_too_little_to_go_on_is_none_with_a_reason():
@@ -114,6 +118,9 @@ def test_the_check_compares_prompts_with_the_classes_after_settling():
     assert r["judged"] == 44 and r["agreement"] == pytest.approx(43 / 44, abs=1e-3)
     assert r["recall"]["away"] == pytest.approx(14 / 15, abs=1e-3) and 0.9 < r["kappa"] < 1.0
     assert r["medians"]["notes"]["yaw"] == pytest.approx(-8.0)
+    # Screen (camera or notes) against away: one away reading was called notes.
+    assert r["screen"]["recall"] == {"screen": 1.0, "away": pytest.approx(14 / 15, abs=1e-3)}
+    assert r["screen"]["agreement"] == pytest.approx(43 / 44, abs=1e-3) and 0.9 < r["screen"]["kappa"] < 1.0
 
 
 def test_kappa_is_zero_for_chance_agreement():

@@ -87,7 +87,7 @@ Also working: stressing or unstressing a word from the options ring (a new versi
 
 Optional: word alternatives, tone and length rewrites, and suggested marks need a language model, and they are off by default. To use one on your Mac, install [Ollama](https://ollama.com), run `ollama pull llama3.1:8b`, and set `LLM.provider = "ollama"` in `palmcards/config.py`. Only what you explicitly ask about is sent (one sentence or paragraph, to localhost). Suggestions are shown as previews that you choose to use. Cloud models are not supported.
 
-Each analysed take also records observations: pace, fillers per minute, unplanned long pauses, restarts, ad-libs, hand movement (more detail with `--trace`), and where you looked while speaking (into the camera, at the notes, away), against an eye calibration made in the session's first count-in. Gaze is checked with prompted takes: `python main.py --gaze-check`, then `python scripts/evaluate.py --gaze RUN`. Posture is planned (milestone 7).
+Each analysed take also records observations: pace, fillers per minute, unplanned long pauses, restarts, ad-libs, hand movement (more detail with `--trace`), and whether you looked at the screen or away while speaking, against an eye calibration made in the session's first count-in (telling the camera from the notes is not reliable yet, so it isn't reported). Gaze is checked with prompted takes: `python main.py --gaze-check`, then `python scripts/evaluate.py --gaze RUN`. Posture is planned (milestone 7).
 
 The verdict thresholds are starting values checked on synthetic audio. They have not yet been validated against human judgments; see [docs/evaluation.md](docs/evaluation.md).
 

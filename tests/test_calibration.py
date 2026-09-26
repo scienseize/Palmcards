@@ -108,9 +108,11 @@ def test_a_gaze_check_take_prompts_then_stops_itself(tmp_path, monkeypatch, quic
     assert "gaze_check" in log_kinds(rig)
     r = evaluate.gaze_check(session.dir)
     assert r["take"] == 1 and r["calibration"] == "c1" and r["readings"] > 0
-    # The fake face never moves, so its calibration can't tell camera from notes: all unclear, and said so.
-    assert "can't tell camera from notes" in r["calibration_usable"] and r["judged"] == 0
-    assert "agreement None" in evaluate.gaze_report(r)
+    # The fake face never moves: its calibration can't split camera from notes, and every reading is
+    # on the screen, the away prompts' too.
+    assert r["calibration_usable"] == "yes" and "can't tell camera from notes" in r["separates"]
+    assert r["judged"] > 0 and r["screen"]["recall"] == {"screen": 1.0, "away": 0.0}
+    assert "screen vs away:" in evaluate.gaze_report(r)
     sweep = evaluate.gaze_sweep(session.dir)
-    assert len(sweep) == 8 and all(row["kappa"] is None and not row["usable"] for row in sweep)
+    assert len(sweep) == 8 and all(row["usable"] for row in sweep)
     assert palmcards.gaze.GAZE.check_step_s == 0.15  # the sweep puts the settings back

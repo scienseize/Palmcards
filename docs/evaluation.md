@@ -58,15 +58,17 @@ Each gaze-check take calibrates in its count-in, then shows `GAZE.check_each` pr
 
 | Metric | Meaning |
 | --- | --- |
-| `agreement`, `kappa` | Over readings judged camera / notes / away: how often the class is the prompt, and Cohen's kappa (agreement beyond what the class frequencies alone give) |
-| `recall` | Per prompt: the share of its judged readings given its class |
+| `screen.agreement`, `screen.kappa`, `screen.recall` | Screen (camera or notes) against away, what the take metric reports: how often the class is the prompt, Cohen's kappa (agreement beyond what the class frequencies alone give), and per side the share of its readings given its class |
+| `agreement`, `kappa`, `recall` | The same with camera, notes and away apart (not validated) |
 | `unclear_share` | Readings with no face, a blink, or a missing value |
 | `confusion` | Prompt × class counts |
 | `medians` | Each prompt's median head yaw, pitch and iris position: what the settings have to separate |
 
-`--sweep` scores the take again over a grid of `GAZE` scale floors and radii. Tune on one check take and confirm on another, recorded after the change; a setting chosen on a take always looks better on that take. Prompted gaze is easier than a real talk (the eyes go where they are told and stay), so a check shows the classifier can tell the targets apart, not how often it is right while someone speaks. Takes from other people need their consent, as for labelled takes.
+`--sweep` scores the take again over a grid of `GAZE` scale floors and radii, best screen-vs-away kappa first. Tune on one check take and confirm on another, recorded after the change; a setting chosen on a take always looks better on that take. Prompted gaze is easier than a real talk (the eyes go where they are told and stay), so a check shows the classifier can tell the targets apart, not how often it is right while someone speaks. Takes from other people need their consent, as for labelled takes.
 
 ## Measured so far
+
+**Gaze** (2026-09-26, one person, MacBook Air, window not full screen; five gaze-check takes in three sessions; `docs/implementation-progress.md` has the details). Screen vs away, the settings in `GAZE` chosen on the first two takes: kappa 0.84 and 0.87 there, and 0.65, 0.79, 0.72 on the three recorded after (screen recall 0.95, away 0.82 over all five). Camera vs notes on the takes recorded after: 0.36, 0.45 (tuning take), 0.62. Head pitch read 3-9° differently in the calibration than moments later, silent readings included; with the notes below the camera, that is the whole difference. So the take metric reports screen vs away only.
 
 **Alignment speed** (`scripts/profile_align.py`, 2026-09-26, MacBook Air, Apple silicon). Synthetic scripts with 5% misheard words, 3% fillers and a restart every 100 words, with the fill compiled (numba):
 
