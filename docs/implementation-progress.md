@@ -740,7 +740,7 @@ Next action: the end-to-end release gate on the target Mac (hardware; user).
 - **Backward flick:** not needed, now that the notes follow the voice live; `b` / `j` / `k` remain as keys.
 - **Left-handed layout:** not needed.
 - **Push and CI:** approved; pushed to origin/main to prepare for the next milestone.
-- **Evaluation data:** still open: consented, labelled takes are needed before any accuracy claim (docs/evaluation.md).
+- **Evaluation data:** scheduled after the LLM work in milestone 8, collecting consented takes from real people (protocol and scoring ready: docs/evaluation.md, scripts/evaluate.py). No accuracy claims until then.
 
 ## End-to-end release gate (to run on the target Mac)
 

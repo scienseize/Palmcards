@@ -1,6 +1,6 @@
 # Evaluating PalmCards
 
-The unit tests check that the code does what it says: they use synthetic tones for stress and intonation, and made-up word timings for pauses and pace. They do not show that a verdict matches what a listener would say. That needs real, consented takes labelled by people. **None have been collected yet**, so every accuracy claim is pending.
+The unit tests check that the code does what it says: they use synthetic tones for stress and intonation, and made-up word timings for pauses and pace. They do not show that a verdict matches what a listener would say. That needs real, consented takes labelled by people. **None have been collected yet**, so every accuracy claim is pending. Collection starts after milestone 8's LLM work, with real people.
 
 ## Collecting takes
 
