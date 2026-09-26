@@ -87,6 +87,9 @@ def test_a_far_away_hand_is_not_the_same_hand():
     assert math.isnan(row["wrist_move"])
 
 
+END = 10.0 + BODY.calib_camera_s + BODY.calib_notes_s  # the calibration's end, from t0 = 10
+
+
 def calibration_rows(t0=10.0, camera_frames=15, notes_frames=15, blink_at=None):
     rows = Rows()
     step = BODY.calib_camera_s / camera_frames
@@ -118,12 +121,12 @@ def test_calibration_gives_both_baselines_and_the_posture():
 
 
 def test_blinks_are_left_out_of_the_calibration():
-    with_blink = calibrate(calibration_rows(blink_at=10), 10.0, 14.0)
-    assert with_blink["camera"]["n"] == calibrate(calibration_rows(), 10.0, 14.0)["camera"]["n"] - 1
+    with_blink = calibrate(calibration_rows(blink_at=10), 10.0, END)
+    assert with_blink["camera"]["n"] == calibrate(calibration_rows(), 10.0, END)["camera"]["n"] - 1
 
 
 def test_a_calibration_without_enough_face_fails_and_says_why():
-    out = calibrate(calibration_rows(camera_frames=4), 10.0, 14.0)
+    out = calibrate(calibration_rows(camera_frames=4), 10.0, END)
     assert out["status"] == "failed" and "looking at the camera" in out["reason"]
 
 

@@ -39,12 +39,14 @@ class Body:
     # A frame shown later than this after the previous one puts face and pose
     # off to a later frame, so they never add to a frame that is already late.
     late_ms: float = 45.0
-    # Calibration, inside the first count-in of a session: look at the dot by
-    # the camera, then at the orange line (during the 3-2-1). Face and pose run
-    # faster meanwhile; the first calib_settle_s of each step are left out.
-    calib_camera_s: float = 2.0
+    # Calibration, inside the first count-in of a session: look into the
+    # camera's lens (any window size or place), then read the orange sentence
+    # (during the 3-2-1). Face and pose run faster meanwhile. The first
+    # calib_settle_s of each step are left out: time to read the instruction
+    # and move the eyes.
+    calib_camera_s: float = 2.5
     calib_notes_s: float = 2.0  # at most REHEARSE.count_in_s
-    calib_settle_s: float = 0.4
+    calib_settle_s: float = 0.8
     calib_face_every: int = 2
     calib_pose_every: int = 5
     calib_min_frames: int = 8  # face frames needed in each step

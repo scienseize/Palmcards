@@ -194,7 +194,7 @@ def test_a_calibration_runs_faster_then_gives_its_summary():
     out = w.finish_calibration(5.0 + BODY.calib_camera_s + BODY.calib_notes_s)
     assert out["status"] == "ok", out
     assert out["camera"]["n"] >= BODY.calib_min_frames and out["posture"]["n"] > 0
-    assert out["frame_size"] == [1280, 720] and out["dot"][0] == 640 and w.state == "idle"
+    assert out["frame_size"] == [1280, 720] and w.state == "idle"
     assert w.phase(6.0) is None
 
 

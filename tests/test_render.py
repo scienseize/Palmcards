@@ -3,7 +3,7 @@ import pytest
 
 from palmcards.notes import parse_text
 from palmcards.render import Hit, OpsView, TextOverlay, ViewState, layout, sentence_units
-from palmcards.style import CALIBRATION, LABEL
+from palmcards.style import LABEL
 
 TEXT = (
     "[slow] Thank you for *being* here. / Truly. [rise]\n\n"
@@ -289,14 +289,14 @@ def test_the_alert_line_and_keys_help_are_drawn():
 
 def test_the_calibration_steps_in_the_count_in():
     ov = overlay()
-    view = ViewState(app="count_in", count_in=4, calibration="camera")
-    assert ov.label_lines(view) == ("REHEARSE", "LOOK AT THE DOT BY THE CAMERA")
-    frame = np.full((720, 1280, 3), 128, np.uint8)
-    ov.draw(frame, view)
-    dot = frame[round(720 * CALIBRATION.dot_y), 640]
-    assert (dot != 128).any()  # the dot, top centre under the camera
-    view = ViewState(app="count_in", count_in=2, calibration="notes")
-    assert ov.label_lines(view)[1] == "NOW LOOK AT THE ORANGE LINE  2"
-    plain = np.full((720, 1280, 3), 128, np.uint8)
-    ov.draw(plain, view)
-    assert (plain[round(720 * CALIBRATION.dot_y), 640] == 128).all()  # no dot once the notes step starts
+    view = ViewState(app="count_in", count_in=5, calibration="camera", current=0)
+    assert ov.label_lines(view) == ("REHEARSE", "LOOK INTO THE CAMERA ABOVE THE SCREEN")
+    view = ViewState(app="count_in", count_in=2, calibration="notes", current=0)
+    assert ov.label_lines(view)[1] == "NOW READ THE ORANGE SENTENCE  2"
+    # No big count digit while calibrating: it would pull the eyes away.
+    calibrating, counting = (np.full((720, 1280, 3), 128, np.uint8) for _ in range(2))
+    ov.draw(calibrating, view)
+    ov.draw(counting, ViewState(app="count_in", count_in=2, current=0))
+    right = slice(ov.x + ov.margin + ov.box_w + 1, 1280)
+    below_zone = slice(round(720 * 0.5), 720)
+    assert (counting[below_zone, right] != calibrating[below_zone, right]).any()

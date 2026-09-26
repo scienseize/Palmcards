@@ -24,8 +24,8 @@ the right of the frame; it steers the highlight in the text on the left.
   drop the hand for 1 s    back out
   fist raised into view, held 1 s
                            start a take after a 3-2-1 count-in. The session's first
-                           count-in also calibrates the eyes: look at the dot by the
-                           camera for 2 s, then at the orange line during the 3-2-1
+                           count-in also calibrates the eyes: look into the camera
+                           for 2.5 s, then read the orange sentence during the 3-2-1
 
 Rehearse listens only to the command zone, top right:
   flick sideways           next section
@@ -499,7 +499,7 @@ class Takes:
             if self.drill is None and self._ensure_follow():
                 self.follow.prepare()  # the model loads during the count-in
             if self.vision is not None and (self.calibrate_next or self.session.calibration is None):
-                # The count-in starts with the dot by the camera; the orange line is the 3-2-1.
+                # The count-in starts with looking into the camera; the orange sentence is the 3-2-1.
                 self.vision.begin_calibration(ev.t)
                 modes.count_in_end = ev.t + BODY.calib_camera_s + REHEARSE.count_in_s
                 self.log(ev.t, "calibration_start")

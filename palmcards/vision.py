@@ -240,19 +240,12 @@ class Watcher:
         self._drain()
         out = features.calibrate(self.rows, self.t0, t)
         out.update(t=round(self.t0, 3), frame_size=list(self.size) if self.size else None,
-                   dot=list(self.dot()) if self.size else None, counts=self._counts_since())
+                   counts=self._counts_since())
         self.state = "idle"
         return out
 
     def cancel(self) -> None:
         self.state = "idle"
-
-    def dot(self) -> tuple[int, int]:
-        """Where the calibration's dot is drawn: top centre, under the camera."""
-        w, h = self.size
-        from palmcards.style import CALIBRATION
-
-        return w // 2, round(h * CALIBRATION.dot_y)
 
     def begin_take(self, t: float) -> None:
         self._begin("take", t, BODY.face_every, BODY.pose_every)

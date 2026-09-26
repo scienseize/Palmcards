@@ -180,16 +180,6 @@ class CountIn:
 
 
 @dataclass(frozen=True)
-class Calibration:
-    # "Look at the dot by the camera": top centre of the frame, under the
-    # MacBook's camera when the window fills the screen.
-    dot_y: float = 0.035  # fraction of the frame height
-    dot_r: int = 8
-    ring_r: int = 22  # a ring closes in on the dot, once per pulse
-    pulse_s: float = 1.0
-
-
-@dataclass(frozen=True)
 class Hands:
     tip_r: int = 4  # fingertip dots
     active_tip_r: int = 9  # index fingertip
@@ -266,7 +256,6 @@ RING = Ring()
 GAUGE = Gauge()
 ZONE = Zone()
 COUNT_IN = CountIn()
-CALIBRATION = Calibration()
 HANDS = Hands()
 DEBUG = Debug()
 PLAYER = Player()

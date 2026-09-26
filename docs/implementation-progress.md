@@ -854,6 +854,12 @@ Hardware check (2026-09-26, the user; session 20260926-115417-sample_notes-0dad8
     - The face box reached the frame's bottom edge (a close-up, the face 340 x 410 px of 1280 x 720)
       and every raised hand overlapped it: tip_face was 0 for 269 of 277 hand results in take 1.
       A fingertip inside the face's bounding box is not a face touch in such a frame.
+  The user's answers explain the first finding: the window was not full screen, so the dot was not
+    under the camera, and "the orange line" was not recognised as the orange sentence. Changed: the
+    camera step has no dot ("LOOK INTO THE CAMERA ABOVE THE SCREEN", the lens itself, 2.5 s), the
+    notes step says "NOW READ THE ORANGE SENTENCE", and the first 0.8 s of each step (was 0.4 s) is
+    left out, to read the instruction. c1 of that session stays on record but was made with the old
+    wording; the next session calibrates with the new one.
 ```
 
 ## Decisions (2026-09-26, by the user)
