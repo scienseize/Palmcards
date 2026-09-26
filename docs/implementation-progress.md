@@ -33,7 +33,8 @@ user runs them. They are never inferred from unit tests.
 | M8 — Knob dwell, rewind keep, rewrite length | Implemented, validation pending | Knob steps wait 0.15 s (wobble); a knob step on screen 0.25 s survives the rewind; tone/length rewrites get a word count in the prompt and room above it in the check | 480 passed; the user's recording 20260926-161541 replayed through the code: pinches off what was shown 9/19 -> 1/19, knob changes 158 -> 49 | The user: the ring stretch was pinch-only testing; then the ring knob and word pinch problems below |
 | M8 — Word options by tilt; word pinch | Tilt reverted by the user's choice; word pinch kept | The word's options in a row over the word, left to right; tilt the L-hand right for the next, left for the one before (one per tilt); marks/take knobs walk one step per frame; pointing + pinch focuses the word pointed at before the curl | 484 passed; on the recordings: word pinches on another word 9/15 -> 2/15; ring 32 steps/min against 158 | The user: tilting doesn't feel like a knob |
 | M8 — Ring knob back, 10 degrees an option | Implemented, validation pending | The round ring and its knob back (wrapping), OPS.ring_step_deg 10 (60 degrees of wrist for six options), dwell and one-step walk kept; the word-pinch fix kept | 485 passed; the recording: 0/19 pinches off what was shown when the thumb started closing (2/19 against the longest shown) | The user: none of the L-hand choosers feel like they work |
-| M8 — Choosing by pointing | Implemented, validation pending | Options ring, spread marks and Review's takes: an L starts choosing, then the index fingertip moves a point and the nearest item is picked (a margin against flicker); a pinch acts on the item pointed at before the curl; Review's takes as chips beside the sentence, with a message when there is nothing to choose | 478 passed; rendered offline | The user tries it; a --trace to measure |
+| M8 — Choosing by pointing | Implemented, validation pending | Options ring, spread marks and Review's takes: an L starts choosing, then the index fingertip moves a point and the nearest item is picked (a margin against flicker); a pinch acts on the item pointed at before the curl; Review's takes as chips beside the sentence, with a message when there is nothing to choose | 478 passed; rendered offline | The user: Review fine; ring and marks too slow |
+| M8 — Pointer speed | Implemented, validation pending | Ring and marks: 2 screen px per px of fingertip, both ways (was 1.15 across, 0.65 up/down); a yellow dot shows the point while choosing; Review's take chips unchanged | 481 passed | The user tries it |
 
 ## Log
 
@@ -1465,4 +1466,23 @@ Found on the way: when pointing restarted, the pointer's smoothing filter still 
 Tests: pytest (full) -> 478 passed (the knob tests replaced by pointer tests: an L starts it, thumb in
   keeps it, it carries on without a jump, a pinch rewinds it; the picker's margin and rewind; the
   outline following the point over marks; the take chips in Review; where the pointer's targets are).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: pointing too slow on the ring and the marks (Review's take chips fine)
+Recording: sessions/gesture-logs/20260926-193557.trace.jsonl. Ring open 37 s and 5 s without a choice;
+  marks 14 s and 15 s without one, then 28 s for one mark. Pointing 55-83% of those times (restarting
+  wasn't it: 1-4 stops a window). The pointer moved at the scale of browsing: 1.15 px across and 0.65
+  px up/down per px of fingertip; crossing the ring (414 x 244 px) took ~360-380 px of fingertip, and
+  the fingertip roamed 910 x 747 px in the first ring window. Nothing showed the point itself, only the
+  pick, so a move showed nothing until an item changed.
+Changes: OPS.point_gain = 2 screen px per px of fingertip, the same both ways, for the ring and the
+  marks (main.point_scale); Review's take chips keep the scale of browsing. The picker keeps where the
+  point is (Picker.at) and the app draws it as a yellow dot while choosing.
+Why the tone dial worked and the knob didn't (for the record): the tone commit only uses the sign
+  (warmer / more formal), past a small neutral band, and its gauge moves continuously, so a 20-degree
+  wobble changes nothing that matters; the ring and the marks need one of 4-6 targets 10-15 degrees
+  apart, which the measured wobble (10-25 degrees in fractions of a second) crosses.
+Tests: pytest (full) -> 481 passed (the gain the same both ways; the picker's point; the dot drawn).
 ```

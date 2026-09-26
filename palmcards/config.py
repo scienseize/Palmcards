@@ -110,13 +110,16 @@ class Cursor:
 class Ops:
     tone_range_deg: float = 45.0  # tilt from the start angle for full warm/cold
     # Choosing by pointing (the ring's options, spread marks, Review's takes):
-    # after an L, the index fingertip moves a point at the scale of browsing
-    # (the hand box onto the text box) times point_gain, from the item picked;
-    # the nearest item is picked, but only once the point is nearer to it than
-    # to the current one by pick_margin of the gap between them (no flicker
+    # after an L, the index fingertip moves a point from the item picked; the
+    # nearest item is picked, but only once the point is nearer to it than to
+    # the current one by pick_margin of the gap between them (no flicker
     # between neighbours). It replaced turning a knob, which followed every
     # wobble of the index angle (2026-09-26: 85 changes in 21 s on the ring).
-    point_gain: float = 1.0
+    # The ring and the marks move the point point_gain screen px per px of
+    # fingertip, both ways: at the scale of browsing (0.65 up and down), a
+    # recorded session needed ~360 px of fingertip to cross the ring and
+    # found it too slow. Review's take chips keep the scale of browsing.
+    point_gain: float = 2.0
     pick_margin: float = 0.2
     stretch_min: float = 0.5  # length ratio clamp
     stretch_max: float = 2.0

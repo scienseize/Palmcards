@@ -476,3 +476,15 @@ def test_where_the_pointer_can_go_ring_nodes_marks_and_takes():
     assert (drawn(review) != drawn(replace(review, takes=()))).any()
     assert (drawn(review) != drawn(replace(review, take_shown=2))).any()  # the shown take is highlighted
 
+
+def test_the_pointer_shows_as_a_dot_while_choosing():
+    from dataclasses import replace
+
+    ov = overlay()
+    view = ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", pointing=True))
+    frame = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(frame, replace(view, point_at=(900.0, 500.0)))
+    plain = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(plain, view)
+    assert (frame[495:506, 895:906] != plain[495:506, 895:906]).any()
+

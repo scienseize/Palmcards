@@ -198,6 +198,7 @@ class CountIn:
 class Hands:
     tip_r: int = 4  # fingertip dots
     active_tip_r: int = 9  # index fingertip
+    point_r: int = 6  # the pointer's dot while choosing (ring, marks)
     stretch_stroke: int = 2  # line between the two index tips
     closing_stretch_stroke: int = 5  # ... while a thumb closes into a pinch: the length is held
     # Debug.

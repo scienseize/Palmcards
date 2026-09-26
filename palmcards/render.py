@@ -184,6 +184,7 @@ class ViewState:
     # point at (an L, then the fingertip), and which one it shows.
     takes: tuple[str, ...] = ()
     take_shown: int = 0
+    point_at: tuple[float, float] | None = None  # choosing by pointing (ring, marks): where the point is
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
 
@@ -1045,6 +1046,10 @@ class TextOverlay:
                 chip = self._chip(text, round(self.font_size * CHIPS.focus_scale), C.orange, C.dark_fill)
                 self._blend_centered(frame, chip, *center)
 
+        if state.point_at is not None and state.mode == "focus":  # the pointer, so a move shows at once
+            x, y = (int(v) for v in state.point_at)
+            cv2.circle(frame, (x, y), HANDS.point_r, bgr(C.yellow), -1, cv2.LINE_AA)
+            cv2.circle(frame, (x, y), HANDS.point_r + 2, bgr(C.knob_outline), 1, cv2.LINE_AA)
         if state.mode == "focus" and state.ops.kind == "tone":
             self._draw_gauge(frame, state.ops.tone, top, bottom, state.ops.closing)
         if state.mode == "focus" and state.ops.stretch_ends is not None:

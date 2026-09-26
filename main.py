@@ -98,7 +98,7 @@ import cv2
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import ANALYSIS, BODY, FOLLOW, LLM, RECORDING, REHEARSE, SPEECH
+from palmcards.config import ANALYSIS, BODY, FOLLOW, LLM, OPS, RECORDING, REHEARSE, SPEECH
 from palmcards import features, gaze
 from palmcards import prefs as preferences
 from palmcards import render
@@ -167,6 +167,13 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     ops = view.ops
     ops.kind, ops.pointing, ops.tone, ops.stretch = gs.op, gs.pointing, gs.tone, gs.stretch
     ops.stretch_ends, ops.closing = gs.stretch_ends, gs.closing  # ops.picked: pointing (Takes.pickers["ring"])
+
+
+def point_scale(grammar: Grammar) -> tuple[float, float]:
+    """Screen px per hand-box unit of pointing for the ring and the marks:
+    OPS.point_gain px per px of fingertip, the same both ways."""
+    x0, y0, x1, y1 = grammar.cursor.box
+    return (x1 - x0) * OPS.point_gain, (y1 - y0) * OPS.point_gain
 
 
 def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog,
@@ -1238,14 +1245,16 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                     takes.suggestion_view(view.focus.sentence)
                 if view.suggest == "ready":  # the outline follows the pointer to the nearest mark
                     takes.point_marks(start - t0, view.focus.sentence, grammar.state.point,
-                                      overlay.mark_points(view), (overlay.box_w, overlay.box_h))
+                                      overlay.mark_points(view), point_scale(grammar))
                     view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = \
                         takes.suggestion_view(view.focus.sentence)
             else:
                 view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = "", None, (), None
             if word_key and grammar.state.op == "ring":  # the pick follows the pointer to the nearest option
                 view.ops.picked = takes.pickers["ring"].update(start - t0, grammar.state.point,
-                                                               overlay.ring_nodes(view), (overlay.box_w, overlay.box_h))
+                                                               overlay.ring_nodes(view), point_scale(grammar))
+            chooser = {"ring": "ring", "marks": "marks"}.get(grammar.state.op) if view.mode == "focus" else None
+            view.point_at = takes.pickers[chooser].at if chooser and grammar.state.pointing else None
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)

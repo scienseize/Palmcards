@@ -6,7 +6,9 @@ suggested marks in a sentence, Review's take chips).
 After an L, the grammar publishes how far the index fingertip has moved
 (GestureState.point, hand-box units). The picker puts that on screen: the
 point starts on the item picked when pointing starts and moves with the
-fingertip at `scale` pixels per hand-box unit (the scale of browsing). The
+fingertip at `scale` pixels per hand-box unit (main: the ring and marks at
+OPS.point_gain px per px of fingertip, the take chips at the scale of
+browsing). `at` is where the point is on screen (drawn as a dot). The
 nearest item is picked, but only once the point is nearer to it than to the
 current one by OPS.pick_margin of the gap between the two, so the pick
 doesn't flicker between neighbours. When a pinch rewinds the point, rewind()
@@ -25,10 +27,11 @@ from palmcards.config import OPS
 class Picker:
     index: int = 0
     anchor: tuple[float, float] | None = None  # screen px of point (0, 0)
+    at: tuple[float, float] | None = None  # where the point is on screen, while pointing
     history: list[tuple[float, int]] = field(default_factory=list)  # (t, index), the last second
 
     def reset(self, index: int = 0) -> None:
-        self.index, self.anchor, self.history = index, None, []
+        self.index, self.anchor, self.at, self.history = index, None, None, []
 
     def update(self, t: float, point: tuple[float, float] | None, positions: list[tuple[float, float]],
                scale: tuple[float, float]) -> int:
@@ -37,13 +40,13 @@ class Picker:
             return self.index
         self.index = min(max(self.index, 0), len(positions) - 1)
         if point is None:
-            self.anchor = None
+            self.anchor = self.at = None
             return self.index
-        sx, sy = scale[0] * OPS.point_gain, scale[1] * OPS.point_gain
+        sx, sy = scale
         if self.anchor is None:  # the point starts on the item picked now
             cx, cy = positions[self.index]
             self.anchor = (cx - point[0] * sx, cy - point[1] * sy)
-        at = (self.anchor[0] + point[0] * sx, self.anchor[1] + point[1] * sy)
+        at = self.at = (self.anchor[0] + point[0] * sx, self.anchor[1] + point[1] * sy)
         near = min(range(len(positions)), key=lambda i: math.dist(at, positions[i]))
         if near != self.index:
             gap = math.dist(positions[near], positions[self.index])
