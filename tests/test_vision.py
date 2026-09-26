@@ -110,9 +110,16 @@ def test_poll_hands_each_result_over_once_and_counts_what_was_found():
 
 
 def test_frames_are_downscaled_before_the_model():
+    made = []
+    small = PoseTracker(1, 0, make_task=lambda cb: made.append(FakeTask(cb)) or made[-1], max_side=640)
+    small.submit(FRAME, 0.0)
+    assert made[0].images[0].width == 640 and made[0].images[0].height == 360
+
+
+def test_the_face_keeps_the_whole_frame():
     tracker, task = face(every=1, offset=0)
     tracker.submit(FRAME, 0.0)
-    assert task.images[0].width == 640 and task.images[0].height == 360
+    assert tracker.max_side == BODY.face_max_side == 1280 and task.images[0].width == 1280
 
 
 def test_a_late_frame_puts_the_run_off_to_the_next_frame():
