@@ -827,3 +827,10 @@ Check on real audio (LiveFollow + whisper-base, 20260925-101345 take 1 replayed 
   one); during the take's 18 s pause the next section's first sentence waited highlighted in the
   preview, and the section itself changed at 34.6 s (speech resumed at 33.2 s).
 ```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: sentence handoff (8a15f26), live check
+Status: verified live by the user: in a live take the highlight moving on as a sentence is finished
+  "feels right". FOLLOW.handoff_words stays at 2.
+```
