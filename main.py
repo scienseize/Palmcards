@@ -21,8 +21,8 @@ the right of the frame; it steers the highlight in the text on the left.
   top or bottom of the box scroll
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
                            focus
-  open palm (word)         options, left to right over the word: the word, alternatives (with --llm),
-                           stress/unstress it, "hear it"; tilt an L-hand right for the next, left for the one before
+  open palm (word)         options ring: the word, alternatives (with --llm), stress/unstress it, "hear it";
+                           turn an L-hand like a knob to pick (~10 degrees an option)
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
   open palm (sentence)     suggested marks (with --llm), faded where they would go; turn an L-hand like a
                            knob to move the outline along them, pinch (no lift) to accept or reject one,
@@ -1221,9 +1221,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                     takes.suggestion_view(view.focus.sentence)
             else:
                 view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = "", None, (), None
-                # The ring's options run left to right, from the word itself: tilting stops at the ends.
-                grammar.state.dial_limits = (0, len(overlay.ring_labels(view)) - 1) \
-                    if word_key and grammar.state.op == "ring" else None
+                grammar.state.dial_limits = None  # the ring's knob wraps
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)

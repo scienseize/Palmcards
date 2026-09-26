@@ -11,7 +11,7 @@ Pipeline per hand result:
 The grammar (Kat's "gestural editing/writing"):
   shape picks the scope     ONE = word, TWO = sentence, FLAT = paragraph
   close the hand to focus   PINCH (word) or FOLD fingers onto the thumb
-  second shape operates     OPEN = options ring, L tilt right/left = next/previous option (word); L tilt = tone dial,
+  second shape operates     OPEN = options ring, L turn = ring knob (word); L tilt = tone dial,
                             OPEN = suggested marks, then L turn = knob through them and a pinch
                             (no lift) accepts or rejects one (sentence); two L hands = length
                             stretch (paragraph)
@@ -496,7 +496,6 @@ class Grammar:
         self._d0: float | None = None
         self._knob0: float | None = None
         self._knob_cand: tuple[int, float] | None = None  # a knob step waiting out OPS.knob_dwell_s: (step, since)
-        self._tilt_armed, self._tilt_t = True, 0.0  # the ring's tilt-to-step: back upright since the last step
         self._toggle_armed = False  # spread marks: a pinch (after the hand opened again) is being held
         self._dial_hist: deque[dict] = deque()  # focus: the dials' values per frame, for the rewind
         self._cursor_hist: deque[tuple[float, float, tuple[float, float]]] = deque()  # browse by word: (t, thumb, cursor)
@@ -818,39 +817,12 @@ class Grammar:
         s = self.state
         s.pointing = not s.closing and self._holds_l(p, self._knob0 is not None)
         if s.pointing:
-            limits = s.dial_limits if s.op == "marks" else None  # the ring wraps; the marks stop at their ends
-            s.knob = self._step_dial(s.knob, p.feat.tilt, OPS.knob_step_deg, limits, t)
+            # The ring wraps (and turns further for less wrist); the marks stop at their ends.
+            ring = s.op == "ring"
+            s.knob = self._step_dial(s.knob, p.feat.tilt, OPS.ring_step_deg if ring else OPS.knob_step_deg,
+                                     None if ring else s.dial_limits, t)
         else:
             self._knob0 = self._knob_cand = None
-
-    def _tilt_step(self, p: HandTrack, t: float) -> None:
-        """The options ring: tilt the L-hand right for the next option, left for
-        the one before, one option per tilt (see config OPS.tilt_on_deg), kept on
-        the options (state.dial_limits). A pinch, or a thumb closing toward one,
-        stops it (see _guard_pinch)."""
-        s = self.state
-        s.pointing = not s.closing and self._holds_l(p, self._knob0 is not None)
-        if not s.pointing:
-            self._knob0 = self._knob_cand = None
-            return
-        x = p.feat.tilt
-        if self._knob0 is None:  # upright is wherever the L is when it (re)appears
-            self._knob0, self._tilt_armed, self._knob_cand, self._tilt_t = x, True, None, t
-        d = x - self._knob0
-        if abs(d) <= OPS.tilt_off_deg:
-            self._tilt_armed, self._knob_cand = True, None
-            self._knob0 += d * min(1.0, (t - self._tilt_t) / OPS.tilt_recenter_s)  # posture drift
-        elif self._tilt_armed and abs(d) >= OPS.tilt_on_deg:
-            way = 1 if d > 0 else -1
-            if self._knob_cand is None or self._knob_cand[0] != way:
-                self._knob_cand = (way, t)
-            if t - self._knob_cand[1] >= OPS.tilt_hold_s - 1e-9:
-                lim = s.dial_limits
-                s.knob = s.knob + way if lim is None else min(max(s.knob + way, lim[0]), lim[1])
-                self._tilt_armed, self._knob_cand = False, None
-        else:
-            self._knob_cand = None
-        self._tilt_t = t
 
     def _watch_toggle(self, t: float, p: HandTrack, events: list[GestureEvent]) -> None:
         """Spread marks: a pinch held (stable) and let go without a lift is a
@@ -897,7 +869,7 @@ class Grammar:
                 s.op = "ring"
                 self.log(t, "op", op="ring")
             if s.op == "ring":
-                self._tilt_step(p, t)
+                self._turn_knob(p, t)
         elif s.level == "sentence":
             # An open palm spreads suggested marks, like the word ring; from then
             # on the L-hand no longer turns the tone dial (a tone preview is

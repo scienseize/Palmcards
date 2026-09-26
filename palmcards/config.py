@@ -110,16 +110,9 @@ class Cursor:
 class Ops:
     tone_range_deg: float = 45.0  # tilt from the start angle for full warm/cold
     knob_step_deg: float = 15.0  # L-hand turn per step of the marks knob
-    # The options ring: tilting the L-hand past tilt_on_deg (from upright: where
-    # it was when the L appeared), held tilt_hold_s, steps one option that way
-    # (right: next, left: previous); back within tilt_off_deg of upright arms the
-    # next step. Upright slowly follows the hand while it rests there
-    # (tilt_recenter_s). On the recorded sessions: about 32 steps a minute
-    # against 158 for a 15-degree knob, one option per tilt.
-    tilt_on_deg: float = 20.0
-    tilt_off_deg: float = 10.0
-    tilt_hold_s: float = 0.1
-    tilt_recenter_s: float = 1.0
+    # The options ring's knob: less turn per option than the marks knob, so a
+    # full turn through six options takes 60 degrees of wrist, not 90.
+    ring_step_deg: float = 10.0
     knob_hysteresis: float = 0.2  # of a step, past the boundary before the node changes
     # A knob step (ring, marks, take dial) shows only once the hand has stayed in
     # it this long: the index angle wobbles by tens of degrees in a fraction of a

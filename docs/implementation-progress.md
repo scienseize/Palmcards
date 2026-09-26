@@ -31,7 +31,8 @@ user runs them. They are never inferred from unit tests.
 | M8 stage 3 — Per-mark toggling | Checked on hardware by the user (2026-09-26) | On spread marks the L-hand is a knob through them (15°/step, relative, reading order, clamped), the current one outlined; a pinch without a lift accepts/rejects it (solid yellow); pinch + lift adds only the accepted ones as one revision; dropping the hand discards the choices | 468 passed; gesture replay samples unchanged; panel rendered offline | The L-to-pinch nudge confirmed by the user, on every L-hand control: fixed below |
 | M8 — L-hand dials held through a pinch | Implemented, validation pending | When the thumb of a hand working a dial (ring, marks, tone, stretch, take dial) closes toward the index tip or a pinch registers, the dial goes back to its value from just before the thumb started closing and holds, drawn bolder; marks knob and take dial clamped in the grammar | 477 passed; on the 7 recorded L-to-pinch moments (simulated): knob off 4/7 -> 1/7, dial angle 41 -> 2 deg (median) | Measured on the user's recording: see the next row |
 | M8 — Knob dwell, rewind keep, rewrite length | Implemented, validation pending | Knob steps wait 0.15 s (wobble); a knob step on screen 0.25 s survives the rewind; tone/length rewrites get a word count in the prompt and room above it in the check | 480 passed; the user's recording 20260926-161541 replayed through the code: pinches off what was shown 9/19 -> 1/19, knob changes 158 -> 49 | The user: the ring stretch was pinch-only testing; then the ring knob and word pinch problems below |
-| M8 — Word options by tilt; word pinch | Implemented, validation pending | The word's options in a row over the word, left to right; tilt the L-hand right for the next, left for the one before (one per tilt); marks/take knobs walk one step per frame; pointing + pinch focuses the word pointed at before the curl | 484 passed; on the recordings: word pinches on another word 9/15 -> 2/15; ring 32 steps/min against 158 | The user tries it |
+| M8 — Word options by tilt; word pinch | Tilt reverted by the user's choice; word pinch kept | The word's options in a row over the word, left to right; tilt the L-hand right for the next, left for the one before (one per tilt); marks/take knobs walk one step per frame; pointing + pinch focuses the word pointed at before the curl | 484 passed; on the recordings: word pinches on another word 9/15 -> 2/15; ring 32 steps/min against 158 | The user: tilting doesn't feel like a knob |
+| M8 — Ring knob back, 10 degrees an option | Implemented, validation pending | The round ring and its knob back (wrapping), OPS.ring_step_deg 10 (60 degrees of wrist for six options), dwell and one-step walk kept; the word-pinch fix kept | 485 passed; the recording: 0/19 pinches off what was shown when the thumb started closing (2/19 against the longest shown) | The user tries it |
 
 ## Log
 
@@ -1413,4 +1414,22 @@ Changes (the user asked: tilting right goes to the next on the right, left to th
 Tests: pytest (full) -> 484 passed; ring tests rewritten for tilting (one per tilt, held tilt stays one
   step, threshold and a moment, ends, re-captured upright, drifted thumb, quick and slow curl into a
   pinch); marks knob walks; word pinch rewind (and without it the cursor sinks).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: the word options: back to the knob
+User: tilting "does not feel like a knob"; back to the round ring, with a more sensitive knob (turning
+  too far hurts the wrist).
+Measured before choosing (both 2026-09-26 recordings, 3.0 min of L-hand): at 10 degrees an option
+  with no steadying, 40 quick reversals a minute; One Euro smoothing barely helps (29-35: the
+  wobble is real movement, not noise); a sweep-following step rule 28-35; the dwell (0.15 s in the
+  same step) 3.7, the same as 15 degrees with it, with the highlight ~0.3 s behind the hand.
+Changes: the tilt-to-step code and its settings removed; the ring drawn round again; the ring's knob
+  uses OPS.ring_step_deg (10) with the dwell and the one-step-per-frame walk (a turn shows as the
+  highlight moving that way round the ring, never a jump), wrapping; the marks knob keeps 15; the
+  word-pinch cursor rewind stays.
+Result on the recording: 0/19 pinches off what was shown when the thumb started closing, 2/19
+  against the value shown longest in the 0.4 s before; knob changes 105 (49 at 15 degrees).
+Tests: pytest (full) -> 485 passed (the ring's knob tests back, at its own step; a slow curl too).
 ```

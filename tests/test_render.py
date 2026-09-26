@@ -98,7 +98,7 @@ def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
-    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "TILT AN L-HAND: RIGHT NEXT, LEFT BACK")
+    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "TURN AN L-HAND TO PICK")
     # Only what works is offered: the word itself, (un)stressing it, and hearing it.
     assert ov.ring_labels(focus) == ("being", "unstress", "hear it")  # *being* is stressed
     assert ov.ring_labels(ViewState(mode="focus", level="word", focus=Hit(0, 1)))[1] == "stress"
