@@ -828,3 +828,17 @@ Phase / issue IDs: sentence handoff (8a15f26), live check
 Status: verified live by the user: in a live take the highlight moving on as a sentence is finished
   "feels right". FOLLOW.handoff_words stays at 2.
 ```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: first CI run (push approved by the user)
+Status: fixed; see the next CI run
+What happened: the first run on GitHub (macos-14) gave 376 passed, 5 failed. The live-stream tests
+  use a scripted reader, but MlxWhisper.live() resolved the pinned model's local snapshot at
+  construction, so they needed the downloaded model: a hidden dependency the Mac hid.
+Fix: palmcards/asr.py resolves the pinned snapshot inside the reader (_read_window, once per model),
+  so a missing model fails the stream's warm-up ("failed" with the download instruction) instead of
+  raising while the app starts the follow, and tests never touch model files.
+Checks: pytest with an empty, offline Hugging Face cache (CI's conditions) -> 381 passed; normally ->
+  381 passed; real live stream: ready in 1.1 s; with no model: failed in 0.9 s with the message.
+```

@@ -141,12 +141,17 @@ class Agreement:
 
 # --- mlx-whisper -------------------------------------------------------------
 
+_RESOLVED: dict[str, str] = {}  # repo -> local snapshot, in the reader
+
+
 def _read_window(audio: np.ndarray, language: str, model: str, prompt: str | None = None) -> list[dict]:
     import mlx_whisper  # heavy; only the reader needs it
 
+    if model not in _RESOLVED:  # the pinned snapshot, found once, in the reader (a missing one fails the warm-up)
+        _RESOLVED[model] = model_path(model)
     result = mlx_whisper.transcribe(
         audio,
-        path_or_hf_repo=model,
+        path_or_hf_repo=_RESOLVED[model],
         language=language,
         word_timestamps=True,
         condition_on_previous_text=False,
@@ -373,7 +378,7 @@ class MlxWhisper:
 
     def live(self, language: str, clock: Callable[[], float], where: str = SPEECH.live_where,
              hints: tuple[str, ...] = ()) -> MlxWhisperLive:
-        return MlxWhisperLive(model_path(self.live_model), language, clock, where)  # hints: no (a prompt made it loop)
+        return MlxWhisperLive(self.live_model, language, clock, where)  # hints: no (a prompt made it loop)
 
 
 def _apple() -> Recognizer:
