@@ -150,6 +150,7 @@ def _model(name: str) -> str:
 
 class FaceTracker(LandmarkTask):
     def __init__(self, every: int = BODY.face_every, offset: int = BODY.face_offset, **kw):
+        kw.setdefault("max_side", BODY.face_max_side)
         def make(callback):
             from mediapipe.tasks.python import BaseOptions, vision
 

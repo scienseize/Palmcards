@@ -31,7 +31,8 @@ class Body:
     face_offset: int = 1
     pose_every: int = 15
     pose_offset: int = 2
-    max_side: int = 640  # frames are downscaled to this before landmarking
+    max_side: int = 640  # frames are downscaled to this before pose landmarking
+    face_max_side: int = 640  # ... and before face landmarking (the iris needs the detail)
     busy_timeout_s: float = 0.5  # give up on a result that never arrived
     min_detection: float = 0.5
     min_presence: float = 0.5

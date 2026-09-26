@@ -1,7 +1,7 @@
 """Face and pose budget (milestone 7, stage 0): which landmarker rates keep the camera near 30 fps?
 
   python scripts/bench_vision.py [SESSION_DIR --take N] [--seconds S] [--warm S]
-                                 [--configs base,f3,p5,f3p5,...] [--json OUT]
+                                 [--configs base,f3,p5,f3p5,...] [--face-side PX] [--json OUT]
 
 Runs the load of a take, in one camera window:
   hands     the gesture recognizer on every frame, the mode machine in Rehearse,
@@ -20,6 +20,9 @@ this load whatever the setting, so settings are compared with a baseline at
 the same heat: the default interleaves base, f3p5 and f6p15 three times
 (about 6 min, warm for most of it). The report gives macOS's thermal state
 per setting.
+
+--face-side sets the size face frames are downscaled to (default
+BODY.face_max_side; 1280 keeps a 1280x720 camera frame whole).
 
 One face and one pose tracker serve every setting (only their stride
 changes): MediaPipe keeps some threads and memory of a closed landmarker, so
@@ -98,7 +101,7 @@ def newest_take(root: Path) -> tuple[Path, int]:
 
 
 class Bench:
-    def __init__(self, replay: Replay, recorder, writer, warm: float, seconds: float):
+    def __init__(self, replay: Replay, recorder, writer, warm: float, seconds: float, face_side: int):
         import cv2
 
         from palmcards.capture import Camera
@@ -124,6 +127,7 @@ class Bench:
         self.t0 = time.perf_counter()
         self.stopped = False
         self.face = self.pose = None  # made at their first use, kept for every setting
+        self.face_side = face_side
 
     def run(self, name: str) -> dict | None:
         """One setting: warm up, then measure. None if q/Esc stopped the benchmark."""
@@ -133,7 +137,7 @@ class Bench:
         cv2 = self.cv2
         face_every, pose_every = parse_config(name)
         if face_every and self.face is None:
-            self.face = FaceTracker(face_every)
+            self.face = FaceTracker(face_every, max_side=self.face_side)
         if pose_every and self.pose is None:
             self.pose = PoseTracker(pose_every)
         face = self.face if face_every else None
@@ -303,6 +307,8 @@ def main() -> int:
     ap.add_argument("--seconds", type=float, default=30.0, help="measured seconds per setting (default 30)")
     ap.add_argument("--warm", type=float, default=5.0, help="warm-up seconds per setting (default 5)")
     ap.add_argument("--configs", default=DEFAULT, help=f"settings in order (default {DEFAULT})")
+    ap.add_argument("--face-side", type=int, default=BODY.face_max_side,
+                    help=f"face frames downscaled to this many pixels on their long side (default {BODY.face_max_side})")
     ap.add_argument("--json", type=Path, help="save the results here")
     args = ap.parse_args()
     configs = args.configs.split(",")
@@ -339,7 +345,7 @@ def main() -> int:
             print(f"live model ready in {load_s:.1f} s", flush=True)
             recorder.open()
             recorder.start(writer)
-            bench = Bench(replay, recorder, writer, args.warm, args.seconds)
+            bench = Bench(replay, recorder, writer, args.warm, args.seconds, args.face_side)
             replay.start()
             for name in configs:
                 print(f"  {name} ...", flush=True)
@@ -358,7 +364,8 @@ def main() -> int:
     if not results:
         return 1
     out = {"session": str(folder), "take": take.number, "live_model": replay.model, "where": replay.stream.where,
-           "body": {"max_side": BODY.max_side, "face_offset": BODY.face_offset, "pose_offset": BODY.pose_offset},
+           "body": {"max_side": BODY.max_side, "face_max_side": args.face_side, "face_offset": BODY.face_offset,
+                    "pose_offset": BODY.pose_offset},
            "warm_s": args.warm, "results": results}
     print(report(results))
     if args.json:
