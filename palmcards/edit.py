@@ -15,7 +15,9 @@ notes revision (palmcards.session: edit, undo).
 from __future__ import annotations
 
 from palmcards.export import marked
-from palmcards.notes import ENDING_KINDS, PACE_KINDS, Mark, MarkKind, Notes, Sentence, normalize, parse_sentence
+from palmcards.notes import (
+    ENDING_KINDS, PACE_KINDS, Mark, MarkKind, Notes, Sentence, normalize, parse_sentence, reading_place,
+)
 from palmcards.revisions import from_snapshot, to_snapshot
 
 
@@ -128,13 +130,5 @@ def new_marks(sentence: Sentence, marks: list) -> list[Mark]:
         elif mark.kind in ENDING_KINDS and (sentence.ending or any(m.kind in ENDING_KINDS for m in out)):
             continue
         out.append(mark)
-
-    def place(m: Mark) -> tuple:
-        if m.kind in PACE_KINDS:
-            return (-1, 0)
-        if m.kind in ENDING_KINDS:
-            return (len(sentence.words) + 1, 0)
-        return (m.word, 1 if m.kind is MarkKind.STRESS else 0)  # a pause before its word, stress on it
-
-    return sorted(out, key=place)
+    return sorted(out, key=lambda m: reading_place(m, len(sentence.words)))
 

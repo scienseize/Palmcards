@@ -39,6 +39,8 @@ class Colors:
     focus_text: RGBA = (245, 245, 245, 255)  # enlarged unit in the focus panel
     focus_mark: RGBA = (245, 245, 245, 140)
     suggest_mark: RGBA = (255, 215, 0, 95)  # a mark the LLM suggests, not yet in the notes: faded yellow
+    accepted_mark: RGBA = (255, 215, 0, 245)  # a suggestion accepted with a pinch: solid yellow
+    pick_outline: RGBA = (255, 215, 0, 255)  # around the suggestion the knob is on
     backing: RGBA = (10, 10, 12, 150)  # soft dark box behind the text
     # Chips and nodes.
     chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node

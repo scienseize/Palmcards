@@ -24,7 +24,9 @@ the right of the frame; it steers the highlight in the text on the left.
   open palm (word)         options ring: the word, alternatives (with --llm), stress/unstress it, "hear it";
                            turn an L-hand like a knob to pick
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
-  open palm (sentence)     suggested marks (with --llm), faded where they would go; pinch + lift adds them all
+  open palm (sentence)     suggested marks (with --llm), faded where they would go; turn an L-hand like a
+                           knob to move the outline along them, pinch (no lift) to accept or reject one,
+                           pinch + lift adds the accepted ones; dropping the hand discards them
   two L-hands (paragraph)  length stretch
   pinch + lift             commit: stress/unstress or an alternative makes a new notes revision (u undoes it);
                            "hear it" speaks the sentence with the word stressed;
@@ -174,12 +176,18 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
     if ev.kind == "focus":
         if takes is not None:
             takes.llm_failed.clear()  # a new focus may ask again what failed before
+            takes.reset_pick()
         if view.hover is None:  # focused before the cursor ever touched the text
             view.hover = Hit(view.current, 0 if ev.level == "word" else None)
         view.focus = view.hover
         view.ops = OpsView()
         view.panel_scroll = 0.0
         return None
+    if ev.kind == "toggle":  # a pinch on spread marks: accept or reject the outlined one; still focused
+        if takes is None or view.focus is None:
+            return None
+        view.note = takes.toggle_mark(view.focus.sentence)
+        return time.perf_counter() + NOTE_S if view.note else None
     if ev.kind == "commit" and view.app == "review":
         if ev.level != "sentence":  # a sentence commit is a drill, which the mode events start
             view.note = "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
@@ -215,6 +223,8 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
             view.note = "NO CHANGE"
     if ev.kind == "back" and takes is not None and view.focus is not None:  # backing out discards a proposal
         takes.proposals.pop(tuple(overlay.unit(ev.level, view.focus.sentence)), None)
+    if takes is not None:
+        takes.reset_pick()  # which marks were accepted: gone with the focus
     view.focus = None
     view.ops = OpsView()
     return time.perf_counter() + NOTE_S if ev.kind == "commit" and view.note else None
@@ -254,6 +264,7 @@ class Takes:
         self.mark_suggestions: dict[int, tuple] = {}  # sentence -> suggested Marks (new_marks), this revision
         self.llm_failed: set[tuple[str, tuple]] = set()  # (kind, key) that failed: not asked again until a new focus
         self._suggest_view: tuple = (None, None)  # (sentence, notes_version) -> the preview, made once
+        self.reset_pick()
         self._follow_reported = False
         self.recorder: AudioRecorder | None = None
         self.analysis = Supervisor()
@@ -413,33 +424,64 @@ class Takes:
         self.log(time.perf_counter() - self.t0, "llm", ask="marks", sentence=sentence)
         return ""
 
-    def suggestion_view(self, sentence: int) -> tuple[str, object, tuple[str, ...]]:
+    def reset_pick(self) -> None:
+        """Forget which suggested mark is outlined and which are accepted (a new
+        focus, or backing out: dropping the hand discards them all)."""
+        self.pick_current, self.pick_accepted, self.pick_knob = 0, set(), 0
+
+    def turn_marks(self, sentence: int, knob: int) -> None:
+        """The L-hand knob's steps since the last frame move the outline along the
+        suggestions, clamped to them: turning past the end and back moves at once."""
+        n = len(self.mark_suggestions.get(sentence) or ())
+        if n:
+            self.pick_current = min(max(self.pick_current + knob - self.pick_knob, 0), n - 1)
+        self.pick_knob = knob
+
+    def toggle_mark(self, sentence: int) -> str:
+        """A pinch on spread marks: accept the outlined suggestion, or reject it again."""
+        marks = self.mark_suggestions.get(sentence)
+        if not marks:
+            return ""
+        i = self.pick_current
+        self.pick_accepted ^= {i}
+        self.log(time.perf_counter() - self.t0, "mark_pick", sentence=sentence, mark=[marks[i].kind, marks[i].word],
+                 accepted=i in self.pick_accepted)
+        return ""  # the mark itself shows it, and the label says it
+
+    def suggestion_view(self, sentence: int) -> tuple[str, object, tuple[str, ...], int | None]:
         """What the focused sentence shows while its marks are spread: a state
         (off, asking, failed, empty, ready), the sentence with every suggestion
-        added, and per mark of it "suggested" or "" (as written)."""
+        added, per mark of it "suggested", "accepted" or "" (as written), and
+        which of its marks is outlined."""
         if self.assistant is None:
-            return "off", None, ()
+            return "off", None, (), None
         if self.assistant.asking("marks", (sentence,)):
-            return "asking", None, ()
+            return "asking", None, (), None
         if ("marks", (sentence,)) in self.llm_failed:
-            return "failed", None, ()
+            return "failed", None, (), None
         marks = self.mark_suggestions.get(sentence)
         if marks is None:
-            return "asking", None, ()  # asked this frame
+            return "asking", None, (), None  # asked this frame
         if not marks:
-            return "empty", None, ()
+            return "empty", None, (), None
         if self._suggest_view[0] != (sentence, self.notes_version):
             preview = add_marks(self.notes, sentence, [(m.kind, m.word) for m in marks]).sentences[sentence]
-            states = tuple("suggested" if m in marks else "" for m in preview.marks)
-            self._suggest_view = ((sentence, self.notes_version), (preview, states))
-        preview, states = self._suggest_view[1]
-        return "ready", preview, states
+            where = [preview.marks.index(m) for m in marks]  # suggestion -> its index among the sentence's marks
+            self._suggest_view = ((sentence, self.notes_version), (preview, where))
+        preview, where = self._suggest_view[1]
+        states = [""] * len(preview.marks)
+        for k, i in enumerate(where):
+            states[i] = "accepted" if k in self.pick_accepted else "suggested"
+        return "ready", preview, tuple(states), where[min(self.pick_current, len(where) - 1)]
 
     def use_suggested_marks(self, sentence: int) -> str:
-        """Pinch + lift on spread marks: every suggestion, as one new revision."""
-        marks = self.mark_suggestions.get(sentence)
-        if not marks:
+        """Pinch + lift on spread marks: the accepted ones, as one new revision."""
+        suggested = self.mark_suggestions.get(sentence)
+        if not suggested:
             return "NO MARKS TO ADD: NOTHING CHANGED"
+        marks = [m for k, m in enumerate(suggested) if k in self.pick_accepted]
+        if not marks:
+            return "NO MARKS ACCEPTED: NOTHING CHANGED"
         note = self._save_edit(add_marks(self.notes, sentence, [(m.kind, m.word) for m in marks]),
                                f"{len(marks)} suggested mark{'s' if len(marks) != 1 else ''} added",
                                op="marks", sentence=sentence, marks=[[m.kind, m.word] for m in marks])
@@ -1130,7 +1172,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         for ev in events:
             if ev.kind == "focus":
                 takes.dial_seen = 0
-            if ev.kind in ("focus", "commit", "back"):
+            if ev.kind in ("focus", "commit", "back", "toggle"):
                 until = apply_event(ev, view, overlay, log, speaker, takes)
             elif note := takes.handle(ev, modes, view, overlay):
                 view.note, until = note, start + NOTE_S
@@ -1163,9 +1205,11 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if view.mode == "focus" and view.level == "sentence" and view.focus is not None \
                     and grammar.state.op == "marks":
                 takes.ask_marks(view.focus.sentence)  # opening the palm asks (once per sentence and revision)
-                view.suggest, view.suggest_sentence, view.suggest_marks = takes.suggestion_view(view.focus.sentence)
+                takes.turn_marks(view.focus.sentence, grammar.state.knob)
+                view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = \
+                    takes.suggestion_view(view.focus.sentence)
             else:
-                view.suggest, view.suggest_sentence, view.suggest_marks = "", None, ()
+                view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = "", None, (), None
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)

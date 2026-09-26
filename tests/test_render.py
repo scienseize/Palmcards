@@ -357,7 +357,6 @@ def test_suggested_marks_are_drawn_faded_in_place():
     states = tuple("suggested" if m.kind in ("long_pause", "fall") else "" for m in preview.marks)
     view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None), ops=OpsView(kind="marks"),
                      llm="cloud", suggest="ready", suggest_sentence=preview, suggest_marks=states)
-    assert ov.label_lines(view)[1] == "2 MARKS SUGGESTED  /  PINCH + LIFT: ADD ALL  /  DROP HAND: DISCARD"
 
     def drawn(v):
         frame = np.full((720, 1280, 3), 128, np.uint8)
@@ -374,4 +373,39 @@ def test_suggested_marks_are_drawn_faded_in_place():
         assert ov.label_lines(replace(view, suggest=state))[1].startswith(text)
     hint = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None), llm="cloud")
     assert ov.label_lines(hint)[1].startswith("OPEN PALM: SUGGEST MARKS")
+
+
+def test_the_outlined_suggestion_and_the_accepted_ones():
+    from dataclasses import replace
+
+    from palmcards.edit import add_marks
+    from palmcards.render import mark_label
+
+    notes = parse_text(TEXT)
+    ov = TextOverlay(notes.sentences, (1280, 720))
+    preview = add_marks(notes, 0, [("long_pause", 2), ("fall", None)]).sentences[0]
+    pause = preview.marks.index(next(m for m in preview.marks if m.kind == "long_pause"))
+    fall = preview.marks.index(next(m for m in preview.marks if m.kind == "fall"))
+    states = ["" for _ in preview.marks]
+    states[pause] = states[fall] = "suggested"
+    view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None), ops=OpsView(kind="marks"),
+                     llm="cloud", suggest="ready", suggest_sentence=preview, suggest_marks=tuple(states),
+                     suggest_current=pause)
+    assert mark_label(preview, pause) == '// BEFORE "FOR"' and mark_label(preview, fall) == "[FALL]"
+    assert ov.label_lines(view)[1] == '1/2 // BEFORE "FOR": NOT ACCEPTED  /  PINCH: ACCEPT  /  TURN L-HAND: NEXT'
+    accepted = list(states)
+    accepted[pause] = "accepted"
+    chosen = replace(view, suggest_marks=tuple(accepted))
+    assert ov.label_lines(chosen)[1] == '1/2 // BEFORE "FOR": ACCEPTED  /  PINCH: REJECT  /  PINCH + LIFT: ADD 1'
+    assert ov.label_lines(replace(chosen, suggest_current=fall))[1] == \
+        "2/2 [FALL]: NOT ACCEPTED  /  PINCH: ACCEPT  /  PINCH + LIFT: ADD 1"
+
+    def drawn(v):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, v)
+        return frame[:, :700].astype(np.int64)
+
+    outlined, elsewhere = drawn(view), drawn(replace(view, suggest_current=fall))
+    assert (outlined != elsewhere).any()  # the outline moves with the knob
+    assert drawn(chosen).sum() > outlined.sum()  # accepted: solid, brighter than faded
 

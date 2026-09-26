@@ -27,7 +27,8 @@ user runs them. They are never inferred from unit tests.
 | M7 stage 3 — Posture and movement | Checked on one scripted take (touches 3/3, head drop and tilt found) | Posture against the calibration; hand movement and face touches from the take's features, no --trace; features v2 (fingertip to the face outline, hand size against the face) | 433 passed; earlier real takes: posture near the calibration, wrist 0.5-3.1 palms/s | A take with counted face touches and hands in front of the face |
 | M7 stage 4 — Review and export | Implemented, validation pending | Gaze line per focused sentence, take summary card in Review, per-take CSV (`scripts/evaluate.py --table`) | 438 passed; rendered offline from the user's scripted take; the table over all 30 takes | The user sees it in the app |
 | M8 stage 1 — Cloud LLM | Checked on hardware by the user (2026-09-26) | Anthropic provider (`claude-haiku-4-5`, `main.py --llm anthropic`, key from the environment or .env), JSON-schema answers, 10 s timeout + one bounded retry, CLOUD LLM chip, truthful tone/length labels, per-call token log (`llm-usage.jsonl`) and `python -m palmcards.llm usage` | 454 passed; the provider tested through the real SDK against a stand-in server on 127.0.0.1; no test sees a key or can reach the API | — |
-| M8 stage 2 — Open palm for marks | Implemented, validation pending | An open palm (or `m`) on a focused sentence asks once per sentence and revision for marks, shown faded yellow in place (`edit.new_marks` keeps only what adds); pinch + lift adds all as one revision; a failed request is not re-sent until a new focus | 461 passed; gesture replay samples unchanged; panel rendered offline | The user's check; stage 3 (knob and pinch per mark) |
+| M8 stage 2 — Open palm for marks | Checked on hardware by the user (2026-09-26) | An open palm (or `m`) on a focused sentence asks once per sentence and revision for marks, shown faded yellow in place (`edit.new_marks` keeps only what adds); pinch + lift adds all as one revision; a failed request is not re-sent until a new focus | 461 passed; gesture replay samples unchanged; panel rendered offline | — |
+| M8 stage 3 — Per-mark toggling | Implemented, validation pending | On spread marks the L-hand is a knob through them (15°/step, relative, reading order, clamped), the current one outlined; a pinch without a lift accepts/rejects it (solid yellow); pinch + lift adds only the accepted ones as one revision; dropping the hand discards the choices | 468 passed; gesture replay samples unchanged; panel rendered offline | The user's check on camera (does moving from an L to a pinch nudge the knob?); then a --trace sample |
 
 ## Log
 
@@ -1261,4 +1262,43 @@ Tests run and exact outcome: pytest (full) -> 461 passed. New: open palm -> op m
   drawing and labels. The recorded samples sentence-tone-back and sentence-fold-back replay unchanged
   (no open palm is seen in those real folds and tilts, so nothing would have been sent).
 Not checked: the gesture on the camera (the user's stage-2 test).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: milestone 8 stage 2, check on hardware
+Status: the user: "Stage 2 works as expected."
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: milestone 8 stage 3, per-mark toggling
+Status: implemented, validation pending
+Files and behavior changed:
+  palmcards/gestures.py: the ring's knob code is one helper (_turn_knob), used by the ring and by
+    spread marks; with op "marks" the L-hand turns it (OPS.knob_step_deg, hysteresis, picked up again
+    where it was) instead of the tone dial. A new "toggle" event: a stable pinch that started after the
+    hand opened again (the commit's arming) and is let go without a lift; a pinch + lift is only the
+    commit; a pinch taken out of view doesn't toggle. The knob doesn't turn while pinched. Logged
+    "toggle" (knob).
+  palmcards/notes.py: reading_place(mark, n_words), the reading order shared by edit.new_marks and the
+    label.
+  main.py: a picker per focus (Takes.pick_current / pick_accepted / pick_knob, reset on focus and on
+    leaving it): knob steps move it along the suggestions, clamped like Review's take dial; "toggle"
+    accepts or rejects the current one (logged "mark_pick") and keeps the focus; pinch + lift adds only
+    the accepted ones as one revision ("NO MARKS ACCEPTED: NOTHING CHANGED" with none); dropping the hand
+    discards the choices (the suggestions stay cached for the revision, as in stage 2).
+  palmcards/render.py, style.py: accepted marks solid yellow (accepted_mark), the knob's mark outlined
+    (pick_outline) around its spans (around *word* for a stress); the label: position in reading order,
+    the mark in words ([SLOW], *YOU*, // BEFORE "BEING"), accepted or not, what a pinch does, and
+    "PINCH + LIFT: ADD n" once something is accepted (else "TURN L-HAND: NEXT").
+Tests run and exact outcome: pytest (full) -> 468 passed. New: the knob on spread marks (relative,
+  hysteresis, not the tone); a pinch tap toggles once and keeps the focus, the knob continuing; pinch +
+  lift commits without a toggle; the focusing fold's pinch and a pinch taken out of view don't toggle;
+  the app's clamped knob; accept 2 of 3 (with a reject in between) -> one revision with those two,
+  undo; dropping discards; none accepted changes nothing; outline and accepted drawing; the labels.
+  Stage-2 tests updated to the new commit (accepted only). Replay samples unchanged.
+Not checked: on camera. The risk to look for: moving from an L to a pinch may turn the knob a step
+  before the pinch registers (the synthetic hands keep the index still). A --trace recording of the
+  motion would become a replay sample.
 ```

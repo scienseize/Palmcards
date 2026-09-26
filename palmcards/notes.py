@@ -55,6 +55,16 @@ class Mark:
     word: int | None = None
 
 
+def reading_place(mark: Mark, n_words: int) -> tuple[int, int]:
+    """Where a mark reads in its sentence, for ordering: the pace first, then
+    word by word (a pause before its word, a stress on it), the ending last."""
+    if mark.kind in PACE_KINDS:
+        return (-1, 0)
+    if mark.kind in ENDING_KINDS:
+        return (n_words + 1, 0)
+    return (mark.word, 1 if mark.kind is MarkKind.STRESS else 0)
+
+
 @dataclass
 class Word:
     text: str  # as displayed, with punctuation, e.g. "being,"

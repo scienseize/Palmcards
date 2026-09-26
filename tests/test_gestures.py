@@ -320,6 +320,65 @@ def test_open_palm_on_a_focused_sentence_spreads_marks():
     assert [(e.kind, e.op) for e in events] == [("commit", "marks")]
 
 
+def marks_spread():
+    g, t = prepare_sentence_focus()
+    _, t = run(g, hold(open_palm, 0.3), t)
+    assert g.state.op == "marks"
+    return g, t
+
+
+def kinds_of(events):
+    return [e.kind for e in events]
+
+
+def test_the_l_hand_turns_a_knob_through_spread_marks():
+    g, t = marks_spread()
+    step = OPS.knob_step_deg
+    _, t = run(g, hold(l_hand, 0.3, rotate=-20), t)  # wherever the hand starts is zero
+    assert g.state.pointing and g.state.knob == 0
+    _, t = run(g, hold(l_hand, 0.1, rotate=-20 + 0.6 * step), t)  # just past a boundary: hysteresis
+    assert g.state.knob == 0
+    _, t = run(g, hold(l_hand, 0.1, rotate=-20 + 2 * step), t)
+    assert g.state.knob == 2 and g.state.tone == 0.0  # a knob, not the tone dial
+    _, t = run(g, hold(l_hand, 0.1, rotate=-20 + step), t)
+    assert g.state.knob == 1
+
+
+def test_a_pinch_without_a_lift_toggles_once():
+    g, t = marks_spread()
+    _, t = run(g, hold(l_hand, 0.3, rotate=0) + hold(l_hand, 0.1, rotate=OPS.knob_step_deg), t)
+    assert g.state.knob == 1
+    events, t = run(g, hold(pinch, 0.3), t)
+    assert events == [] and not g.state.pointing  # held: nothing yet, and the knob doesn't turn
+    events, t = run(g, hold(l_hand, 0.3, rotate=40), t)  # let go (back to an L, at another angle)
+    assert [(e.kind, e.op) for e in events] == [("toggle", "marks")]
+    assert g.state.mode == "focus" and g.state.knob == 1  # still focused; the knob picked up where it was
+    assert [e["knob"] for e in g.log.entries if e["kind"] == "toggle"] == [1]
+    events, t = run(g, hold(pinch, 0.3) + hold(open_palm, 0.3), t)
+    assert kinds_of(events) == ["toggle"]
+
+
+def test_pinch_and_lift_commits_without_toggling():
+    g, t = marks_spread()
+    events, _ = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H) + hold(pinch, 0.3, origin=(960, 600 - 0.2 * H))
+                    + hold(one, 0.3), t)
+    assert kinds_of(events) == ["commit"] and events[0].op == "marks"
+
+
+def test_the_focusing_fold_and_a_dropped_pinch_do_not_toggle():
+    g = Grammar((W, H))
+    _, t = run(g, hold(two, 0.3))
+    # A fold that ends pinched and stays pinched while the marks open: that pinch focused, it doesn't toggle.
+    events, t = run(g, lerp_frames(hand, TWO_TIPS, TWO_FOLDED, 6) + hold(pinch, 0.3), t)
+    assert kinds_of(events) == ["focus"]
+    g.open_marks(t)
+    events, t = run(g, hold(pinch, 0.3) + hold(open_palm, 0.3), t)
+    assert "toggle" not in kinds_of(events)
+    # A pinch taken out of view (not long enough to back out) and brought back open: no toggle.
+    events, t = run(g, hold(pinch, 0.3) + [None] * 10 + hold(open_palm, 0.3), t)
+    assert kinds_of(events) == [] and g.state.mode == "focus"
+
+
 def test_marks_open_only_on_a_focused_sentence_in_prepare():
     g = Grammar((W, H))
     assert not g.open_marks(0.0)  # nothing focused

@@ -501,28 +501,105 @@ def test_spread_marks_are_asked_once_shown_and_added_together(tmp_path, monkeypa
     assert takes.suggestion_view(0)[0] == "asking"
     poll_until(takes, lambda: 0 in takes.mark_suggestions)
     assert len(provider.calls) == 1 and provider.schemas == [llm.SCHEMAS["marks"]]
-    state, preview, states = takes.suggestion_view(0)
-    # "[fall]" is there already: two new ones, shown in the sentence where they go.
-    assert state == "ready" and states.count("suggested") == 2
-    assert [m for m, st in zip(preview.marks, states) if st] == [Mark(MarkKind.STRESS, 1), Mark(MarkKind.LONG_PAUSE, 2)]
-    assert takes.notes.sentences[0].marks == parse_text(TEXT, "md").sentences[0].marks  # nothing changed yet
+    state, preview, states, current = takes.suggestion_view(0)
+    # "[fall]" is there already: two new ones, shown in the sentence where they go, none accepted yet,
+    # the first (in reading order) outlined.
+    assert state == "ready" and [m for m, st in zip(preview.marks, states) if st] == \
+        [Mark(MarkKind.STRESS, 1), Mark(MarkKind.LONG_PAUSE, 2)]
+    assert set(states) == {"", "suggested"} and preview.marks[current] == Mark(MarkKind.STRESS, 1)
+    before = parse_text(TEXT, "md").sentences[0].marks
+    assert takes.notes.sentences[0].marks == before  # nothing changed yet
 
     view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None))
     overlay = TextOverlay(takes.notes.sentences, (1280, 720))
-    main.apply_event(GestureEvent("back", 1.0, "sentence", "marks"), view, overlay, GestureLog(), takes=takes)
-    assert takes.notes.sentences[0].marks == parse_text(TEXT, "md").sentences[0].marks  # dropping adds nothing
+
+    def event(kind, op="marks"):
+        main.apply_event(GestureEvent(kind, 1.0, "sentence", op), view, overlay, GestureLog(), takes=takes)
+
+    event("commit")  # nothing accepted: nothing added
+    assert view.note == "NO MARKS ACCEPTED: NOTHING CHANGED" and takes.notes.sentences[0].marks == before
     view.focus = Hit(0, None)
-    main.apply_event(GestureEvent("focus", 2.0, "sentence"), view, overlay, GestureLog(), takes=takes)
+    event("focus")
     takes.ask_marks(0)  # open the palm again: the same suggestions, no second call
     assert len(provider.calls) == 1 and takes.suggestion_view(0)[0] == "ready"
 
-    main.apply_event(GestureEvent("commit", 3.0, "sentence", "marks"), view, overlay, GestureLog(), takes=takes)
-    assert view.note == "ADDED 2 MARKS  /  U: UNDO"
+    takes.turn_marks(0, 1)  # the knob one step on: the pause
+    event("toggle")
+    assert view.focus is not None  # a toggle keeps the focus
+    _, preview, states, current = takes.suggestion_view(0)
+    assert preview.marks[current] == Mark(MarkKind.LONG_PAUSE, 2) and states[current] == "accepted"
+    event("commit")
+    assert view.note == "ADDED 1 MARK  /  U: UNDO"
     marks = takes.notes.sentences[0].marks
-    assert Mark(MarkKind.LONG_PAUSE, 2) in marks and Mark(MarkKind.STRESS, 1) in marks and Mark(MarkKind.FALL) in marks
+    assert Mark(MarkKind.LONG_PAUSE, 2) in marks and Mark(MarkKind.STRESS, 1) not in marks  # only the accepted
     assert [r["provenance"] for r in takes.session.revisions] == ["imported", "edited"]  # one revision
     assert takes.mark_suggestions == {}  # they were for the old notes
-    assert takes.undo() == "UNDONE" and Mark(MarkKind.STRESS, 1) not in takes.notes.sentences[0].marks
+    assert takes.undo() == "UNDONE" and takes.notes.sentences[0].marks == before
+
+
+THREE = json.dumps({"marks": [{"kind": "slow", "word": None}, {"kind": "long_pause", "word": 2},
+                              {"kind": "stress", "word": 1}]})
+
+
+def spread(tmp_path, monkeypatch):
+    takes = takes_with(tmp_path, monkeypatch, FakeProvider(THREE))
+    takes.ask_marks(0)
+    poll_until(takes, lambda: 0 in takes.mark_suggestions)
+    return takes
+
+
+def picked(takes):
+    _, preview, states, current = takes.suggestion_view(0)
+    return preview.marks[current], [m for m, st in zip(preview.marks, states) if st == "accepted"]
+
+
+def test_the_knob_moves_along_the_suggestions_clamped(tmp_path, monkeypatch):
+    takes = spread(tmp_path, monkeypatch)  # in reading order: [slow], *you*, // before "for"
+    assert picked(takes)[0] == Mark(MarkKind.SLOW)
+    takes.turn_marks(0, 1)
+    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
+    takes.turn_marks(0, 6)  # well past the end: the last
+    assert picked(takes)[0] == Mark(MarkKind.LONG_PAUSE, 2)
+    takes.turn_marks(0, 5)  # one step back moves at once
+    assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
+    takes.turn_marks(0, -9)
+    assert picked(takes)[0] == Mark(MarkKind.SLOW)
+
+
+def test_accept_two_of_three_then_one_revision_and_dropping_discards(tmp_path, monkeypatch):
+    from palmcards.gestures import GestureEvent
+    from palmcards.render import Hit, TextOverlay, ViewState
+
+    takes = spread(tmp_path, monkeypatch)
+    view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None))
+    overlay = TextOverlay(takes.notes.sentences, (1280, 720))
+
+    def event(kind):
+        main.apply_event(GestureEvent(kind, 1.0, "sentence", "marks"), view, overlay, GestureLog(), takes=takes)
+
+    event("toggle")  # [slow]
+    takes.turn_marks(0, 1)
+    event("toggle")  # *you*
+    event("toggle")  # *you* again: rejected
+    takes.turn_marks(0, 2)
+    event("toggle")  # the pause
+    assert set(picked(takes)[1]) == {Mark(MarkKind.SLOW), Mark(MarkKind.LONG_PAUSE, 2)}
+
+    event("back")  # dropping the hand discards every choice
+    view.focus = Hit(0, None)
+    event("focus")
+    assert picked(takes) == (Mark(MarkKind.SLOW), [])
+    before = takes.notes.sentences[0].marks
+
+    event("toggle")
+    takes.turn_marks(0, 2)
+    event("toggle")
+    event("commit")
+    assert view.note == "ADDED 2 MARKS  /  U: UNDO"
+    marks = takes.notes.sentences[0].marks
+    assert set(marks) - set(before) == {Mark(MarkKind.SLOW), Mark(MarkKind.LONG_PAUSE, 2)}
+    assert [r["provenance"] for r in takes.session.revisions] == ["imported", "edited"]
+    assert takes.undo() == "UNDONE" and takes.notes.sentences[0].marks == before
 
 
 def test_no_new_marks_says_so(tmp_path, monkeypatch):
