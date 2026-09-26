@@ -143,9 +143,9 @@ class Summary:
 
 @dataclass(frozen=True)
 class Ring:
-    """Options ring around a focused word."""
-    rx: float = 4.4  # lines
-    ry: float = 2.6
+    """The options of a focused word: a row over it, with curved connectors."""
+    row_dy: float = 1.9  # lines above (or below) the word
+    row_gap: int = 14  # px between options
     node_scale: float = 0.85  # x text
     edge_px: int = 8  # kept clear of the frame's sides
     bow: float = 0.25  # how far the curved connectors bow to one side

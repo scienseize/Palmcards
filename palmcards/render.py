@@ -9,8 +9,9 @@ column range; hit_test() maps a point back to (sentence, word), and
 cursor_to_text() maps the relative hand-box cursor to such a point.
 
 On top of the text: the two-line state label (Kat's `BROWSE BY WORD`), and
-Prepare's operations: the options ring (the original word, its alternatives
-when the optional LLM is on, stress and "hear it"), and the tone gauge and
+Prepare's operations: the options, a row over the word read left to right
+(the original word, its alternatives when the optional LLM is on, stress and
+"hear it"; the L-hand tilts right for the next, left for the one before), and the tone gauge and
 stretch line; without the LLM these two only preview, and say so. An open
 palm on a focused sentence spreads the LLM's suggested marks in it, faded
 (style COLORS.suggest_mark), where they would go; the one the L-hand knob is
@@ -463,7 +464,7 @@ class TextOverlay:
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
-            second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "TURN AN L-HAND TO PICK"
+            second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "TILT AN L-HAND: RIGHT NEXT, LEFT BACK"
             if ops.pointing:
                 picked = self.ring_labels(state)[ops.picked]
                 word = self.word_text(state.focus).upper() if state.focus and state.focus.word is not None else ""
@@ -852,20 +853,25 @@ class TextOverlay:
             _blend(frame, x, y + c1[0].shape[0], *c2)
 
     def _draw_ring(self, frame: np.ndarray, state: ViewState, center: tuple[float, float]) -> None:
+        """The word's options in a row over it, left to right in their order (the
+        word itself first): tilting the L-hand right goes to the next one on the
+        right, left to the one before. Curved connectors run from the word; the
+        row goes under the word when there is no room above it (the label)."""
         labels = self.ring_labels(state)
-        n = len(labels)
-        rx, ry = RING.rx * self.line_h, RING.ry * self.line_h
         size = round(self.font_size * RING.node_scale)
-        # Centre the ring on the word, shifted so every node stays on screen;
-        # the connectors still start at the word.
-        widest = max(self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)[0].shape[1] for label in labels)
-        edge = rx + widest / 2 + RING.edge_px
-        rcx = min(max(center[0], edge), self.frame_w - edge)
-        rcy = min(max(center[1], ry + self.line_h), self.frame_h - ry - self.line_h)
+        chips = [self._chip(label, size, C.chip_text, C.chip_fill) if i == state.ops.picked
+                 else self._chip(label, size, C.node_text, C.dark_fill, C.node_outline) for i, label in enumerate(labels)]
+        widths = [c[0].shape[1] for c in chips]
+        h = max(c[0].shape[0] for c in chips)
+        total = sum(widths) + RING.row_gap * (len(chips) - 1)
         cx, cy = center
-        for i, label in enumerate(labels):
-            a = math.radians(-90 + i * 360 / n)
-            nx, ny = rcx + rx * math.cos(a), rcy + ry * math.sin(a)
+        x = min(max(cx - total / 2, RING.edge_px), max(RING.edge_px, self.frame_w - RING.edge_px - total))
+        ny = cy - RING.row_dy * self.line_h
+        label_bottom = max(LABEL.min_top + self.label_h, self.y + self.margin - self.pad // 2)  # see _draw_label
+        if ny - h / 2 < label_bottom + RING.row_gap:
+            ny = cy + RING.row_dy * self.line_h
+        for i, (chip, w) in enumerate(zip(chips, widths)):
+            nx = x + w / 2
             # Curved connector: quadratic Bezier bowed to one side.
             mx, my = (cx + nx) / 2, (cy + ny) / 2
             ctrl = (mx - (ny - cy) * RING.bow, my + (nx - cx) * RING.bow)
@@ -873,14 +879,11 @@ class TextOverlay:
             curve = (1 - ts) ** 2 * np.array(center) + 2 * (1 - ts) * ts * np.array(ctrl) + ts ** 2 * np.array((nx, ny))
             stroke = RING.picked_stroke if i == state.ops.picked else RING.stroke
             cv2.polylines(frame, [curve.astype(np.int32)], False, bgr(C.yellow), stroke, cv2.LINE_AA)
-            if i == state.ops.picked:
-                chip = self._chip(label, size, C.chip_text, C.chip_fill)
-            else:
-                chip = self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)
             box = self._blend_centered(frame, chip, nx, ny)
-            if i == state.ops.picked and state.ops.closing:  # the pinch will take this node: it is held
+            if i == state.ops.picked and state.ops.closing:  # the pinch will take this option: it is held
                 g = RING.closing_box
                 cv2.rectangle(frame, (box[0] - g, box[1] - g), (box[2] + g, box[3] + g), bgr(C.yellow), g, cv2.LINE_AA)
+            x += w + RING.row_gap
 
     def _draw_gauge(self, frame: np.ndarray, tone: float, top: int, bottom: int, closing: bool = False) -> None:
         """Vertical tone dial: cold (blue) at the top, warm (orange) at the bottom."""
@@ -963,7 +966,10 @@ class TextOverlay:
             if (box := self.word_box(state.hover, state.scroll)) is not None:
                 chip = self._chip(self.word_text(state.hover), round(self.font_size * CHIPS.hover_scale),
                                   C.chip_text, C.chip_fill)
-                self._blend_centered(frame, chip, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+                x0, y0, x1, y1 = self._blend_centered(frame, chip, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+                if state.ops.closing:  # pinching: this word is held, the pinch will focus it
+                    g = RING.closing_box
+                    cv2.rectangle(frame, (x0 - g, y0 - g), (x1 + g, y1 + g), bgr(C.yellow), g, cv2.LINE_AA)
         if state.mode == "focus" and state.level == "word" and state.focus and state.focus.word is not None:
             if (box := self.word_box(state.focus, state.scroll)) is not None:
                 center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)

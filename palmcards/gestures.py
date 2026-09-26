@@ -11,7 +11,7 @@ Pipeline per hand result:
 The grammar (Kat's "gestural editing/writing"):
   shape picks the scope     ONE = word, TWO = sentence, FLAT = paragraph
   close the hand to focus   PINCH (word) or FOLD fingers onto the thumb
-  second shape operates     OPEN = options ring, L turn = ring knob (word); L tilt = tone dial,
+  second shape operates     OPEN = options ring, L tilt right/left = next/previous option (word); L tilt = tone dial,
                             OPEN = suggested marks, then L turn = knob through them and a pinch
                             (no lift) accepts or rejects one (sentence); two L hands = length
                             stretch (paragraph)
@@ -496,8 +496,10 @@ class Grammar:
         self._d0: float | None = None
         self._knob0: float | None = None
         self._knob_cand: tuple[int, float] | None = None  # a knob step waiting out OPS.knob_dwell_s: (step, since)
+        self._tilt_armed, self._tilt_t = True, 0.0  # the ring's tilt-to-step: back upright since the last step
         self._toggle_armed = False  # spread marks: a pinch (after the hand opened again) is being held
         self._dial_hist: deque[dict] = deque()  # focus: the dials' values per frame, for the rewind
+        self._cursor_hist: deque[tuple[float, float, tuple[float, float]]] = deque()  # browse by word: (t, thumb, cursor)
 
     # -- hands --
 
@@ -594,7 +596,7 @@ class Grammar:
     def _update_browse(self, t: float, primary_events: list[str], events: list[GestureEvent]) -> None:
         s, p = self.state, self.state.primary
         if p is None:
-            s.scroll_rate = 0.0
+            s.scroll_rate, s.closing = 0.0, False
             if s.mode == "browse":
                 self._lost_since = t if self._lost_since is None else self._lost_since
                 if t - self._lost_since >= TIMING.browse_lost_s:
@@ -620,11 +622,41 @@ class Grammar:
             s.scroll_rate = self.cursor.scroll_rate
         else:
             s.scroll_rate = 0.0
+        if s.level == "word":
+            self._hold_word(t, p)
+        else:
+            s.closing = False
 
         if not self._focus_armed:
             return
         if (s.level == "word" and p.stable == PINCH) or (s.level != "word" and "fold" in primary_events):
             self._enter_focus(t, events)
+
+    def _hold_word(self, t: float, p: HandTrack) -> None:
+        """Browse by word: a pinch drags the index tip as it curls to meet the
+        thumb (in recorded sessions 4 of 7 pinches landed on another word, mostly
+        the line below). When the pinch registers, the cursor goes back to where
+        it was just before the thumb started moving in, and stays there (the
+        pinch focuses that word; state.closing shows it held). A distance on
+        its own can't be the sign here: pointing, the thumb often rests near the
+        index tip (a third of the time within 0.9 palms)."""
+        s = self.state
+        if p.pinching:
+            if not s.closing:
+                recent = [e for e in self._cursor_hist if e[0] >= t - OPS.rewind_max_s]
+                if recent and s.cursor is not None:
+                    top = max(e[1] for e in recent)
+                    back = [e for e in recent if e[1] >= top - OPS.rewind_plateau][-1]
+                    if back[2] != s.cursor:
+                        self.log(t, "rewind", op="cursor", back_s=round(t - back[0], 3))
+                    s.cursor = back[2]
+                s.closing = True
+            return
+        s.closing = False
+        if s.cursor is not None:
+            self._cursor_hist.append((t, p.feat.pinch_dist, s.cursor))
+        while self._cursor_hist and self._cursor_hist[0][0] < t - 1.0:
+            self._cursor_hist.popleft()
 
     def _enter_focus(self, t: float, events: list[GestureEvent]) -> None:
         s = self.state
@@ -750,7 +782,8 @@ class Grammar:
         it was picked up (continuing from `value`), with hysteresis at the step
         boundaries, kept in `limits` (turning past an end moves the zero along,
         so turning back moves at once), and a new step taken only once the hand
-        has stayed in it OPS.knob_dwell_s. Returns the dial's value."""
+        has stayed in it OPS.knob_dwell_s, then walked to one step per frame.
+        Returns the dial's value."""
         if self._knob0 is None:
             self._knob0, self._knob_cand = tilt - value * step_deg, None
         pos = (tilt - self._knob0) / step_deg
@@ -763,7 +796,12 @@ class Grammar:
             return value
         if self._knob_cand is None or self._knob_cand[0] != step:
             self._knob_cand = (step, t)
-        return step if t - self._knob_cand[1] >= OPS.knob_dwell_s - 1e-9 else value
+        if t - self._knob_cand[1] < OPS.knob_dwell_s - 1e-9:
+            return value
+        # One step per frame toward it: a turn of several steps shows as the
+        # highlight walking in the hand's direction, never as a jump (on the
+        # ring, which wraps, four steps back looked like two forward).
+        return value + (1 if step > value else -1)
 
     def _holds_l(self, track: HandTrack | None, started: bool) -> bool:
         """An L starts a control; once started, any shape with the index up
@@ -784,6 +822,35 @@ class Grammar:
             s.knob = self._step_dial(s.knob, p.feat.tilt, OPS.knob_step_deg, limits, t)
         else:
             self._knob0 = self._knob_cand = None
+
+    def _tilt_step(self, p: HandTrack, t: float) -> None:
+        """The options ring: tilt the L-hand right for the next option, left for
+        the one before, one option per tilt (see config OPS.tilt_on_deg), kept on
+        the options (state.dial_limits). A pinch, or a thumb closing toward one,
+        stops it (see _guard_pinch)."""
+        s = self.state
+        s.pointing = not s.closing and self._holds_l(p, self._knob0 is not None)
+        if not s.pointing:
+            self._knob0 = self._knob_cand = None
+            return
+        x = p.feat.tilt
+        if self._knob0 is None:  # upright is wherever the L is when it (re)appears
+            self._knob0, self._tilt_armed, self._knob_cand, self._tilt_t = x, True, None, t
+        d = x - self._knob0
+        if abs(d) <= OPS.tilt_off_deg:
+            self._tilt_armed, self._knob_cand = True, None
+            self._knob0 += d * min(1.0, (t - self._tilt_t) / OPS.tilt_recenter_s)  # posture drift
+        elif self._tilt_armed and abs(d) >= OPS.tilt_on_deg:
+            way = 1 if d > 0 else -1
+            if self._knob_cand is None or self._knob_cand[0] != way:
+                self._knob_cand = (way, t)
+            if t - self._knob_cand[1] >= OPS.tilt_hold_s - 1e-9:
+                lim = s.dial_limits
+                s.knob = s.knob + way if lim is None else min(max(s.knob + way, lim[0]), lim[1])
+                self._tilt_armed, self._knob_cand = False, None
+        else:
+            self._knob_cand = None
+        self._tilt_t = t
 
     def _watch_toggle(self, t: float, p: HandTrack, events: list[GestureEvent]) -> None:
         """Spread marks: a pinch held (stable) and let go without a lift is a
@@ -830,7 +897,7 @@ class Grammar:
                 s.op = "ring"
                 self.log(t, "op", op="ring")
             if s.op == "ring":
-                self._turn_knob(p, t)
+                self._tilt_step(p, t)
         elif s.level == "sentence":
             # An open palm spreads suggested marks, like the word ring; from then
             # on the L-hand no longer turns the tone dial (a tone preview is

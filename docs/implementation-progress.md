@@ -30,7 +30,8 @@ user runs them. They are never inferred from unit tests.
 | M8 stage 2 — Open palm for marks | Checked on hardware by the user (2026-09-26) | An open palm (or `m`) on a focused sentence asks once per sentence and revision for marks, shown faded yellow in place (`edit.new_marks` keeps only what adds); pinch + lift adds all as one revision; a failed request is not re-sent until a new focus | 461 passed; gesture replay samples unchanged; panel rendered offline | — |
 | M8 stage 3 — Per-mark toggling | Checked on hardware by the user (2026-09-26) | On spread marks the L-hand is a knob through them (15°/step, relative, reading order, clamped), the current one outlined; a pinch without a lift accepts/rejects it (solid yellow); pinch + lift adds only the accepted ones as one revision; dropping the hand discards the choices | 468 passed; gesture replay samples unchanged; panel rendered offline | The L-to-pinch nudge confirmed by the user, on every L-hand control: fixed below |
 | M8 — L-hand dials held through a pinch | Implemented, validation pending | When the thumb of a hand working a dial (ring, marks, tone, stretch, take dial) closes toward the index tip or a pinch registers, the dial goes back to its value from just before the thumb started closing and holds, drawn bolder; marks knob and take dial clamped in the grammar | 477 passed; on the 7 recorded L-to-pinch moments (simulated): knob off 4/7 -> 1/7, dial angle 41 -> 2 deg (median) | Measured on the user's recording: see the next row |
-| M8 — Knob dwell, rewind keep, rewrite length | Implemented, validation pending | Knob steps wait 0.15 s (wobble); a knob step on screen 0.25 s survives the rewind; tone/length rewrites get a word count in the prompt and room above it in the check | 480 passed; the user's recording 20260926-161541 replayed through the code: pinches off what was shown 9/19 -> 1/19, knob changes 158 -> 49 | The user tries it; the ring stretch without a commit (no lift seen) to ask about |
+| M8 — Knob dwell, rewind keep, rewrite length | Implemented, validation pending | Knob steps wait 0.15 s (wobble); a knob step on screen 0.25 s survives the rewind; tone/length rewrites get a word count in the prompt and room above it in the check | 480 passed; the user's recording 20260926-161541 replayed through the code: pinches off what was shown 9/19 -> 1/19, knob changes 158 -> 49 | The user: the ring stretch was pinch-only testing; then the ring knob and word pinch problems below |
+| M8 — Word options by tilt; word pinch | Implemented, validation pending | The word's options in a row over the word, left to right; tilt the L-hand right for the next, left for the one before (one per tilt); marks/take knobs walk one step per frame; pointing + pinch focuses the word pointed at before the curl | 484 passed; on the recordings: word pinches on another word 9/15 -> 2/15; ring 32 steps/min against 158 | The user tries it |
 
 ## Log
 
@@ -1380,4 +1381,36 @@ Result on the recording (rewind + dwell + keep): 1/19 pinches off the longest-sh
   what was shown when the thumb started closing; knob changes 158 -> 49.
 Tests: pytest (full) -> 480 passed (knob tests hold new angles 0.3 s; a quick wobble takes no step; the
   rewind alone still brings a drifted knob back; the 13-word case and the word counts).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: the word options knob ("too fast and wonky"; "does not turn as expected"), and pointing
+  then pinching a word
+Recording: sessions/gesture-logs/20260926-163552.trace.jsonl (replayed: the live log reproduced, 22/22
+  events). The ring was open 3 s at the end, the hand low (wrist below the frame's bottom edge, the
+  Left/Right label flipping, one frame read as a fist).
+Findings:
+  - Ring: the angle went from +68 to -63 deg in 0.4 s; the dwell kept the knob still through the
+    sweep, then took 4 steps at once, and the ring wraps (4 back on 6 options = 2 forward): the
+    highlight went the other way. On the earlier recording the dwell knob made 74 multi-step jumps.
+  - Word pinch: the index tip sinks as it curls to meet the thumb; 9 of 15 word pinches on six
+    recordings focused another word than the one pointed at longest in the 0.5 s before the pinch
+    registered (mostly the line below). The thumb can't be the early sign here: pointing, it rests
+    within 0.9 palms of the index tip a third of the time (median 1.0).
+Changes (the user asked: tilting right goes to the next on the right, left to the previous):
+  palmcards/gestures.py: _tilt_step for the ring: past OPS.tilt_on_deg (20) from upright, held
+    tilt_hold_s (0.1): one option that way; back within tilt_off_deg (10) arms the next; upright
+    follows the resting hand (tilt_recenter_s 1.0); kept on the options (dial_limits, set by the app).
+    Simulated on both recordings: ~32 steps a minute (158 for the knob), each one option.
+    _step_dial (marks, take dial): after the dwell, walks one step per frame toward the hand, never
+    jumps. _hold_word: browsing by word, when the pinch registers the cursor goes back to where it
+    was before the thumb started moving in (rewind_max_s, rewind_plateau), held (state.closing)
+    until the focus. Replayed: 2/15 word pinches off.
+  palmcards/render.py, style.py: the options in a row over the word (under it when the label is in
+    the way), left to right, with the curved connectors; the hovered word boxed while a pinch holds it.
+  main.py: the ring's limits (its options), no wrap.
+Tests: pytest (full) -> 484 passed; ring tests rewritten for tilting (one per tilt, held tilt stays one
+  step, threshold and a moment, ends, re-captured upright, drifted thumb, quick and slow curl into a
+  pinch); marks knob walks; word pinch rewind (and without it the cursor sinks).
 ```
