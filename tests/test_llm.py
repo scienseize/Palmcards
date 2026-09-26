@@ -483,3 +483,70 @@ def test_the_usage_command_sums_every_session(tmp_path, monkeypatch, capsys):
     assert "cloud estimate: $0.0007" in out and "1 call without token counts" in out and "from 2 sessions" in out
     assert llm.main(["usage", "20260926-100001"]) == 0
     assert "from 1 session" in capsys.readouterr().out
+
+
+MARKS = json.dumps({"marks": [{"kind": "long_pause", "word": 2}, {"kind": "stress", "word": 1},
+                              {"kind": "fall", "word": None}]})
+
+
+def test_spread_marks_are_asked_once_shown_and_added_together(tmp_path, monkeypatch):
+    from palmcards.gestures import GestureEvent
+    from palmcards.render import Hit, TextOverlay, ViewState
+
+    provider = FakeProvider(MARKS, usage=(80, 20))
+    takes = takes_with(tmp_path, monkeypatch, provider)
+    assert takes.suggestion_view(0)[0] == "asking"  # the frame the palm opens, before the request
+    for _ in range(3):  # the frame loop asks every frame while the palm is open
+        assert takes.ask_marks(0) == ""
+    assert takes.suggestion_view(0)[0] == "asking"
+    poll_until(takes, lambda: 0 in takes.mark_suggestions)
+    assert len(provider.calls) == 1 and provider.schemas == [llm.SCHEMAS["marks"]]
+    state, preview, states = takes.suggestion_view(0)
+    # "[fall]" is there already: two new ones, shown in the sentence where they go.
+    assert state == "ready" and states.count("suggested") == 2
+    assert [m for m, st in zip(preview.marks, states) if st] == [Mark(MarkKind.STRESS, 1), Mark(MarkKind.LONG_PAUSE, 2)]
+    assert takes.notes.sentences[0].marks == parse_text(TEXT, "md").sentences[0].marks  # nothing changed yet
+
+    view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None))
+    overlay = TextOverlay(takes.notes.sentences, (1280, 720))
+    main.apply_event(GestureEvent("back", 1.0, "sentence", "marks"), view, overlay, GestureLog(), takes=takes)
+    assert takes.notes.sentences[0].marks == parse_text(TEXT, "md").sentences[0].marks  # dropping adds nothing
+    view.focus = Hit(0, None)
+    main.apply_event(GestureEvent("focus", 2.0, "sentence"), view, overlay, GestureLog(), takes=takes)
+    takes.ask_marks(0)  # open the palm again: the same suggestions, no second call
+    assert len(provider.calls) == 1 and takes.suggestion_view(0)[0] == "ready"
+
+    main.apply_event(GestureEvent("commit", 3.0, "sentence", "marks"), view, overlay, GestureLog(), takes=takes)
+    assert view.note == "ADDED 2 MARKS  /  U: UNDO"
+    marks = takes.notes.sentences[0].marks
+    assert Mark(MarkKind.LONG_PAUSE, 2) in marks and Mark(MarkKind.STRESS, 1) in marks and Mark(MarkKind.FALL) in marks
+    assert [r["provenance"] for r in takes.session.revisions] == ["imported", "edited"]  # one revision
+    assert takes.mark_suggestions == {}  # they were for the old notes
+    assert takes.undo() == "UNDONE" and Mark(MarkKind.STRESS, 1) not in takes.notes.sentences[0].marks
+
+
+def test_no_new_marks_says_so(tmp_path, monkeypatch):
+    takes = takes_with(tmp_path, monkeypatch, FakeProvider(json.dumps({"marks": [{"kind": "fall", "word": None}]})))
+    takes.ask_marks(0)
+    notes = poll_until(takes, lambda: 0 in takes.mark_suggestions)
+    assert notes == ["NO NEW MARKS SUGGESTED FOR THIS SENTENCE"] and takes.suggestion_view(0)[0] == "empty"
+    assert takes.use_suggested_marks(0) == "NO MARKS TO ADD: NOTHING CHANGED"
+
+
+def test_a_failed_request_is_not_sent_again_until_a_new_focus(tmp_path, monkeypatch):
+    from palmcards.gestures import GestureEvent
+    from palmcards.render import Hit, TextOverlay, ViewState
+
+    provider = FakeProvider("not json")
+    takes = takes_with(tmp_path, monkeypatch, provider)
+    for _ in range(3):  # the palm stays open over many frames
+        takes.ask_marks(0)
+        takes.ask_alternatives(0, 1)
+        poll_until(takes, lambda: not takes.assistant.pending)
+    assert len(provider.calls) == 2 and takes.suggestion_view(0)[0] == "failed"
+    view = ViewState(app="prepare", mode="browse", level="sentence", hover=Hit(0, None))
+    main.apply_event(GestureEvent("focus", 1.0, "sentence"), view, TextOverlay(takes.notes.sentences, (1280, 720)),
+                     GestureLog(), takes=takes)
+    takes.ask_marks(0)  # focused again: asking again is the user's choice
+    assert len(provider.calls) == 3
+

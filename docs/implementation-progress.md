@@ -26,7 +26,8 @@ user runs them. They are never inferred from unit tests.
 | M7 stage 2 — Gaze | Screen vs away validated on held-out checks (one person); camera vs notes not | palmcards/gaze.py (classes against the calibration, the take's gaze metric while speaking, per sentence), the gaze check (`main.py --gaze-check`, `scripts/evaluate.py --gaze [--sweep]`) | 424 passed; on the user's last real take the defaults gave 70% away while speaking: not believable | A gaze-check take to tune `GAZE`, a second to confirm |
 | M7 stage 3 — Posture and movement | Checked on one scripted take (touches 3/3, head drop and tilt found) | Posture against the calibration; hand movement and face touches from the take's features, no --trace; features v2 (fingertip to the face outline, hand size against the face) | 433 passed; earlier real takes: posture near the calibration, wrist 0.5-3.1 palms/s | A take with counted face touches and hands in front of the face |
 | M7 stage 4 — Review and export | Implemented, validation pending | Gaze line per focused sentence, take summary card in Review, per-take CSV (`scripts/evaluate.py --table`) | 438 passed; rendered offline from the user's scripted take; the table over all 30 takes | The user sees it in the app |
-| M8 stage 1 — Cloud LLM | Implemented, validation pending | Anthropic provider (`claude-haiku-4-5`, `main.py --llm anthropic`, key from the environment or .env), JSON-schema answers, 10 s timeout + one bounded retry, CLOUD LLM chip, truthful tone/length labels, per-call token log (`llm-usage.jsonl`) and `python -m palmcards.llm usage` | 454 passed; the provider tested through the real SDK against a stand-in server on 127.0.0.1; no test sees a key or can reach the API | The user's first real calls; stage 2 (open palm for marks) |
+| M8 stage 1 — Cloud LLM | Checked on hardware by the user (2026-09-26) | Anthropic provider (`claude-haiku-4-5`, `main.py --llm anthropic`, key from the environment or .env), JSON-schema answers, 10 s timeout + one bounded retry, CLOUD LLM chip, truthful tone/length labels, per-call token log (`llm-usage.jsonl`) and `python -m palmcards.llm usage` | 454 passed; the provider tested through the real SDK against a stand-in server on 127.0.0.1; no test sees a key or can reach the API | — |
+| M8 stage 2 — Open palm for marks | Implemented, validation pending | An open palm (or `m`) on a focused sentence asks once per sentence and revision for marks, shown faded yellow in place (`edit.new_marks` keeps only what adds); pinch + lift adds all as one revision; a failed request is not re-sent until a new focus | 461 passed; gesture replay samples unchanged; panel rendered offline | The user's check; stage 3 (knob and pinch per mark) |
 
 ## Log
 
@@ -1220,4 +1221,44 @@ Tests run and exact outcome: pytest (full) -> 454 passed. New: key from environm
   usage log (tokens, never the text) and the command; a failure changes nothing; a rejected key on the
   alert line; calls in flight at exit; the folder-making regression; the chip and the labels.
 Not checked: a real call to the Anthropic API (the user's stage-1 test).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: milestone 8 stage 1, check on hardware
+Status: the user ran the stage-1 checks (no flag, --llm anthropic with the chip, alternatives, tone
+  proposal, Wi-Fi off, a wrong key, the usage command, no key in sessions/): "Everything works as expected."
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: milestone 8 stage 2, open palm for suggested marks
+Status: implemented, validation pending
+Files and behavior changed:
+  palmcards/gestures.py: on a focused sentence (Prepare), a stable open palm sets op "marks" (logged
+    "op"), like the word ring; from then on the L-hand no longer turns the tone dial (an open palm
+    during the dial switches; the tone preview is dropped, nothing had been sent). Grammar.open_marks
+    does the same for the m key; it refuses outside Prepare or away from a focused sentence.
+  palmcards/edit.py: new_marks(sentence, marks): only suggestions that add (not ones it has, not a
+    second pause in a gap, not stress on a stressed word, not a pace or ending replacing its own),
+    in reading order.
+  main.py: ask_marks asks once per sentence per revision (cached in Takes.mark_suggestions, cleared
+    when the notes change); the frame loop asks while op is "marks"; suggestion_view gives the panel
+    the sentence with the suggestions added and which marks are suggestions; pinch + lift with op
+    marks adds all of them as one revision (use_suggested_marks; u undoes); dropping the hand adds
+    nothing. The marks proposal ("PROPOSED: ...") is gone; tone and length proposals are unchanged.
+    Fixed on the way (present since stage 1 for the ring): a request that failed was sent again on
+    the next frame while the ring stayed open; now a failed (kind, key) waits for a new focus
+    (Takes.llm_failed; m asks again).
+  palmcards/render.py, style.py: the focus panel draws the focused sentence with the suggestions, each
+    suggested mark in COLORS.suggest_mark (faded yellow; brighter in high contrast); labels for asking,
+    ready ("N MARKS SUGGESTED / PINCH + LIFT: ADD ALL / DROP HAND: DISCARD"), empty, failed, no LLM;
+    the sentence hint with an LLM starts "OPEN PALM: SUGGEST MARKS"; keys help lists M.
+Tests run and exact outcome: pytest (full) -> 461 passed. New: open palm -> op marks, the L-hand no
+  longer tilts the tone, commit carries op marks; open_marks only in Prepare on a focused sentence;
+  new_marks; asked once across frames and after backing out, shown, back adds nothing, commit adds both
+  as one revision, undo; nothing new says so; a failed request not re-sent until a new focus; faded
+  drawing and labels. The recorded samples sentence-tone-back and sentence-fold-back replay unchanged
+  (no open palm is seen in those real folds and tilts, so nothing would have been sent).
+Not checked: the gesture on the camera (the user's stage-2 test).
 ```

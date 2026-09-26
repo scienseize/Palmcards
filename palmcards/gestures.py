@@ -11,8 +11,8 @@ Pipeline per hand result:
 The grammar (Kat's "gestural editing/writing"):
   shape picks the scope     ONE = word, TWO = sentence, FLAT = paragraph
   close the hand to focus   PINCH (word) or FOLD fingers onto the thumb
-  second shape operates     OPEN = options ring, L turn = ring knob (word), L tilt = tone dial
-                            (sentence), two L hands = length stretch (paragraph)
+  second shape operates     OPEN = options ring, L turn = ring knob (word); L tilt = tone dial,
+                            OPEN = suggested marks (sentence); two L hands = length stretch (paragraph)
   pinch + lift commits      back to Browse at the same level
   drop the hand backs out   out of frame or below the bottom band for 1 s
 
@@ -457,7 +457,7 @@ class GestureEvent:
 class GestureState:
     mode: str = "idle"  # idle | browse | focus
     level: str | None = None  # word | sentence | paragraph
-    op: str | None = None  # ring | tone | stretch (Prepare stubs), take (Review's take dial)
+    op: str | None = None  # ring | tone | marks | stretch (Prepare), take (Review's take dial)
     cursor: tuple[float, float] | None = None  # (u, v) in the hand box
     scroll_rate: float = 0.0  # rows per second
     pointing: bool = False  # L-hand turning the ring knob
@@ -677,6 +677,17 @@ class Grammar:
             return track.stable == L
         return track.feat.extended[0] and not track.pinching and track.raw in (L, ONE, NONE)
 
+    def open_marks(self, t: float) -> bool:
+        """Spread the suggested marks on a focused sentence (an open palm, or the
+        `m` key). Returns whether it did (Prepare, focused on a sentence)."""
+        s = self.state
+        if not (self.operations and s.mode == "focus" and s.level == "sentence"):
+            return False
+        if s.op != "marks":
+            s.op, s.tone, self._tilt0 = "marks", 0.0, None
+            self.log(t, "op", op="marks")
+        return True
+
     def _dial_takes(self, t: float) -> None:
         """Review: an L-hand turned like a knob steps through the takes,
         relative to its angle when it appears, like the options-ring knob."""
@@ -715,6 +726,13 @@ class Grammar:
                 else:
                     self._knob0 = None
         elif s.level == "sentence":
+            # An open palm spreads suggested marks, like the word ring; from then
+            # on the L-hand no longer turns the tone dial (a tone preview is
+            # dropped: nothing was sent for it).
+            if p.stable == OPEN and s.op != "marks":
+                self.open_marks(t)
+            if s.op == "marks":
+                return
             if self._holds_l(p, self._tilt0 is not None):
                 tilt = p.feat.tilt
                 if s.op != "tone":

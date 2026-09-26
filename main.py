@@ -24,6 +24,7 @@ the right of the frame; it steers the highlight in the text on the left.
   open palm (word)         options ring: the word, alternatives (with --llm), stress/unstress it, "hear it";
                            turn an L-hand like a knob to pick
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
+  open palm (sentence)     suggested marks (with --llm), faded where they would go; pinch + lift adds them all
   two L-hands (paragraph)  length stretch
   pinch + lift             commit: stress/unstress or an alternative makes a new notes revision (u undoes it);
                            "hear it" speaks the sentence with the word stressed;
@@ -101,7 +102,7 @@ from palmcards import render
 from palmcards.gestures import FIST, OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, notes_from_bytes
-from palmcards.edit import add_marks, is_stressed, replace_text, replace_word, toggle_stress
+from palmcards.edit import add_marks, is_stressed, new_marks, replace_text, replace_word, toggle_stress
 from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
     marks_request, parse_alternatives, parse_marks, parse_rewrite, rewrite_request
 from palmcards.render import (
@@ -171,6 +172,8 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
     """Grammar events. Returns the time a label note should expire, if one was set.
     A commit only ever reports what really happened."""
     if ev.kind == "focus":
+        if takes is not None:
+            takes.llm_failed.clear()  # a new focus may ask again what failed before
         if view.hover is None:  # focused before the cursor ever touched the text
             view.hover = Hit(view.current, 0 if ev.level == "word" else None)
         view.focus = view.hover
@@ -188,6 +191,8 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
             view.note = takes.edit_stress(view.focus.sentence, view.focus.word)
         elif picked in view.alternatives and takes is not None and view.focus is not None and view.ops.picked > 0:
             view.note = takes.use_alternative(view.focus.sentence, view.focus.word, picked)
+        elif ev.op == "marks" and takes is not None and sentence is not None:
+            view.note = takes.use_suggested_marks(sentence)
         elif ev.op in ("tone", "stretch") and takes is not None and unit:
             view.note = takes.ask_rewrite("tone" if ev.op == "tone" else "length", unit, ev.value)
         elif ev.op is None and takes is not None and unit in takes.proposals:
@@ -246,6 +251,9 @@ class Takes:
         self.assistant = Assistant(provider) if provider is not None else None
         self.alternatives: dict[tuple[int, int], tuple[str, ...]] = {}  # (sentence, word) -> words, this revision
         self.proposals: dict[tuple[int, ...], tuple[str, object, str]] = {}  # unit -> (kind, value, text shown)
+        self.mark_suggestions: dict[int, tuple] = {}  # sentence -> suggested Marks (new_marks), this revision
+        self.llm_failed: set[tuple[str, tuple]] = set()  # (kind, key) that failed: not asked again until a new focus
+        self._suggest_view: tuple = (None, None)  # (sentence, notes_version) -> the preview, made once
         self._follow_reported = False
         self.recorder: AudioRecorder | None = None
         self.analysis = Supervisor()
@@ -320,7 +328,8 @@ class Takes:
         self.notes = notes
         self.board = Board(notes)
         self._fill_board()
-        self.alternatives, self.proposals = {}, {}  # they were for other text
+        self.alternatives, self.proposals, self.mark_suggestions = {}, {}, {}  # they were for other text
+        self.llm_failed = set()
         if self.follow is not None:
             self.follow.notes = notes
         self.notes_version += 1
@@ -370,7 +379,8 @@ class Takes:
     def ask_alternatives(self, sentence: int, word: int) -> None:
         """Opening the options ring on a word: ask once for alternatives."""
         key = (sentence, word)
-        if self.assistant is None or key in self.alternatives or self.assistant.asking("alternatives", key):
+        if self.assistant is None or key in self.alternatives or self.assistant.asking("alternatives", key) \
+                or ("alternatives", key) in self.llm_failed:
             return
         s = self.notes.sentences[sentence]
         text = s.words[word].text
@@ -389,19 +399,55 @@ class Takes:
         return f"ASKING FOR A {'WARMER' if kind == 'tone' and amount > 0 else 'COOLER' if kind == 'tone' else 'LONGER' if amount > 1 else 'SHORTER'} VERSION..."
 
     def ask_marks(self, sentence: int) -> str:
+        """An open palm (or m) on a focused sentence: ask once for suggested marks
+        (kept for this notes revision, like the ring's alternatives). Returns a
+        label note only when there is no LLM to ask."""
         if self.assistant is None:
             return f"MARK SUGGESTIONS {self.no_llm}"
+        key = (sentence,)
+        if sentence in self.mark_suggestions or self.assistant.asking("marks", key) or ("marks", key) in self.llm_failed:
+            return ""
         words = [w.text for w in self.notes.sentences[sentence].words]
-        self.assistant.ask("marks", (sentence,), self._llm_revision(),
+        self.assistant.ask("marks", key, self._llm_revision(),
                            marks_request(words), lambda reply: parse_marks(reply, len(words)))
         self.log(time.perf_counter() - self.t0, "llm", ask="marks", sentence=sentence)
-        return "ASKING FOR MARK SUGGESTIONS..."
+        return ""
+
+    def suggestion_view(self, sentence: int) -> tuple[str, object, tuple[str, ...]]:
+        """What the focused sentence shows while its marks are spread: a state
+        (off, asking, failed, empty, ready), the sentence with every suggestion
+        added, and per mark of it "suggested" or "" (as written)."""
+        if self.assistant is None:
+            return "off", None, ()
+        if self.assistant.asking("marks", (sentence,)):
+            return "asking", None, ()
+        if ("marks", (sentence,)) in self.llm_failed:
+            return "failed", None, ()
+        marks = self.mark_suggestions.get(sentence)
+        if marks is None:
+            return "asking", None, ()  # asked this frame
+        if not marks:
+            return "empty", None, ()
+        if self._suggest_view[0] != (sentence, self.notes_version):
+            preview = add_marks(self.notes, sentence, [(m.kind, m.word) for m in marks]).sentences[sentence]
+            states = tuple("suggested" if m in marks else "" for m in preview.marks)
+            self._suggest_view = ((sentence, self.notes_version), (preview, states))
+        preview, states = self._suggest_view[1]
+        return "ready", preview, states
+
+    def use_suggested_marks(self, sentence: int) -> str:
+        """Pinch + lift on spread marks: every suggestion, as one new revision."""
+        marks = self.mark_suggestions.get(sentence)
+        if not marks:
+            return "NO MARKS TO ADD: NOTHING CHANGED"
+        note = self._save_edit(add_marks(self.notes, sentence, [(m.kind, m.word) for m in marks]),
+                               f"{len(marks)} suggested mark{'s' if len(marks) != 1 else ''} added",
+                               op="marks", sentence=sentence, marks=[[m.kind, m.word] for m in marks])
+        return note or f"ADDED {len(marks)} MARK{'S' if len(marks) != 1 else ''}  /  U: UNDO"
 
     def poll_llm(self) -> str:
-        """Answers in: alternatives onto the ring, rewrites and marks as proposals.
-        One made on notes that have changed since is dropped."""
-        from palmcards.export import marked
-
+        """Answers in: alternatives onto the ring, marks spread in the sentence,
+        rewrites as proposals. One made on notes that have changed since is dropped."""
         if self.assistant is None:
             return ""
         answers = self.assistant.poll()
@@ -416,15 +462,18 @@ class Takes:
                 if a.reason == "API KEY REJECTED":
                     self.llm_alert = "CLOUD LLM: API KEY REJECTED (SEE TERMINAL)"
                 note = f"{self.LLM_WHAT.get(a.kind, a.kind.upper())} FAILED: {a.reason}, NOTHING CHANGED"
+                self.llm_failed.add((a.kind, a.key))
                 continue
             if a.kind == "alternatives":
                 self.alternatives[a.key] = tuple(a.value)
                 continue
             if a.kind == "marks":
-                preview = marked(add_marks(self.notes, a.key[0], a.value).sentences[a.key[0]])
-            else:
-                preview = a.value
-            self.proposals[a.key] = (a.kind, a.value, preview)
+                sentence = a.key[0]
+                self.mark_suggestions[sentence] = tuple(new_marks(self.notes.sentences[sentence], a.value))
+                if not self.mark_suggestions[sentence]:
+                    note = "NO NEW MARKS SUGGESTED FOR THIS SENTENCE"
+                continue
+            self.proposals[a.key] = (a.kind, a.value, a.value)
             note = "PROPOSAL READY: FOCUS IT AGAIN TO SEE IT"
         return note
 
@@ -465,13 +514,9 @@ class Takes:
 
     def use_proposal(self, unit: tuple[int, ...]) -> str:
         kind, value, _ = self.proposals.pop(unit)
-        if kind == "marks":
-            notes = add_marks(self.notes, unit[0], value)
-        else:
-            notes = replace_text(self.notes, list(unit), value)
-        note = self._save_edit(notes, f"{kind} proposal used", op=kind, sentences=list(unit))
-        extra = "  (ITS MARKS WERE FOR THE OLD WORDS: MARK IT AGAIN)" if kind != "marks" else ""
-        return note or f"{kind.upper()} PROPOSAL USED{extra}  /  U: UNDO"
+        note = self._save_edit(replace_text(self.notes, list(unit), value), f"{kind} proposal used", op=kind,
+                               sentences=list(unit))
+        return note or f"{kind.upper()} PROPOSAL USED  (ITS MARKS WERE FOR THE OLD WORDS: MARK IT AGAIN)  /  U: UNDO"
 
     def undo(self) -> str:
         if self.session.current_revision is None or self.session._parsed is not None:
@@ -1115,6 +1160,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 if view.mode == "focus" and view.focus is not None and view.level in ("sentence", "paragraph") else ()
             proposal = takes.proposals.get(unit) if unit else None
             view.proposal = proposal[2] if proposal else ""
+            if view.mode == "focus" and view.level == "sentence" and view.focus is not None \
+                    and grammar.state.op == "marks":
+                takes.ask_marks(view.focus.sentence)  # opening the palm asks (once per sentence and revision)
+                view.suggest, view.suggest_sentence, view.suggest_marks = takes.suggestion_view(view.focus.sentence)
+            else:
+                view.suggest, view.suggest_sentence, view.suggest_marks = "", None, ()
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)
@@ -1243,8 +1294,11 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             render.set_contrast(prefs.high_contrast)
             overlay = TextOverlay(sentences, (w, h))  # its cached text was drawn in the old colours
         elif key == ord("m") and view.app == "prepare" and view.mode == "focus" and view.level == "sentence" \
-                and view.focus is not None:
-            view.note, note_until = takes.ask_marks(view.focus.sentence), time.perf_counter() + NOTE_S
+                and view.focus is not None and grammar.open_marks(now_t):  # the same as an open palm
+            view.ops.kind = "marks"
+            takes.llm_failed.discard(("marks", (view.focus.sentence,)))  # asking by key asks again
+            if note := takes.ask_marks(view.focus.sentence):
+                view.note, note_until = note, time.perf_counter() + NOTE_S
         elif key == ord("u") and view.app == "prepare":
             view.note, note_until = takes.undo(), time.perf_counter() + NOTE_S
         elif key == ord("a") and view.app == "review":

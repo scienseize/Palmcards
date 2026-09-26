@@ -344,3 +344,34 @@ def test_the_take_summary_card_shows_while_browsing_review():
     ov.draw(focused, ViewState(app="review", mode="focus", level="sentence", focus=Hit(0, None), summary=card))
     assert (drawn[bottom, right] != plain[bottom, right]).any()
     assert (focused[bottom, right] == 128).all()  # not over a focused panel
+
+
+def test_suggested_marks_are_drawn_faded_in_place():
+    from dataclasses import replace
+
+    from palmcards.edit import add_marks
+
+    notes = parse_text(TEXT)
+    ov = TextOverlay(notes.sentences, (1280, 720))
+    preview = add_marks(notes, 0, [("long_pause", 2), ("fall", None)]).sentences[0]
+    states = tuple("suggested" if m.kind in ("long_pause", "fall") else "" for m in preview.marks)
+    view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None), ops=OpsView(kind="marks"),
+                     llm="cloud", suggest="ready", suggest_sentence=preview, suggest_marks=states)
+    assert ov.label_lines(view)[1] == "2 MARKS SUGGESTED  /  PINCH + LIFT: ADD ALL  /  DROP HAND: DISCARD"
+
+    def drawn(v):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, v)
+        return frame[:, :700].astype(np.int64)
+
+    plain = drawn(replace(view, suggest="", suggest_sentence=None, suggest_marks=()))
+    suggested = drawn(view)
+    written = drawn(replace(view, suggest_marks=("",) * len(states)))  # the same marks, as if in the notes
+    assert (plain != suggested).any()  # they show, in the sentence
+    assert suggested.sum() < written.sum()  # fainter than marks that are in the notes
+    for state, text in (("asking", "SUGGESTING MARKS"), ("off", "MARK SUGGESTIONS NEED THE OPTIONAL LLM"),
+                        ("empty", "NO NEW MARKS SUGGESTED"), ("failed", "NO SUGGESTIONS")):
+        assert ov.label_lines(replace(view, suggest=state))[1].startswith(text)
+    hint = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None), llm="cloud")
+    assert ov.label_lines(hint)[1].startswith("OPEN PALM: SUGGEST MARKS")
+

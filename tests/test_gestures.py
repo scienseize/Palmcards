@@ -299,6 +299,41 @@ def test_sentence_fold_focus_and_tone_dial_is_relative():
     assert [(e.kind, e.op, e.value) for e in events] == [("commit", "tone", -1.0)]
 
 
+def prepare_sentence_focus():
+    g = Grammar((W, H))
+    _, t = run(g, hold(two, 0.3))
+    events, t = run(g, lerp_frames(hand, TWO_TIPS, TWO_FOLDED, 6), t)
+    assert [e.kind for e in events] == ["focus"]
+    return g, t
+
+
+def test_open_palm_on_a_focused_sentence_spreads_marks():
+    g, t = prepare_sentence_focus()
+    _, t = run(g, hold(l_hand, 0.3, rotate=-10) + hold(l_hand, 0.3, rotate=12.5), t)
+    assert g.state.op == "tone" and g.state.tone > 0.4
+    _, t = run(g, hold(open_palm, 0.3), t)  # an open palm switches to marks; the tone preview is dropped
+    assert g.state.op == "marks" and g.state.tone == 0.0
+    assert [e["op"] for e in g.log.entries if e["kind"] == "op"] == ["tone", "marks"]
+    _, t = run(g, hold(l_hand, 0.3, rotate=-30) + hold(l_hand, 0.3, rotate=30), t)
+    assert g.state.op == "marks" and g.state.tone == 0.0  # the L-hand no longer turns the tone dial
+    events, _ = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
+    assert [(e.kind, e.op) for e in events] == [("commit", "marks")]
+
+
+def test_marks_open_only_on_a_focused_sentence_in_prepare():
+    g = Grammar((W, H))
+    assert not g.open_marks(0.0)  # nothing focused
+    g, t = prepare_sentence_focus()
+    g.operations = False  # Review
+    assert not g.open_marks(t) and g.state.op is None
+    _, t = run(g, hold(open_palm, 0.3), t)
+    assert g.state.op is None
+    g.operations = True
+    assert g.open_marks(t) and g.state.op == "marks"  # the m key
+    g2, t2 = ring_focus()  # a focused word: the open palm is the ring, as before
+    assert not g2.open_marks(t2) and g2.state.op == "ring"
+
+
 def test_paragraph_two_l_hands_stretch_relative_to_start():
     g = Grammar((W, H))
     _, t = run(g, hold(flat, 0.3))

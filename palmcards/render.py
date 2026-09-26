@@ -11,7 +11,9 @@ cursor_to_text() maps the relative hand-box cursor to such a point.
 On top of the text: the two-line state label (Kat's `BROWSE BY WORD`), and
 Prepare's operations: the options ring (the original word, its alternatives
 when the optional LLM is on, stress and "hear it"), and the tone gauge and
-stretch line; without the LLM these two only preview, and say so. While the
+stretch line; without the LLM these two only preview, and say so. An open
+palm on a focused sentence spreads the LLM's suggested marks in it, faded
+(style COLORS.suggest_mark), where they would go. While the
 cloud LLM is on, a CLOUD LLM chip sits at the bottom left ("SENDING" while a
 request is out).
 
@@ -84,7 +86,7 @@ FOCUS_HINTS = {  # without the optional LLM
 }
 FOCUS_HINTS_LLM = {
     "word": "OPEN PALM: ALTERNATIVES, STRESS, HEAR IT  /  DROP HAND: BACK",
-    "sentence": "L-HAND, THEN TILT: TONE  /  DROP HAND: BACK",
+    "sentence": "OPEN PALM: SUGGEST MARKS  /  L-HAND: TONE  /  DROP HAND: BACK",
     "paragraph": "TWO L-HANDS: LENGTH  /  DROP HAND: BACK",
 }
 NEEDS_LLM = "(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)"
@@ -95,6 +97,7 @@ KEYS_HELP = (
     "N B  NEXT / PREVIOUS SECTION     U  UNDO EDIT",
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
     "A  PLAY SENTENCE     P  BACK TO PREPARE",
+    "M  SUGGEST MARKS (FOCUSED SENTENCE)",
     "E  CALIBRATE EYES AT THE NEXT TAKE",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
 )
@@ -116,7 +119,7 @@ class Hit:
 class OpsView:
     """What the operation stubs show; filled from the gesture state."""
 
-    kind: str | None = None  # ring | tone | stretch
+    kind: str | None = None  # ring | tone | marks | stretch
     picked: int = 0  # ring node, 0 = original word, clockwise from the top
     pointing: bool = False
     tone: float = 0.0  # -1 cold .. 1 warm
@@ -167,6 +170,12 @@ class ViewState:
     proposal: str = ""
     llm: str = ""  # the optional LLM in use: "cloud" (the text asked about leaves the Mac), "local", or ""
     llm_busy: bool = False  # a request is out
+    # Prepare, marks spread on a focused sentence: "off" (no LLM), "asking",
+    # "failed", "empty" or "ready"; when ready, the sentence with every
+    # suggestion added, and per mark of it "suggested" or "" (as written).
+    suggest: str = ""
+    suggest_sentence: Sentence | None = None
+    suggest_marks: tuple[str, ...] = ()
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
 
@@ -451,6 +460,15 @@ class TextOverlay:
         elif ops.kind == "tone":
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
             second = f"SENTENCE TONE: {tone}  " + ("/  PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM)
+        elif ops.kind == "marks":
+            n = sum(1 for m in state.suggest_marks if m == "suggested")
+            second = {
+                "off": "MARK SUGGESTIONS NEED THE OPTIONAL LLM: NOTHING SENT",
+                "asking": "SUGGESTING MARKS" + "." * (int(time.time() * 2) % 4),
+                "failed": "NO SUGGESTIONS  /  DROP HAND, FOCUS AGAIN TO RETRY",
+                "empty": "NO NEW MARKS SUGGESTED  /  DROP HAND: BACK",
+                "ready": f"{n} MARK{'S' if n != 1 else ''} SUGGESTED  /  PINCH + LIFT: ADD ALL  /  DROP HAND: DISCARD",
+            }.get(state.suggest, "")
         elif ops.kind == "stretch":
             change = "LONGER" if ops.stretch > 1.05 else "SHORTER" if ops.stretch < 0.95 else "SAME"
             second = f"PARAGRAPH LENGTH: {change}  x{ops.stretch:.2f}  " + \
@@ -597,18 +615,22 @@ class TextOverlay:
         return None
 
     def _focus_panel(self, unit: tuple[int, ...], detail: tuple[tuple[str, str], ...] = (),
-                     verdicts: tuple = (), current: int | None = None, preview_from: int | None = None) -> Panel:
+                     verdicts: tuple = (), current: int | None = None, preview_from: int | None = None,
+                     suggest: tuple | None = None) -> Panel:
         """The unit's sentences enlarged, then the detail lines (Review's
         verdicts), faint context rows around them when there is room.
+        With `suggest` (sentence, that sentence with the suggested marks added,
+        each mark's state), it is drawn that way, the suggestions faded.
 
         Laid out whole: when it is taller than the viewport, draw() shows a
         scrolled part of it. With `current`, that sentence is orange and the
         rest of the unit dimmed (Rehearse); sentences from `preview_from` on
         (the next section, previewed) are faint."""
-        key = (unit, detail, verdicts, current, preview_from)
+        key = (unit, detail, verdicts, current, preview_from, suggest)
         if self._panel_key == key:
             return self._panel
-        sents = [self.sentences[i] for i in unit]
+        sents = [suggest[1] if suggest and i == suggest[0] else self.sentences[i] for i in unit]
+        states = suggest[2] if suggest else ()
         dfont = self._get_font(round(self.font_size * DETAIL.scale))
         dlh = round(self.line_h * DETAIL.scale)
         bullet = dlh // 2
@@ -645,7 +667,11 @@ class TextOverlay:
                 si = sentence_of(row)
                 word_c, mark_c = colors(si)
                 for col, sp in row.spans:
-                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, word_c, mark_c,
+                    mc = mark_c
+                    if suggest and si == suggest[0] and sp.mark is not None and sp.mark < len(states) \
+                            and states[sp.mark] == "suggested":
+                        mc = C.suggest_mark
+                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, word_c, mc,
                                     self._verdict(verdicts, si, sp))
                 top, bottom = where.get(si, (y_, y_))
                 where[si] = (min(top, y_), max(bottom, y_ + lh_))
@@ -699,8 +725,10 @@ class TextOverlay:
         unit = self._panel_unit(state)
         if unit is None:
             return None
+        suggest = (state.focus.sentence, state.suggest_sentence, state.suggest_marks) \
+            if state.suggest_sentence is not None and state.focus is not None else None
         return self._focus_panel(unit, state.detail, state.mark_verdicts, self._panel_current(state, unit),
-                                 self._preview_from(state, unit))
+                                 self._preview_from(state, unit), suggest)
 
     def panel_view_h(self, panel: Panel) -> int:
         return min(panel.height, self.max_panel_h)
