@@ -21,8 +21,8 @@ Full design note: https://claude.ai/artifact/2mB94zAhFAKUNK7GnCsqSc
 | Camera and compositing | OpenCV |
 | Text rendering | Pillow with a TTF monospace font (DejaVu Sans Mono, shipped in `palmcards/fonts/`), pasted onto the frame (OpenCV's built-in fonts are too crude) |
 | Hands | MediaPipe Hand Landmarker + Gesture Recognizer (built-in classes: Closed_Fist, Open_Palm, Thumb_Up, Pointing_Up) |
-| Gaze | MediaPipe Face Landmarker (head pose + iris) |
-| Posture | MediaPipe Pose Landmarker (lower frame rate than hands) |
+| Gaze | MediaPipe Face Landmarker (head pose + iris), during calibration and takes only, every Nth frame (`BODY` in `config.py`) |
+| Posture | MediaPipe Pose Landmarker (lower frame rate than hands), during calibration and takes only, every Nth frame (`BODY`) |
 | Audio capture | sounddevice; each take streamed to disk as it is recorded (`palmcards/recording.py`), recoverable after a crash |
 | Transcription | mlx-whisper (or whisper.cpp), after each take, with word timestamps; language set per session. Behind one interface (`palmcards/asr.py`, engine picked by `SPEECH.backend`), which also has the live stream for 6b: Whisper base re-read every 0.3 s by default, Apple's on-device recogniser (`palmcards/asr_apple.py`, pyobjc) as the alternative |
 | Prosody | librosa: `pyin` for pitch, RMS for loudness |
@@ -303,7 +303,7 @@ palmcards/
 │   ├── cues.py          # planned marks vs measured delivery -> verdicts
 │   ├── review.py        # which take each sentence shows in Review, verdict lines
 │   ├── metrics.py       # take metrics: pace, fillers, unplanned pauses, hand movement (gaze/posture pending)
-│   ├── llm.py           # optional LLM helper behind one interface
+│   ├── vision.py        # face and pose landmarkers at a reduced rate (calibration and takes only)
 │   ├── session.py       # session folders: schema, notes revisions, takes, lock, recovery
 │   ├── revisions.py     # notes snapshots with stable sentence/word/mark ids
 │   ├── analysis.py      # supervised analysis worker: job records, generations, retries
@@ -316,7 +316,7 @@ palmcards/
 │   ├── tutorial.py      # the first-run gesture tutorial
 │   └── export.py        # a notes revision back out as .txt / .md / .docx (python -m palmcards.export)
 ├── models/              # MediaPipe .task files (gitignored; scripts/download_models.py, pinned + checksummed)
-├── scripts/             # download_models, bench_live, profile_align, evaluate, cut_gesture_samples
+├── scripts/             # download_models, bench_live, bench_vision, profile_align, evaluate, cut_gesture_samples
 ├── docs/                # implementation-progress (ledger), evaluation, hardware-smoke-test; local/ (gitignored)
 ├── requirements.lock.txt  # exact tested versions (uv pip freeze)
 ├── samples/             # sample notes with markup for testing
@@ -332,6 +332,7 @@ palmcards/
 - Keep camera/gesture code runnable standalone (`python -m palmcards.gestures` shows a debug view with landmarks and the detected gesture name).
 - Speech runs offline on recorded sessions: `python -m palmcards.speech sessions/<run>` (transcribe, judge and report; takes from before milestone 6 get their verdicts; `--realign` re-aligns and re-judges saved transcripts without Whisper or pyin, for tuning `ALIGN` and `CUES`) and `python -m palmcards.player sessions/<run> [--take N]` (hear a take with the notes highlighted as they're said).
 - Live recognition (6b) is benchmarked offline: `python scripts/bench_live.py sessions/<run> --take N [--model REPO] [--step S] [--where thread|process] [--camera SECONDS] [--json OUT]` replays a take in real time and reports live-word lag, wrong section jumps, sentence tracking and (with `--camera`) the frame rate; `--rescore OUT.json` re-scores saved runs after tuning `FOLLOW`.
+- The face and pose budget (milestone 7) is benchmarked on the camera: `python scripts/bench_vision.py [sessions/<run> --take N] [--seconds S] [--configs ...] [--json OUT]` runs the take-time load (hands every frame, the live follow replaying a take, a recording to a temporary folder) with Face Landmarker and Pose Landmarker at several frame strides, and reports frame rate, frame times, tracker latencies and a gate per setting. Sit in front of the camera as for a take while it runs.
 - Environment: `requirements.lock.txt` holds the tested versions (regenerate with `uv pip freeze --color never`); model revisions are pinned in `config.py` (Whisper) and `scripts/download_models.py` (MediaPipe, with SHA-256). Data lives where `palmcards/paths.py` says (`PALMCARDS_DATA` overrides; tests always use temporary folders). `pytest` is headless; hardware checks follow `docs/hardware-smoke-test.md`. Accuracy claims need labelled takes (`docs/evaluation.md`, `scripts/evaluate.py`); alignment performance: `scripts/profile_align.py`.
 - macOS needs Camera and Microphone permission for the terminal app running Python (System Settings > Privacy & Security).
 
@@ -349,6 +350,10 @@ palmcards/
     - Highlight the current sentence inside the section panel (teleprompter-style). Show the next section when its predecessor's last sentence *starts*, to hide the lag.
     - Going off script stalls the follow (correct); a flick moves on by hand and corrects a wrong jump.
     - The live match is display only; the full transcription after the take stays the record. Each `sections` entry in `session.json` notes whether it came from the voice or a flick.
-7. **Metrics:** gaze, posture, fidgeting, filler rate.
+7. **Metrics:** done: speech (pace, fillers, unplanned long pauses, restarts, ad-libs) and hand-shape changes (`palmcards/metrics.py`). Left:
+    - Gaze: Face Landmarker (head pose + iris), calibrated inside the count-in (the dot by the camera, then the highlighted line), each frame classed camera / notes / away / unclear, counted only while speaking, validated with prompted takes (`scripts/evaluate.py`).
+    - Posture: Pose Landmarker, shoulder tilt and head drop against the calibration.
+    - Hand movement and face touches on every take, not only with `--trace`.
+    - Face and pose run only during calibration and takes, never in Prepare or Review, at the frame strides the stage-0 benchmark set (`BODY` in `config.py`, `scripts/bench_vision.py`). Observations only, None + reason when the evidence is thin.
 8. **Edit gestures + LLM:** Operate and Commit in Prepare: word options ring (LLM synonyms, stress node, hear-it node via macOS `say`) with L-hand preview, sentence tone dial, faded LLM-suggested delivery marks toggled by L-hand, two-L-hand length stretch; pinch + lift commits; glyph-scramble while the LLM works.
 9. **Export:** revised notes back to the original format. Done as `python -m palmcards.export RUN [--revision ID] [--format txt|md|docx] [--out PATH]` (`palmcards/export.py`): always a new file (default: the session's `exports/`), unedited sentences keep their markup, edited ones are rebuilt from their marks; what a format can't hold is reported.

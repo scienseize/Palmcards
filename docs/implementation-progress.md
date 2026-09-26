@@ -21,6 +21,7 @@ user runs them. They are never inferred from unit tests.
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
 | 8 — Product completion | Implemented, validation pending | Six slices: reopen + playback; export; stress edits + undo; optional LLM (off by default); tutorial, hints, preferences; take metrics (speech, hands; gaze/posture not measured) | 381 passed | Hardware checks; decisions: cloud LLM provider, left-handed layout, backward flick; gaze/posture need models + calibration |
 | End-to-end release gate | Passed on hardware (2026-09-26), 4 items covered by automated tests only | scripts/hardware_check.py; the user's 10-step smoke test | 2026-09-26: camera 29.9 fps, loop 30.2 fps, hands 12.8 ms, draw 3.2 ms; mic 48 kHz with device clock (adc), no overflows; click round trip 113.6 ms; live model ready 1.6 s; say ok ; smoke test steps 1-10 all passed, frame rate stable throughout (user) | Live checks of worker retry, truncated endings, editing the imported file, long sessions |
+| M7 stage 0 — Face/pose budget | Measured on hardware (2026-09-26) | CLAUDE.md milestone 7 rewritten to what's left, duplicate llm.py line removed; `BODY` config; palmcards/vision.py (face and pose trackers, not in the app yet); scripts/bench_vision.py | 388 passed; five benchmark runs by the user (sessions/bench-vision*.json) | Cool: every rate keeps 30 fps. Warm (after 2.5-3.5 min): every rate costs frames, and hands-only also slows (see log). Rates set to face every 6th, pose every 15th frame; Stage 1 decides on backing off when frames run late |
 
 ## Log
 
@@ -732,6 +733,60 @@ Reason for any departure from this plan: gaze, posture and face touching are not
   they need new models at runtime (with their cost to the camera loop measured), a calibration
   step and validation against people; reporting them as "not measured" is the honest state.
 Next action: the end-to-end release gate on the target Mac (hardware; user).
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: Milestone 7, stage 0 (housekeeping and the face/pose performance budget)
+Status: measured on hardware; no metric code
+Current HEAD / optional commit ID: 1dc7f70 -> stage 0 commit (see git log)
+Pre-existing changes preserved: yes.
+Files and behavior changed:
+  CLAUDE.md: milestone 7 lists what is done (speech metrics, hand-shape changes) and what is left
+    (gaze, posture, hand movement and face touches on every take; face and pose only during
+    calibration and takes); duplicate llm.py line removed; vision.py, bench_vision, BODY noted.
+  palmcards/config.py: BODY (face/pose frame strides and offsets, image size, confidences).
+  palmcards/vision.py (new): FaceTracker, PoseTracker on a shared LandmarkTask (LIVE_STREAM, every
+    Nth frame, skipped while busy, busy timeout, latency and found counters). Not wired into the app.
+  scripts/bench_vision.py (new): the take load (hands every frame, Rehearse overlay, a transcribed
+    take replayed through the live follow, the microphone recorded to a temporary folder) plus face
+    and pose at chosen strides; per setting: fps, frame times, hand/face/pose latency, results per
+    second, share found, live read times, dropped audio, macOS thermal state; gate against the
+    nearest earlier baseline.
+  tests/test_vision.py (new, 7 tests, fake task, no model files).
+Migration / compatibility implications: none.
+Tests run and exact outcome: pytest (full) -> 388 passed.
+Manual / hardware checks performed (the user in front of the camera; face found in 97-100% of
+  results except one 85% setting; MacBook Air M3, 1280x720 at 30 fps, live Whisper base every
+  0.3 s in a process):
+  run 1 (stopped after 3 settings): base 30.0 fps, hands 15.1 ms; face every 2nd frame 30.0 fps,
+    face 10.0 ms at 15/s; every 3rd 30.0 fps.
+  run 2 (base, p3, p5, f2p3, f2p5, f3p3, f3p5, base): all fine for the first ~3 min (f2p3 30.0 fps,
+    hands 13.1 ms); after that f2p5, f3p3 and f3p5 failed and the last baseline was slower
+    (work 5.5 -> 9.4 ms per frame).
+  run 3 (reversed): f3p5, f3p3 fine; f2p5 24.9 fps, f2p3 20.6 fps with hands 100 ms; the last
+    baseline failed as well (hands 13 -> 53 ms, live read p90 135 -> 242 ms). So the order,
+    not the setting, decided which settings failed.
+  run 4 (base, f3p5, f3p3 interleaved x4): cool, both 30.0 fps. Warm: base 26.5-29.6 fps, hands
+    35-48 ms; f3p5 22.9-25.3 fps, hands 48-78 ms; f3p3 25.5-26.6 fps, hands 46-54 ms; live read
+    p90 240-312 ms (the read step is 300 ms).
+  run 5 (base, f5p10, f6p15 interleaved x3): cool, all 30.0 fps. A step at ~3.5 min: per-frame
+    work 6-7 -> 15-20 ms for every setting, hands-only included; live read p90 briefly 0.8-1.2 s.
+    Afterwards base 26.1-27.3 fps; f5p10 24.4-25.1; f6p15 26.9 (level with the baseline).
+  No audio was dropped in any run. The "fair" thermal state came within the first minute and did
+    not by itself mark the step.
+  MediaPipe keeps 16 threads and about 14 MB of each closed face + pose pair (idle, 0% CPU): trackers
+    must be made once and kept.
+Unverified assumptions and remaining risks: the step looks like the fanless Mac throttling under
+  the take load as a whole; which part heats it most (live Whisper every 0.3 s, hands every frame)
+  was not measured. The warm slowdown of hands-only (hand latency 13 -> 35-94 ms, live reads
+  slower) applies to the app as it is today, not only to milestone 7.
+Reason for any departure from this plan: the plan expected one matrix run to name the rates.
+  Heat decided the outcome more than the settings did, so the benchmark was changed to reuse
+  trackers, report the thermal state and gate against the nearest baseline, and further
+  interleaved runs followed.
+Next action: stage 1 (capture and calibration) with BODY face every 6th frame (5/s) and pose every
+  15th (2/s); decide there whether face and pose back off when frames run late.
 ```
 
 ## Decisions (2026-09-26, by the user)

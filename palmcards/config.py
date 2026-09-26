@@ -19,6 +19,26 @@ class Tracking:
 
 
 @dataclass(frozen=True)
+class Body:
+    # Face and pose landmarkers (palmcards.vision), only during calibration and
+    # takes. Each runs on every Nth camera frame, offset so face, pose and the
+    # hands (every frame) don't all start on the same frame. Rates from
+    # scripts/bench_vision.py (2026-09-26): cool, every rate down to face every
+    # 2nd and pose every 3rd frame kept 30 fps; once the Mac was warm (after
+    # 2.5-3.5 min of take load) all rates cost frames, and these, the lowest
+    # tried (face 5/s, pose 2/s), were the only ones level with hands alone.
+    face_every: int = 6
+    face_offset: int = 1
+    pose_every: int = 15
+    pose_offset: int = 2
+    max_side: int = 640  # frames are downscaled to this before landmarking
+    busy_timeout_s: float = 0.5  # give up on a result that never arrived
+    min_detection: float = 0.5
+    min_presence: float = 0.5
+    min_tracking: float = 0.5
+
+
+@dataclass(frozen=True)
 class Pose:
     extended_ratio: float = 1.15  # dist(wrist, tip) > this * dist(wrist, pip)
     thumb_out: float = 0.9  # dist(thumb tip, index MCP) > this
@@ -283,6 +303,7 @@ class Voice:
 
 
 TRACKING = Tracking()
+BODY = Body()
 POSE = Pose()
 TIMING = Timing()
 CURSOR = Cursor()
