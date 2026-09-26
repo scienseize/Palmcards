@@ -20,7 +20,7 @@ user runs them. They are never inferred from unit tests.
 | 6 — Live following/state | Implemented, validation pending | Live stream states (starting/ready/failed/closed), LiveFollow (non-blocking tap, feeder, failure containment), app integration (sentence highlight, viewport, next-section preview, voice/flick/key section sources, per-take live stats), typed drill target, benchmark readiness/tracking/frame-time fixes | 292 passed; real-engine smoke on a recorded take (in-order follow, section +1.3 s, median lag 0.74 s) | Live mic + camera run; backward flick gesture undecided |
 | 7 — Setup/evaluation | Implemented, validation pending | Lock file, pinned+checksummed models (required vs optional), CI workflow (not run), README, configurable data dir, data CLI (list/export/delete/prune), compiled alignment fill (identical results), evaluation protocol + script, hardware smoke-test doc | 343 passed; alignment 1200 words 67.7 s -> 0.12 s; pinned-model transcript identical | Collect consented labelled takes; run CI after push (needs your go-ahead) |
 | 8 — Product completion | Implemented, validation pending | Six slices: reopen + playback; export; stress edits + undo; optional LLM (off by default); tutorial, hints, preferences; take metrics (speech, hands; gaze/posture not measured) | 381 passed | Hardware checks; decisions: cloud LLM provider, left-handed layout, backward flick; gaze/posture need models + calibration |
-| End-to-end release gate | In progress | scripts/hardware_check.py (automatic part) | 2026-09-26: camera 29.9 fps, loop 30.2 fps, hands 12.8 ms, draw 3.2 ms; mic 48 kHz with device clock (adc), no overflows; click round trip 113.6 ms; live model ready 1.6 s; say ok | Interactive checklist below (gestures, a real take, clap, recovery, reopen) |
+| End-to-end release gate | Passed on hardware (2026-09-26), 4 items covered by automated tests only | scripts/hardware_check.py; the user's 10-step smoke test | 2026-09-26: camera 29.9 fps, loop 30.2 fps, hands 12.8 ms, draw 3.2 ms; mic 48 kHz with device clock (adc), no overflows; click round trip 113.6 ms; live model ready 1.6 s; say ok ; smoke test steps 1-10 all passed, frame rate stable throughout (user) | Live checks of worker retry, truncated endings, editing the imported file, long sessions |
 
 ## Log
 
@@ -753,18 +753,18 @@ Next action: the end-to-end release gate on the target Mac (hardware; user).
 `import -> prepare -> rehearse -> review -> play a sentence -> drill -> close -> reopen the saved session`
 (`python main.py notes.md`, then `python main.py --open RUN`). Tick each item after checking it live:
 
-- [ ] Every sentence and verdict is reachable without clipping.
-- [ ] Gesture controls work, with a reliable fallback stop and navigation route (keys t x n b j k).
-- [ ] An interrupted take is preserved and recoverable, with an accurate status.
-- [ ] A worker failure can be retried (r) without duplicate or mismatched results.
-- [ ] Missing terminal speech does not receive an ending-intonation hit or miss.
-- [ ] Editing or moving the imported document does not alter past takes.
-- [ ] New edits create revisions and support undo (u); old takes keep their meaning.
-- [ ] Recording, live-follow and analysis clocks and discontinuities line up (clap test).
-- [ ] Long sessions have bounded queues and memory, and measured performance.
-- [ ] Saved sessions reopen, and Review and playback use their own snapshots.
-- [ ] The available controls match what is implemented.
-- [ ] Automated tests (pytest: 381 passed on 2026-09-26) and manual checks are reported separately.
+- [x] Every sentence and verdict is reachable without clipping. (smoke test 3, 4)
+- [x] Gesture controls work, with a reliable fallback stop and navigation route (keys t x n b j k). (2, 3, 5)
+- [x] An interrupted take is preserved and recoverable, with an accurate status. (6: Ctrl-C and kill -9)
+- [ ] A worker failure can be retried (r) without duplicate or mismatched results. (automated tests only: tests/test_analysis.py)
+- [ ] Missing terminal speech does not receive an ending-intonation hit or miss. (automated tests + the real-session re-judge in Phase 5)
+- [ ] Editing or moving the imported document does not alter past takes. (automated tests only: tests/test_session.py)
+- [x] New edits create revisions and support undo (u); old takes keep their meaning. (2, 10)
+- [x] Recording, live-follow and analysis clocks and discontinuities line up (clap test). (7: within the 50 ms bound; exact offset not recorded)
+- [ ] Long sessions have bounded queues and memory, and measured performance. (bounded by design and tests; no long live session run)
+- [x] Saved sessions reopen, and Review and playback use their own snapshots. (9)
+- [x] The available controls match what is implemented. (2, 4)
+- [x] Automated tests (pytest: 381 passed on 2026-09-26) and manual checks are reported separately.
 
 ```text
 Date: 2026-09-26
@@ -788,4 +788,20 @@ Evidence or artifact paths: sessions/hardware/check-*.json (gitignored).
 Unverified assumptions and remaining risks: the interactive checklist (gestures, voice follow in a
   real take, clap test, recovery after a kill, reopen and playback, keys) still needs the user.
 Next action: the user runs the interactive release-gate checklist.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: end-to-end release gate, interactive part
+Status: passed on the target Mac (user-reported)
+Current HEAD / optional commit ID: db500c9 -> ledger commit (see git log)
+Manual / hardware checks performed: the user ran all 10 steps of docs/hardware-smoke-test.md on the
+  MacBook Air: start, Prepare gestures (tutorial, ring, hear it, stress + undo, tone message), a
+  take with voice follow and flick, Review (chips, paging, playback, drill), keys-only take,
+  recovery (Ctrl-C and kill -9), clap test (within 50 ms; offset not written down), close,
+  reopen, export. All passed; frame rate stable throughout.
+Not exercised live (automated tests only): analysis worker failure + retry, an ending cut short,
+  editing/moving the imported file, a long session.
+Next action: open decisions (cloud LLM provider, backward flick, left-handed layout, push/CI,
+  evaluation data).
 ```
