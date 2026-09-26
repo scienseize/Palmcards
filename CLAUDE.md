@@ -317,7 +317,7 @@ palmcards/
 │   ├── player.py        # debug player: a take's audio with the notes highlighted as they're said
 │   ├── replay.py        # replay recorded hand landmarks through the gesture code (regression)
 │   ├── cues.py          # planned marks vs measured delivery -> verdicts
-│   ├── review.py        # which take each sentence shows in Review, verdict lines
+│   ├── review.py        # which take each sentence shows in Review, verdict and gaze lines, the take summary card
 │   ├── metrics.py       # take metrics: pace, fillers, unplanned pauses, hand movement (gaze/posture pending)
 │   ├── vision.py        # face and pose landmarkers at a reduced rate (calibration and takes only)
 │   ├── session.py       # session folders: schema, notes revisions, takes, lock, recovery
