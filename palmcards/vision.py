@@ -285,7 +285,7 @@ class Watcher:
 
     def hands(self, hands: list, t: float) -> None:
         """A hand-tracking result (palmcards.gestures.Hand list); recorded during takes."""
-        if self.state != "take" or self.size is None:
+        if self.state != "take" or self.size is None or t < self.t0:
             return
         pts = [np.asarray(h.points, dtype=np.float64) for h in hands]
         box = self._face_box[1] if self._face_box and t - self._face_box[0] <= BODY.face_box_max_age_s else None
@@ -296,7 +296,9 @@ class Watcher:
         if self.size is None:
             return
         w, h = self.size
-        if (got := self.face.poll()) is not None:
+        # A result for a frame from before this calibration or take began (it was
+        # still being worked on) belongs to neither.
+        if (got := self.face.poll()) is not None and got[1] >= self.t0:
             result, t = got
             row = None
             if result.face_landmarks:
@@ -305,7 +307,7 @@ class Watcher:
                 row = features.face_row(pts, np.asarray(matrices[0]) if matrices else None)
                 self._face_box = (t, row["box"])
             self.rows.add_face(t, row)
-        if (got := self.pose.poll()) is not None:
+        if (got := self.pose.poll()) is not None and got[1] >= self.t0:
             result, t = got
             row = None
             if result.pose_landmarks:

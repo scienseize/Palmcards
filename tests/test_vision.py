@@ -232,3 +232,18 @@ def test_hands_are_only_recorded_during_takes():
     run_frames(w, 0.0, 0.2)
     w.hands([Hand(hand(900, 600))], 0.1)
     assert w.rows.hand == []
+
+
+def test_a_result_from_before_the_take_began_is_not_the_takes():
+    held = []
+    w = Watcher(FaceTracker(make_task=lambda cb: held.append(FakeTask(cb)) or held[-1]),
+                PoseTracker(make_task=lambda cb: FakeTask(cb)), {})
+    w.begin_calibration(0.0)
+    w.frame(FRAME, 1.0, 1)  # submitted during the calibration, answered after the take began
+    w.finish_calibration(4.2)
+    w.begin_take(4.2)
+    held[0].answer(face_result())
+    w.frame(FRAME, 4.25, 2)
+    w.hands([Hand(hand(900, 600))], 4.0)  # a hand result from before the take, too
+    rows, counts = w.end_take()
+    assert rows.face == [] and rows.hand == []

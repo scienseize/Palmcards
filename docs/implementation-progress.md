@@ -22,7 +22,7 @@ user runs them. They are never inferred from unit tests.
 | 8 — Product completion | Implemented, validation pending | Six slices: reopen + playback; export; stress edits + undo; optional LLM (off by default); tutorial, hints, preferences; take metrics (speech, hands; gaze/posture not measured) | 381 passed | Hardware checks; decisions: cloud LLM provider, left-handed layout, backward flick; gaze/posture need models + calibration |
 | End-to-end release gate | Passed on hardware (2026-09-26), 4 items covered by automated tests only | scripts/hardware_check.py; the user's 10-step smoke test | 2026-09-26: camera 29.9 fps, loop 30.2 fps, hands 12.8 ms, draw 3.2 ms; mic 48 kHz with device clock (adc), no overflows; click round trip 113.6 ms; live model ready 1.6 s; say ok ; smoke test steps 1-10 all passed, frame rate stable throughout (user) | Live checks of worker retry, truncated endings, editing the imported file, long sessions |
 | M7 stage 0 — Face/pose budget | Measured on hardware (2026-09-26) | CLAUDE.md milestone 7 rewritten to what's left, duplicate llm.py line removed; `BODY` config; palmcards/vision.py (face and pose trackers, not in the app yet); scripts/bench_vision.py | 388 passed; five benchmark runs by the user (sessions/bench-vision*.json) | Cool: every rate keeps 30 fps. Warm (after 2.5-3.5 min): every rate costs frames, and hands-only also slows (see log). Rates set to face every 6th, pose every 15th frame; Stage 1 decides on backing off when frames run late |
-| M7 stage 1 — Capture and calibration | Implemented, validation pending | Face, pose and hand features during every take (take-NN.face.npz with provenance); the eye calibration in the session's first count-in (dot, then the orange line; `e` redoes it), kept in session.json (schema 3); face/pose wait for a later frame when one is late | 412 passed; the real models run on the camera (calibration ok, 24 frames per step; take rows at 5/s face, 2/s pose) | The calibration and a take in the app, by the user; stage 2 (gaze) |
+| M7 stage 1 — Capture and calibration | Checked on hardware (2026-09-26) | Face, pose and hand features during every take (take-NN.face.npz with provenance); the eye calibration in the session's first count-in (dot, then the orange line; `e` redoes it), kept in session.json (schema 3); face/pose wait for a later frame when one is late | 413 passed; the user's session 20260926-115417: calibration ok, `e` redid it, a covered camera failed it with its reason; takes at 5/s face, 2/s pose, 30/s hands, face found 100% | The two calibration targets barely differ (see log); a face-box overlap is not a face touch in a close-up frame; stage 2 (gaze) |
 
 ## Log
 
@@ -837,6 +837,23 @@ Unverified assumptions and remaining risks: the dot is drawn at the frame's top 
   ~30 px); a take cut short by a crash (kill -9) has no feature file.
 Next action: the user runs the calibration and a take in the app; then stage 2 (gaze classes and
   the prompted validation take).
+Hardware check (2026-09-26, the user; session 20260926-115417-sample_notes-0dad82):
+  first count-in: dot, then the orange line; c1 ok (face in 21 and 24 frames after settling, pose
+    22). Take 2: plain count-in. `e` then take 3: c2 with the camera covered -> failed, "face seen in
+    5 frames looking at the camera and face seen in 0 frames looking at the notes (needs 8)".
+  takes 1-3: face 5.0/s, pose 2.0/s, hands 30/s, face found 100% (takes 1-2), nothing deferred or
+    skipped during takes; files, provenance and log events as specified.
+  Bug found and fixed: a face result for a frame from the calibration, answered after the take
+    began, was kept as the take's (take 3: 38 rows for 37 results). Results and hand results from
+    before a calibration or take began are now dropped (test added).
+  Findings for the next stages:
+    - c1's two targets barely differ: camera vs notes yaw -3.2 vs -4.1 deg, pitch -2.3 vs -0.9,
+      iris_x 0.496 vs 0.483, iris_y -0.081 vs -0.070, against spreads (MAD) up to 1.5 deg and
+      0.054 in the notes step. Stage 2 has to show whether camera and notes can be told apart;
+      the face now runs on a 640 px frame (a face ~170 px wide there), full resolution is an option.
+    - The face box reached the frame's bottom edge (a close-up, the face 340 x 410 px of 1280 x 720)
+      and every raised hand overlapped it: tip_face was 0 for 269 of 277 hand results in take 1.
+      A fingertip inside the face's bounding box is not a face touch in such a frame.
 ```
 
 ## Decisions (2026-09-26, by the user)
