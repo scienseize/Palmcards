@@ -945,6 +945,25 @@ Benchmark again at 1280 px (sessions/bench-vision-face1280b.json; base and f6p15
   face 6.6-6.9 ms at 5/s (found 96-100%), pose ~10 ms at 2/s, live read p90 122-126 ms, no audio
   dropped; face and pose level with hands alone. (The slowdown step of the stage 0 runs did not
   come in these 5 minutes.) BODY.face_max_side set to 1280.
+Gaze check at full resolution (session 20260926-125312-sample_notes-b6ff90, window kept in one
+  place; rule stated before looking: tune on take 1 only, best kappa, ties within 0.01 -> closest to
+  the current settings; take 2 reported once, unchanged):
+  calibrations: c1 separation 1.88 (unusable at the current settings), c2 2.22. The orange sentence
+    sat almost straight below the camera: yaw 1.6-1.8 deg apart, iris_x 0.009-0.020, pitch 2.4-4 deg.
+  take 1 (tune): best kappa 0.449 (15 settings tied); picked floors x0.5 with the vertical floors x2
+    on top, camera_radius 4, notes_radius 5. Camera recall 0.02: "camera" readings sat on the notes
+    baseline.
+  take 2 (held out): kappa 0.615, agreement 0.742; recall camera 0.67, notes 0.73, away 0.83.
+  Why: in every check session head pitch under the prompts read 3-9 deg higher than in the
+    calibration's camera step, silent readings included (so not speech moving the jaw), and already
+    in the take's first 2 s. Where the notes are below the camera, that is larger than the whole
+    camera-notes difference. The cause is not known; the calibration's raw readings are not saved.
+  Screen (camera or notes) vs away, the same classes merged, current settings, no separation gate:
+    kappa 0.84 and 0.87 (the two takes the settings were chosen on), 0.65, 0.79, 0.72 (the three
+    recorded after); over all five, screen recall 0.95, away recall 0.82.
+  Conclusion: camera vs notes is not reliable across sessions and window placements; screen vs away
+    is. GAZE left unchanged (the tuning pick is not adopted: its held-out result is worse than
+    screen vs away and camera recall on its own tuning take was 0.02).
 ```
 
 ## Decisions (2026-09-26, by the user)
