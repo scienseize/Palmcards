@@ -269,13 +269,27 @@ def parse_alternatives(reply: str, word: str) -> list[str]:
     return out[: LLM.max_alternatives]
 
 
+def rewrite_words(kind: str, before: int, amount: float) -> tuple[int, int]:
+    """(words to ask for, most words accepted) for a rewrite of `before` words:
+    a tone rewrite at most so many, a length rewrite about so many.
+    The model is given a number (it keeps to one far better than to "about as
+    long"), and the check leaves room above it: a warmer version naturally
+    adds a few words ("thank you so much, all of you, ...")."""
+    if kind == "tone":  # "about as long", as a ceiling
+        return round(before * 1.3) + 2, before * 2 + 4
+    target = max(1, round(before * amount))  # length: the length asked for
+    return target, target * 2 + 4
+
+
 def rewrite_request(kind: str, text: str, amount: float) -> tuple[str, str]:
     """kind "tone" (amount -1 cold/formal .. 1 warm/conversational) or "length" (amount = ratio)."""
+    ask, _ = rewrite_words(kind, len(text[: LLM.max_chars].split()), amount)
     if kind == "tone":
         how = ("warmer and more conversational" if amount > 0 else "more formal and reserved")
-        task = f"Rewrite it to sound {how}, keeping its meaning, about as long, as speech (not writing)."
+        task = (f"Rewrite it to sound {how}, keeping its meaning, as speech (not writing). "
+                f"Keep it about as long: {ask} words at most.")
     else:
-        task = (f"Rewrite it to about {amount:.1f} times its length ({'fuller' if amount > 1 else 'shorter'}), "
+        task = (f"Rewrite it {'fuller' if amount > 1 else 'shorter'}, to about {ask} words, "
                 "keeping its meaning and voice, as speech.")
     system = f'{GUARD} You help a speaker revise a passage they will say aloud. {task} Reply as {{"text": "..."}}.'
     return system, _notes(text)
@@ -288,9 +302,9 @@ def parse_rewrite(reply: str, original: str, kind: str, amount: float) -> str:
     if re.search(r"[\[\]*<>]|(^|\s)/{1,2}(\s|$)", text):
         raise ValueError("the rewrite contains markup")
     words, before = len(text.split()), max(1, len(original.split()))
-    limit = 1.6 if kind == "tone" else max(1.6, amount * 1.5)
-    if words > before * limit + 3:
-        raise ValueError(f"the rewrite is too long ({words} words for {before})")
+    _, limit = rewrite_words(kind, before, amount)
+    if words > limit:
+        raise ValueError(f"the rewrite is too long ({words} words for {before}; at most {limit})")
     return text
 
 

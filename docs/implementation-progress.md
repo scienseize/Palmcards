@@ -29,7 +29,8 @@ user runs them. They are never inferred from unit tests.
 | M8 stage 1 — Cloud LLM | Checked on hardware by the user (2026-09-26) | Anthropic provider (`claude-haiku-4-5`, `main.py --llm anthropic`, key from the environment or .env), JSON-schema answers, 10 s timeout + one bounded retry, CLOUD LLM chip, truthful tone/length labels, per-call token log (`llm-usage.jsonl`) and `python -m palmcards.llm usage` | 454 passed; the provider tested through the real SDK against a stand-in server on 127.0.0.1; no test sees a key or can reach the API | — |
 | M8 stage 2 — Open palm for marks | Checked on hardware by the user (2026-09-26) | An open palm (or `m`) on a focused sentence asks once per sentence and revision for marks, shown faded yellow in place (`edit.new_marks` keeps only what adds); pinch + lift adds all as one revision; a failed request is not re-sent until a new focus | 461 passed; gesture replay samples unchanged; panel rendered offline | — |
 | M8 stage 3 — Per-mark toggling | Checked on hardware by the user (2026-09-26) | On spread marks the L-hand is a knob through them (15°/step, relative, reading order, clamped), the current one outlined; a pinch without a lift accepts/rejects it (solid yellow); pinch + lift adds only the accepted ones as one revision; dropping the hand discards the choices | 468 passed; gesture replay samples unchanged; panel rendered offline | The L-to-pinch nudge confirmed by the user, on every L-hand control: fixed below |
-| M8 — L-hand dials held through a pinch | Implemented, validation pending | When the thumb of a hand working a dial (ring, marks, tone, stretch, take dial) closes toward the index tip or a pinch registers, the dial goes back to its value from just before the thumb started closing and holds, drawn bolder; marks knob and take dial clamped in the grammar | 477 passed; on the 7 recorded L-to-pinch moments (simulated): knob off 4/7 -> 1/7, dial angle 41 -> 2 deg (median) | A --trace recording made for it (turn, settle, pinch) to measure and tune, then replay samples |
+| M8 — L-hand dials held through a pinch | Implemented, validation pending | When the thumb of a hand working a dial (ring, marks, tone, stretch, take dial) closes toward the index tip or a pinch registers, the dial goes back to its value from just before the thumb started closing and holds, drawn bolder; marks knob and take dial clamped in the grammar | 477 passed; on the 7 recorded L-to-pinch moments (simulated): knob off 4/7 -> 1/7, dial angle 41 -> 2 deg (median) | Measured on the user's recording: see the next row |
+| M8 — Knob dwell, rewind keep, rewrite length | Implemented, validation pending | Knob steps wait 0.15 s (wobble); a knob step on screen 0.25 s survives the rewind; tone/length rewrites get a word count in the prompt and room above it in the check | 480 passed; the user's recording 20260926-161541 replayed through the code: pinches off what was shown 9/19 -> 1/19, knob changes 158 -> 49 | The user tries it; the ring stretch without a commit (no lift seen) to ask about |
 
 ## Log
 
@@ -1347,4 +1348,36 @@ Tests: pytest (full) -> 477 passed. New: the synthetic approach turns the knob w
 Next: the user records one --trace session made for this (turn, settle, pinch, ~10 times each on the
   ring, the marks and the tone dial); measure before/after, tune closing_enter and the rewind, and cut
   replay samples.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: the L-hand + pinch fix, measured on the user's recording; LLM tone rewrites refused
+Recording: sessions/gesture-logs/20260926-161541.trace.jsonl (5 min: ring 2x, marks 2x, tone 3x,
+  stretch 1x; 19 knob pinches). Replayed through ModeMachine it reproduces the live log event for
+  event (one extra marks rewind where the app's clamp to the suggestions isn't known offline).
+Findings:
+  - The rewind worked as built: pinches acting on something other than what was shown when the thumb
+    started closing, 10/19 without it, 0/19 with it; against the value shown longest in the 0.4 s
+    before the thumb came within 0.9 palms: 9/19 -> 1/19.
+  - What was left is the knob itself: it followed every wobble of the index (tens of degrees in a
+    fraction of a second, with the thumb still out): 158 knob changes in 2.2 min of turning, 24.5 a
+    minute reversed within 0.4 s. The palm is not steadier (at 10 deg a step: 23.6 reversals a minute;
+    its jitter cancels its smaller swing); bigger steps help less than waiting: 30 deg a step 10.2,
+    15 deg with a 0.15 s dwell 0.4.
+  - With the dwell, the rewind could undo a step shown for 0.3 s (t=64.7): a knob step on screen for
+    0.25 s now stays.
+  - Ring, t=268-313: ten pinches, no lift detected (pinch_lift never fired), so nothing committed.
+  - Both tone rewrites were refused as too long ("25 words for 13"; the check allowed 1.6x + 3 = 23;
+    the prompt said "about as long" with no number).
+Changes:
+  palmcards/gestures.py: _step_dial (ring and marks knob, take dial): hysteresis, limits, and the dwell
+    (OPS.knob_dwell_s 0.15); _rewind leaves a knob/take step on screen for OPS.rewind_keep_s (0.25 s).
+  palmcards/llm.py: rewrite_words(kind, words, amount): a tone rewrite asks for at most 1.3x + 2 words
+    (13 -> 19) and accepts up to 2x + 4 (30); a length rewrite asks for about the target (words x
+    amount) and accepts up to 2x + 4 of it.
+Result on the recording (rewind + dwell + keep): 1/19 pinches off the longest-shown value, 0/19 off
+  what was shown when the thumb started closing; knob changes 158 -> 49.
+Tests: pytest (full) -> 480 passed (knob tests hold new angles 0.3 s; a quick wobble takes no step; the
+  rewind alone still brings a drifted knob back; the 13-word case and the word counts).
 ```

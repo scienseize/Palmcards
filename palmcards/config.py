@@ -111,6 +111,11 @@ class Ops:
     tone_range_deg: float = 45.0  # tilt from the start angle for full warm/cold
     knob_step_deg: float = 15.0  # L-hand turn per options-ring node
     knob_hysteresis: float = 0.2  # of a step, past the boundary before the node changes
+    # A knob step (ring, marks, take dial) shows only once the hand has stayed in
+    # it this long: the index angle wobbles by tens of degrees in a fraction of a
+    # second (a recorded session: 24.5 steps a minute reversed within 0.4 s at
+    # 15 deg a step; 0.4 with this), and a steady turn still steps as it goes.
+    knob_dwell_s: float = 0.15
     stretch_min: float = 0.5  # length ratio clamp
     stretch_max: float = 2.0
     take_step_deg: float = 20.0  # Review: L-hand turn per take on the take dial
@@ -130,6 +135,9 @@ class Ops:
     closing_leave: float = 1.0
     rewind_max_s: float = 0.5
     rewind_plateau: float = 0.1
+    # ... but a knob step (ring, marks, take dial) that has been on screen this
+    # long stays: it was seen and chosen, not a curl on the way into the pinch.
+    rewind_keep_s: float = 0.25
 
 
 @dataclass(frozen=True)

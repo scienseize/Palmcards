@@ -57,6 +57,21 @@ def test_rewrites_are_checked():
     assert llm.parse_rewrite(json.dumps({"text": "word " * 12}), "a b c d e f", "length", 2.0)
 
 
+def test_a_rewrite_is_given_a_word_count_and_room_above_it():
+    # A warmer version of a 13-word sentence came back at 25 words and was refused (the user's session,
+    # 2026-09-26): the prompt now names a number, and the check allows twice the words plus 4.
+    thirteen = "Thank you all for being here tonight, it means a lot to us."
+    assert len(thirteen.split()) == 13
+    system, _ = llm.rewrite_request("tone", thirteen, 0.5)
+    assert "19 words at most" in system
+    assert llm.parse_rewrite(json.dumps({"text": "word " * 25}), thirteen, "tone", 0.5)
+    with pytest.raises(ValueError, match="at most 30"):
+        llm.parse_rewrite(json.dumps({"text": "word " * 31}), thirteen, "tone", 0.5)
+    system, _ = llm.rewrite_request("length", thirteen, 0.67)
+    assert "shorter, to about 9 words" in system
+    assert llm.rewrite_words("length", 13, 1.8) == (23, 50)
+
+
 def test_suggested_marks_must_fit_the_words():
     reply = json.dumps({"marks": [{"kind": "stress", "word": 1}, {"kind": "stress", "word": 9},
                                   {"kind": "shout", "word": 0}, {"kind": "long_pause", "word": 3},

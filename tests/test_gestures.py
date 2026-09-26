@@ -252,9 +252,9 @@ def test_ring_knob_steps_with_l_hand_turn():
     step = OPS.knob_step_deg
     _, t = run(g, hold(l_hand, 0.3, rotate=-20), t)  # wherever the hand starts is zero
     assert g.state.pointing and g.state.knob == 0
-    _, t = run(g, hold(l_hand, 0.1, rotate=-20 + 2 * step), t)
+    _, t = run(g, hold(l_hand, 0.3, rotate=-20 + 2 * step), t)
     assert g.state.knob == 2  # clockwise
-    _, t = run(g, hold(l_hand, 0.1, rotate=-20 - step), t)
+    _, t = run(g, hold(l_hand, 0.3, rotate=-20 - step), t)
     assert g.state.knob == -1  # anticlockwise; the node is knob mod the node count
 
 
@@ -262,14 +262,14 @@ def test_ring_knob_hysteresis_and_continuity():
     g, t = ring_focus()
     step = OPS.knob_step_deg
     _, t = run(g, hold(l_hand, 0.3), t)
-    _, t = run(g, hold(l_hand, 0.1, rotate=0.6 * step), t)  # just past the boundary
+    _, t = run(g, hold(l_hand, 0.3, rotate=0.6 * step), t)  # just past the boundary
     assert g.state.knob == 0
-    _, t = run(g, hold(l_hand, 0.1, rotate=0.8 * step), t)
+    _, t = run(g, hold(l_hand, 0.3, rotate=0.8 * step), t)
     assert g.state.knob == 1
-    _, t = run(g, hold(l_hand, 0.1, rotate=0.6 * step), t)  # back a little: stays
+    _, t = run(g, hold(l_hand, 0.3, rotate=0.6 * step), t)  # back a little: stays
     assert g.state.knob == 1
     # Let go and pick the knob up again at a new angle: it continues from 1.
-    _, t = run(g, hold(open_palm, 0.3) + hold(l_hand, 0.3, rotate=40) + hold(l_hand, 0.1, rotate=40 + step), t)
+    _, t = run(g, hold(open_palm, 0.3) + hold(l_hand, 0.3, rotate=40) + hold(l_hand, 0.3, rotate=40 + step), t)
     assert g.state.knob == 2
 
 
@@ -305,7 +305,8 @@ def test_the_approach_turns_the_dial_angle_without_the_rewind(monkeypatch):
 
     import palmcards.gestures as gestures
 
-    monkeypatch.setattr(gestures, "OPS", replace(OPS, closing_enter=-1.0, closing_leave=-1.0, rewind_max_s=0.0))
+    monkeypatch.setattr(gestures, "OPS", replace(OPS, closing_enter=-1.0, closing_leave=-1.0, rewind_max_s=0.0,
+                                                 knob_dwell_s=0.0))
     g, t = ring_focus()
     _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.2, rotate=OPS.knob_step_deg), t)
     assert g.state.knob == 1
@@ -332,7 +333,32 @@ def test_a_toggle_after_the_approach_acts_on_the_outlined_mark():
                     + hold(l_hand, 0.3, rotate=OPS.knob_step_deg - 40), t)
     assert kinds_of(events) == ["toggle"] and [e["knob"] for e in g.log.entries if e["kind"] == "toggle"] == [1]
     assert g.state.knob == 1 and not g.state.closing
-    assert any(e["kind"] == "rewind" for e in g.log.entries)  # the approach had moved it, and it went back
+
+
+def test_the_rewind_alone_brings_a_drifted_knob_back(monkeypatch):
+    # Without the dwell, the curl steps the knob before the thumb is near; the rewind undoes it.
+    from dataclasses import replace
+
+    import palmcards.gestures as gestures
+
+    monkeypatch.setattr(gestures, "OPS", replace(OPS, knob_dwell_s=0.0))
+    g, t = ring_focus()
+    _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.2, rotate=OPS.knob_step_deg), t)
+    assert g.state.knob == 1
+    _, t = run(g, approach(start=OPS.knob_step_deg) + hold(pinch, 0.2, rotate=OPS.knob_step_deg - 40), t)
+    assert g.state.knob == 1 and g.state.closing
+    (rewind,) = [e for e in g.log.entries if e["kind"] == "rewind"]
+    assert rewind["knob"][1] == 1 and rewind["knob"][0] != 1  # it had moved, and went back
+
+
+def test_a_quick_wobble_does_not_step_the_knob():
+    g, t = ring_focus()
+    step = OPS.knob_step_deg
+    _, t = run(g, hold(l_hand, 0.3), t)
+    _, t = run(g, hold(l_hand, 0.1, rotate=2.5 * step) + hold(l_hand, 0.1, rotate=-2 * step) + hold(l_hand, 0.3), t)
+    assert g.state.knob == 0  # swung two steps each way for a moment: no step taken
+    _, t = run(g, hold(l_hand, 0.3, rotate=2 * step), t)
+    assert g.state.knob == 2  # stayed: taken
 
 
 def test_the_marks_knob_stops_at_the_ends_and_turns_back_at_once():
@@ -438,17 +464,17 @@ def test_the_l_hand_turns_a_knob_through_spread_marks():
     step = OPS.knob_step_deg
     _, t = run(g, hold(l_hand, 0.3, rotate=-20), t)  # wherever the hand starts is zero
     assert g.state.pointing and g.state.knob == 0
-    _, t = run(g, hold(l_hand, 0.1, rotate=-20 + 0.6 * step), t)  # just past a boundary: hysteresis
+    _, t = run(g, hold(l_hand, 0.3, rotate=-20 + 0.6 * step), t)  # just past a boundary: hysteresis
     assert g.state.knob == 0
-    _, t = run(g, hold(l_hand, 0.1, rotate=-20 + 2 * step), t)
+    _, t = run(g, hold(l_hand, 0.3, rotate=-20 + 2 * step), t)
     assert g.state.knob == 2 and g.state.tone == 0.0  # a knob, not the tone dial
-    _, t = run(g, hold(l_hand, 0.1, rotate=-20 + step), t)
+    _, t = run(g, hold(l_hand, 0.3, rotate=-20 + step), t)
     assert g.state.knob == 1
 
 
 def test_a_pinch_without_a_lift_toggles_once():
     g, t = marks_spread()
-    _, t = run(g, hold(l_hand, 0.3, rotate=0) + hold(l_hand, 0.1, rotate=OPS.knob_step_deg), t)
+    _, t = run(g, hold(l_hand, 0.3, rotate=0) + hold(l_hand, 0.3, rotate=OPS.knob_step_deg), t)
     assert g.state.knob == 1
     events, t = run(g, hold(pinch, 0.3), t)
     assert events == [] and not g.state.pointing  # held: nothing yet, and the knob doesn't turn
