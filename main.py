@@ -164,7 +164,7 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
         view.hover = None
     ops = view.ops
     ops.kind, ops.pointing, ops.tone, ops.stretch = gs.op, gs.pointing, gs.tone, gs.stretch
-    ops.stretch_ends = gs.stretch_ends
+    ops.stretch_ends, ops.closing = gs.stretch_ends, gs.closing
     if gs.op == "ring":
         ops.picked = gs.knob % len(overlay.ring_labels(view))
 
@@ -427,15 +427,18 @@ class Takes:
     def reset_pick(self) -> None:
         """Forget which suggested mark is outlined and which are accepted (a new
         focus, or backing out: dropping the hand discards them all)."""
-        self.pick_current, self.pick_accepted, self.pick_knob = 0, set(), 0
+        self.pick_current, self.pick_accepted = 0, set()
+
+    def marks_range(self, sentence: int) -> tuple[int, int]:
+        """Where the marks knob can go (the grammar clamps it): one step per suggestion."""
+        return 0, max(len(self.mark_suggestions.get(sentence) or ()) - 1, 0)
 
     def turn_marks(self, sentence: int, knob: int) -> None:
-        """The L-hand knob's steps since the last frame move the outline along the
-        suggestions, clamped to them: turning past the end and back moves at once."""
+        """The outline follows the L-hand knob (steps since the focus), kept on the
+        suggestions; the grammar clamps the knob to marks_range, so turning past
+        the end and back moves at once, and a rewind lands on the right mark."""
         n = len(self.mark_suggestions.get(sentence) or ())
-        if n:
-            self.pick_current = min(max(self.pick_current + knob - self.pick_knob, 0), n - 1)
-        self.pick_knob = knob
+        self.pick_current = min(max(knob, 0), n - 1) if n else 0
 
     def toggle_mark(self, sentence: int) -> str:
         """A pinch on spread marks: accept the outlined suggestion, or reject it again."""
@@ -607,6 +610,13 @@ class Takes:
         """Review: turn the take dial, and show the chosen takes' verdicts."""
         gs = grammar.state
         focused = view.focus.sentence if view.mode == "focus" and view.focus is not None else None
+        if focused is not None and view.level == "sentence":  # the grammar keeps the dial on the takes there are
+            said = self.board.said_in(focused)
+            shown = self.board.shown(focused)
+            at = said.index(shown) if shown in said else len(said) - 1
+            gs.dial_limits = (gs.take_step - at, gs.take_step + len(said) - 1 - at) if said else (gs.take_step,) * 2
+        else:
+            gs.dial_limits = None
         if gs.op == "take" and focused is not None and view.level == "sentence":
             self.board.step(focused, gs.take_step - self.dial_seen)
             self.dial_seen = gs.take_step
@@ -1205,11 +1215,13 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if view.mode == "focus" and view.level == "sentence" and view.focus is not None \
                     and grammar.state.op == "marks":
                 takes.ask_marks(view.focus.sentence)  # opening the palm asks (once per sentence and revision)
+                grammar.state.dial_limits = takes.marks_range(view.focus.sentence)
                 takes.turn_marks(view.focus.sentence, grammar.state.knob)
                 view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = \
                     takes.suggestion_view(view.focus.sentence)
             else:
                 view.suggest, view.suggest_sentence, view.suggest_marks, view.suggest_current = "", None, (), None
+                grammar.state.dial_limits = None  # the ring's knob wraps
         if modes.mode in ("prepare", "review"):
             if result is not None:
                 sync_view(grammar, view, overlay)

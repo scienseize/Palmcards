@@ -126,6 +126,7 @@ class OpsView:
     tone: float = 0.0  # -1 cold .. 1 warm
     stretch: float = 1.0
     stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
+    closing: bool = False  # the thumb is closing into a pinch: the dial is held where it was, drawn bolder
 
 
 @dataclass
@@ -709,7 +710,7 @@ class TextOverlay:
                 if picked is not None:
                     pad = max(3, font_.size // 6)
                     draw.rounded_rectangle((picked[0] - pad, picked[1] - pad, picked[2] + pad, picked[3] + pad),
-                                           radius=pad + 1, outline=C.pick_outline, width=2)
+                                           radius=pad + 1, outline=C.pick_outline, width=4 if suggest[4] else 2)
                 top, bottom = where.get(si, (y_, y_))
                 where[si] = (min(top, y_), max(bottom, y_ + lh_))
                 y_ += lh_
@@ -762,8 +763,8 @@ class TextOverlay:
         unit = self._panel_unit(state)
         if unit is None:
             return None
-        suggest = (state.focus.sentence, state.suggest_sentence, state.suggest_marks, state.suggest_current) \
-            if state.suggest_sentence is not None and state.focus is not None else None
+        suggest = (state.focus.sentence, state.suggest_sentence, state.suggest_marks, state.suggest_current,
+                   state.ops.closing) if state.suggest_sentence is not None and state.focus is not None else None
         return self._focus_panel(unit, state.detail, state.mark_verdicts, self._panel_current(state, unit),
                                  self._preview_from(state, unit), suggest)
 
@@ -876,9 +877,12 @@ class TextOverlay:
                 chip = self._chip(label, size, C.chip_text, C.chip_fill)
             else:
                 chip = self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)
-            self._blend_centered(frame, chip, nx, ny)
+            box = self._blend_centered(frame, chip, nx, ny)
+            if i == state.ops.picked and state.ops.closing:  # the pinch will take this node: it is held
+                g = RING.closing_box
+                cv2.rectangle(frame, (box[0] - g, box[1] - g), (box[2] + g, box[3] + g), bgr(C.yellow), g, cv2.LINE_AA)
 
-    def _draw_gauge(self, frame: np.ndarray, tone: float, top: int, bottom: int) -> None:
+    def _draw_gauge(self, frame: np.ndarray, tone: float, top: int, bottom: int, closing: bool = False) -> None:
         """Vertical tone dial: cold (blue) at the top, warm (orange) at the bottom."""
         x = int(self.x + self.margin + self.box_w + self.pad)
         y0, y1 = top + self.pad, bottom - self.pad
@@ -888,7 +892,8 @@ class TextOverlay:
             cv2.line(frame, (x, y), (x, y + 1), color, GAUGE.width)
         ky = int(y0 + (tone + 1) / 2 * (y1 - y0))
         cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_fill), -1, cv2.LINE_AA)
-        cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_outline), GAUGE.knob_outline, cv2.LINE_AA)
+        cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_outline),
+                   GAUGE.closing_knob_outline if closing else GAUGE.knob_outline, cv2.LINE_AA)
 
     def _draw_zone(self, frame: np.ndarray, state: ViewState) -> None:
         """Command zone: outline, recording clock and mic level, hints, flick and hold progress."""
@@ -972,10 +977,11 @@ class TextOverlay:
                 self._blend_centered(frame, chip, *center)
 
         if state.mode == "focus" and state.ops.kind == "tone":
-            self._draw_gauge(frame, state.ops.tone, top, bottom)
+            self._draw_gauge(frame, state.ops.tone, top, bottom, state.ops.closing)
         if state.mode == "focus" and state.ops.stretch_ends is not None:
             a, b = (tuple(int(v) for v in p) for p in state.ops.stretch_ends)
-            cv2.line(frame, a, b, bgr(C.stretch_line), HANDS.stretch_stroke, cv2.LINE_AA)
+            cv2.line(frame, a, b, bgr(C.stretch_line),
+                     HANDS.closing_stretch_stroke if state.ops.closing else HANDS.stretch_stroke, cv2.LINE_AA)
         if state.app in ("count_in", "rehearse", "review"):
             self._draw_zone(frame, state)
         if state.app == "review" and state.summary and state.mode != "focus":

@@ -40,7 +40,7 @@ class Colors:
     focus_mark: RGBA = (245, 245, 245, 140)
     suggest_mark: RGBA = (255, 215, 0, 95)  # a mark the LLM suggests, not yet in the notes: faded yellow
     accepted_mark: RGBA = (255, 215, 0, 245)  # a suggestion accepted with a pinch: solid yellow
-    pick_outline: RGBA = (255, 215, 0, 255)  # around the suggestion the knob is on
+    pick_outline: RGBA = (255, 215, 0, 255)  # around the suggestion the knob is on (thicker while pinching)
     backing: RGBA = (10, 10, 12, 150)  # soft dark box behind the text
     # Chips and nodes.
     chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node
@@ -152,6 +152,7 @@ class Ring:
     curve_points: int = 16
     stroke: int = 1
     picked_stroke: int = 2
+    closing_box: int = 3  # px: the box around the picked node while the thumb closes into a pinch
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,7 @@ class Gauge:
     width: int = 4
     knob_r: int = 8
     knob_outline: int = 2
+    closing_knob_outline: int = 4  # while the thumb closes into a pinch: the value is held
 
 
 @dataclass(frozen=True)
@@ -196,6 +198,7 @@ class Hands:
     tip_r: int = 4  # fingertip dots
     active_tip_r: int = 9  # index fingertip
     stretch_stroke: int = 2  # line between the two index tips
+    closing_stretch_stroke: int = 5  # ... while a thumb closes into a pinch: the length is held
     # Debug.
     landmark_stroke: int = 2
     landmark_r: int = 3

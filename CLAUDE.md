@@ -127,7 +127,8 @@ Temporal rules:
 - `COMMIT` is an event: `PINCH` held while wrist y rises > 0.15 of frame height within ~600 ms.
 - `FLICK` is an event (command zone only): after the hand has been in the zone ~150 ms, the fingertip that travels furthest moves > 0.8 palms sideways within ~300 ms, at least 1.5x its vertical travel. Measured at the fingertips because a flick swings from the wrist and the palm barely moves. The zone follows a hand by position, not by MediaPipe's handedness label, which flips during fast moves.
 - Smooth the cursor fingertip with a One Euro filter before mapping it to text.
-- Dials and stretch are always relative to the value captured when the control appears, then clamped.
+- Dials and stretch are always relative to the value captured when the control appears, then clamped (the marks knob and Review's take dial to the range the app sets in `GestureState.dial_limits`: turning past an end and back moves at once).
+- Closing into a pinch doesn't turn a dial. Curling the index to meet the thumb turns the angle the dials read (a median 41° in the recorded traces, up to 105°: nearly 3 knob steps). So when the thumb of a hand working a dial (ring or marks knob, tone, stretch, take dial) comes within `OPS.closing_enter` (0.9) palms of the index tip, or a pinch registers, the dial goes back to its value from just before the thumb started closing (the latest moment in the last `rewind_max_s` with the thumb within `rewind_plateau` palms of its farthest out) and holds there (`state.closing`, drawn bolder: the picked ring node boxed, the marks outline thicker, the gauge knob and stretch line heavier) until the thumb opens past `closing_leave`. A pinch's toggle or commit acts on that value. Logged as `rewind`.
 - Log every recognized pose and event with a timestamp; the false-trigger measure in the evaluation depends on it.
 
 ### Visual feedback (copy Kat's patterns)
@@ -290,7 +291,7 @@ sessions/
 
 Later milestones add their results to each take (metrics) rather than inventing new files.
 
-Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `toggle` (knob), `mark_pick` (sentence, mark, accepted), `llm` (ask), `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `key` (command, mode, acted), `hear` (sentence, word), `section` (section, source), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `calibration_start`, `calibration` (id, status, reason), `gaze_check` (take, seed), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
+Gesture log lines are `{"t": ..., "kind": ..., ...}`. Kinds: `pose` (hand, pose), `browse` / `focus` (level), `fold`, `pinch_lift`, `op`, `toggle` (knob), `rewind` (op, back_s, the dial values undone), `mark_pick` (sentence, mark, accepted), `llm` (ask), `commit` / `back` (level, op, value), `commit_stub`, `drill` (sentence), `drop_start`, `idle`, `mode` (prepare / count_in / rehearse / review), `zone` (command: flick / hold), `key` (command, mode, acted), `hear` (sentence, word), `section` (section, source), `take_start`, `section`, `take_stop` (take, duration_s, wav), `transcribed` (take, seconds), `calibration_start`, `calibration` (id, status, reason), `gaze_check` (take, seed), `mic_error`, `record_error` (error), `screenshot`. Trace lines are `{"t": ..., "hands": [{"label": "Left", "points": [[x, y] × 21]}]}` in mirrored-frame pixels.
 
 ## Code layout
 

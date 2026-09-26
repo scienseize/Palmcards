@@ -114,6 +114,22 @@ class Ops:
     stretch_min: float = 0.5  # length ratio clamp
     stretch_max: float = 2.0
     take_step_deg: float = 20.0  # Review: L-hand turn per take on the take dial
+    # An L-hand closing into a pinch curls the index toward the thumb, which
+    # turns the angle the dials read (a median 41 deg in the recorded traces,
+    # nearly 3 knob steps). So once the thumb tip comes within closing_enter
+    # palms of the index tip (leaving again past closing_leave), or a pinch
+    # registers, the dials (ring and marks knob, tone, stretch, take dial) go
+    # back to their value from just before the thumb started closing (the
+    # latest moment in the last rewind_max_s with the thumb within
+    # rewind_plateau palms of its farthest out) and hold there until the thumb
+    # opens again. A steady L has the thumb 1.3-1.9 palms from the index
+    # tip; a thumb drifting in while turning rarely (about 2% of the time)
+    # comes within 0.9. On the 7 recorded L-to-pinch moments this left 1 knob
+    # step off (4 without it) and the dial angle 2 deg off (median; 41 without).
+    closing_enter: float = 0.9
+    closing_leave: float = 1.0
+    rewind_max_s: float = 0.5
+    rewind_plateau: float = 0.1
 
 
 @dataclass(frozen=True)

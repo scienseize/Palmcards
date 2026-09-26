@@ -273,11 +273,113 @@ def test_ring_knob_hysteresis_and_continuity():
     assert g.state.knob == 2
 
 
+DRIFTED_THUMB = (-60, -110)  # in, near the index knuckle: 0.95 palms from the index tip (as in real L-hands)
+
+
+def drifted(**kw):
+    return hand({8: (-30, -200)}, thumb=DRIFTED_THUMB, **kw)
+
+
 def test_thumb_drifting_in_does_not_freeze_a_started_control():
     g, t = ring_focus()
     _, t = run(g, hold(l_hand, 0.3), t)
-    _, t = run(g, hold(one, 0.3, rotate=2 * OPS.knob_step_deg), t)  # thumb in, still turning
-    assert g.state.pointing and g.state.knob == 2
+    assert classify(features(drifted())) == ONE
+    _, t = run(g, hold(drifted, 0.3, rotate=2 * OPS.knob_step_deg), t)  # thumb in, still turning
+    assert g.state.pointing and g.state.knob == 2 and not g.state.closing
+
+
+def approach(n=6, turn=-40.0, start=0.0, **kw):
+    """An L closing into a pinch: the thumb moves onto the index tip while the
+    index curls, which turns the angle the dials read (by `turn` degrees)."""
+    out = []
+    for i in range(1, n + 1):
+        k = i / n
+        thumb = tuple(np.add(np.multiply(THUMB_OUT, 1 - k), np.multiply((-27, -197), k)))
+        out.append(hand({8: (-30, -200)}, thumb=thumb, rotate=start + turn * k, **kw))
+    return out
+
+
+def test_the_approach_turns_the_dial_angle_without_the_rewind(monkeypatch):
+    # The synthetic approach reproduces the bug: with the rewind switched off, the knob moves.
+    from dataclasses import replace
+
+    import palmcards.gestures as gestures
+
+    monkeypatch.setattr(gestures, "OPS", replace(OPS, closing_enter=-1.0, closing_leave=-1.0, rewind_max_s=0.0))
+    g, t = ring_focus()
+    _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.2, rotate=OPS.knob_step_deg), t)
+    assert g.state.knob == 1
+    _, t = run(g, approach(start=OPS.knob_step_deg) + hold(pinch, 0.2, rotate=OPS.knob_step_deg - 40), t)
+    assert g.state.knob != 1
+
+
+def test_closing_into_a_pinch_leaves_the_ring_knob_where_it_was():
+    g, t = ring_focus()
+    _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.2, rotate=OPS.knob_step_deg), t)
+    assert g.state.knob == 1
+    _, t = run(g, approach(start=OPS.knob_step_deg), t)
+    assert g.state.knob == 1 and g.state.closing and not g.state.pointing  # held, and shown so
+    events, t = run(g, hold(pinch, 0.2, rotate=OPS.knob_step_deg - 40) + lift(0.4, 0.2 * H), t)
+    assert [(e.kind, e.op) for e in events] == [("commit", "ring")] and g.state.knob == 1
+
+
+def test_a_toggle_after_the_approach_acts_on_the_outlined_mark():
+    g, t = marks_spread()
+    g.state.dial_limits = (0, 2)
+    _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.2, rotate=OPS.knob_step_deg), t)
+    assert g.state.knob == 1
+    events, t = run(g, approach(start=OPS.knob_step_deg) + hold(pinch, 0.3, rotate=OPS.knob_step_deg - 40)
+                    + hold(l_hand, 0.3, rotate=OPS.knob_step_deg - 40), t)
+    assert kinds_of(events) == ["toggle"] and [e["knob"] for e in g.log.entries if e["kind"] == "toggle"] == [1]
+    assert g.state.knob == 1 and not g.state.closing
+    assert any(e["kind"] == "rewind" for e in g.log.entries)  # the approach had moved it, and it went back
+
+
+def test_the_marks_knob_stops_at_the_ends_and_turns_back_at_once():
+    g, t = marks_spread()
+    g.state.dial_limits = (0, 2)
+    step = OPS.knob_step_deg
+    _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.2, rotate=6 * step), t)
+    assert g.state.knob == 2  # well past the end: the last
+    _, t = run(g, hold(l_hand, 0.2, rotate=5 * step), t)
+    assert g.state.knob == 1  # one step back moves at once
+    _, t = run(g, hold(l_hand, 0.2, rotate=-9 * step), t)
+    assert g.state.knob == 0
+
+
+def test_closing_into_a_pinch_keeps_the_tone():
+    g, t = prepare_sentence_focus()
+    _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.3, rotate=22.5), t)
+    assert g.state.tone == pytest.approx(0.5, abs=0.02)
+    events, _ = run(g, approach(start=22.5) + hold(pinch, 0.2, rotate=22.5 - 40) + lift(0.4, 0.2 * H), t)
+    assert [(e.kind, e.op) for e in events] == [("commit", "tone")]
+    assert events[0].value == pytest.approx(0.5, abs=0.02)  # not the curl's -0.4
+
+
+def test_closing_into_a_pinch_keeps_the_stretch():
+    g = Grammar((W, H))
+    _, t = run(g, hold(flat, 0.3))
+    _, t = run(g, lerp_frames(hand, FLAT_TIPS, FLAT_FOLDED, 6), t)
+
+    def pair(gap, right=None):
+        return [right or l_hand(origin=(960, 500), label="Right"), l_hand(origin=(960 - gap, 500), label="Left")]
+
+    _, t = run(g, [pair(300)] * 10 + [pair(450)] * 10, t)
+    assert g.state.stretch == pytest.approx(1.5, abs=0.01)
+    closing = [pair(450, right=h) for h in approach(origin=(960, 500), label="Right")]
+    _, t = run(g, closing + [pair(450, right=pinch(origin=(960, 500), rotate=-40, label="Right"))] * 5, t)
+    assert g.state.stretch == pytest.approx(1.5, abs=0.01) and g.state.closing
+
+
+def test_a_thumb_that_closes_and_opens_again_lets_the_dial_go_on():
+    g, t = ring_focus()
+    _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.2, rotate=OPS.knob_step_deg), t)
+    _, t = run(g, approach(n=4, turn=0.0, start=OPS.knob_step_deg)[:3], t)  # most of the way in, no pinch
+    assert g.state.closing and g.state.knob == 1
+    _, t = run(g, hold(l_hand, 0.3, rotate=OPS.knob_step_deg), t)  # open again
+    assert not g.state.closing and g.state.pointing
+    _, t = run(g, hold(l_hand, 0.2, rotate=2 * OPS.knob_step_deg), t)
+    assert g.state.knob == 2  # it goes on from where it was
 
 
 def test_sentence_fold_focus_and_tone_dial_is_relative():
@@ -655,6 +757,19 @@ def test_review_take_dial_steps_relative_to_the_start():
     _, t = run(m, hold(two, 0.3) + hold(l_hand, 0.3, rotate=30) + hold(l_hand, 0.2, rotate=30 - step), t)
     assert m.state.take_step == 1
     assert m.state.tone == 0.0  # not Prepare's tone dial
+
+
+def test_review_take_dial_stays_on_the_takes_and_keeps_its_take_through_a_pinch():
+    m, t = reviewing()
+    t = sentence_focus(m, t)
+    m.state.dial_limits = (-2, 0)  # the latest of three takes is shown: two earlier ones to turn back to
+    step = OPS.take_step_deg
+    _, t = run(m, hold(l_hand, 0.3) + hold(l_hand, 0.2, rotate=2 * step), t)
+    assert m.state.take_step == 0  # no later take: it stays
+    _, t = run(m, hold(l_hand, 0.2, rotate=step), t)
+    assert m.state.take_step == -1  # turning back moves at once
+    _, t = run(m, approach(start=step) + hold(pinch, 0.2, rotate=step - 40), t)
+    assert m.state.take_step == -1 and m.state.closing  # the curl into the pinch doesn't change the take
 
 
 def test_no_take_dial_in_prepare_or_at_other_levels():

@@ -553,17 +553,18 @@ def picked(takes):
     return preview.marks[current], [m for m, st in zip(preview.marks, states) if st == "accepted"]
 
 
-def test_the_knob_moves_along_the_suggestions_clamped(tmp_path, monkeypatch):
+def test_the_outline_follows_the_knob_along_the_suggestions(tmp_path, monkeypatch):
     takes = spread(tmp_path, monkeypatch)  # in reading order: [slow], *you*, // before "for"
+    assert takes.marks_range(0) == (0, 2) and takes.marks_range(1) == (0, 0)  # the grammar clamps the knob to it
     assert picked(takes)[0] == Mark(MarkKind.SLOW)
     takes.turn_marks(0, 1)
     assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
-    takes.turn_marks(0, 6)  # well past the end: the last
+    takes.turn_marks(0, 2)
     assert picked(takes)[0] == Mark(MarkKind.LONG_PAUSE, 2)
-    takes.turn_marks(0, 5)  # one step back moves at once
+    takes.turn_marks(0, 1)  # a rewind back one step lands one mark back
     assert picked(takes)[0] == Mark(MarkKind.STRESS, 1)
-    takes.turn_marks(0, -9)
-    assert picked(takes)[0] == Mark(MarkKind.SLOW)
+    takes.turn_marks(0, 9)  # out of range (the grammar wouldn't send it): kept on the suggestions
+    assert picked(takes)[0] == Mark(MarkKind.LONG_PAUSE, 2)
 
 
 def test_accept_two_of_three_then_one_revision_and_dropping_discards(tmp_path, monkeypatch):

@@ -28,7 +28,8 @@ user runs them. They are never inferred from unit tests.
 | M7 stage 4 — Review and export | Implemented, validation pending | Gaze line per focused sentence, take summary card in Review, per-take CSV (`scripts/evaluate.py --table`) | 438 passed; rendered offline from the user's scripted take; the table over all 30 takes | The user sees it in the app |
 | M8 stage 1 — Cloud LLM | Checked on hardware by the user (2026-09-26) | Anthropic provider (`claude-haiku-4-5`, `main.py --llm anthropic`, key from the environment or .env), JSON-schema answers, 10 s timeout + one bounded retry, CLOUD LLM chip, truthful tone/length labels, per-call token log (`llm-usage.jsonl`) and `python -m palmcards.llm usage` | 454 passed; the provider tested through the real SDK against a stand-in server on 127.0.0.1; no test sees a key or can reach the API | — |
 | M8 stage 2 — Open palm for marks | Checked on hardware by the user (2026-09-26) | An open palm (or `m`) on a focused sentence asks once per sentence and revision for marks, shown faded yellow in place (`edit.new_marks` keeps only what adds); pinch + lift adds all as one revision; a failed request is not re-sent until a new focus | 461 passed; gesture replay samples unchanged; panel rendered offline | — |
-| M8 stage 3 — Per-mark toggling | Implemented, validation pending | On spread marks the L-hand is a knob through them (15°/step, relative, reading order, clamped), the current one outlined; a pinch without a lift accepts/rejects it (solid yellow); pinch + lift adds only the accepted ones as one revision; dropping the hand discards the choices | 468 passed; gesture replay samples unchanged; panel rendered offline | The user's check on camera (does moving from an L to a pinch nudge the knob?); then a --trace sample |
+| M8 stage 3 — Per-mark toggling | Checked on hardware by the user (2026-09-26) | On spread marks the L-hand is a knob through them (15°/step, relative, reading order, clamped), the current one outlined; a pinch without a lift accepts/rejects it (solid yellow); pinch + lift adds only the accepted ones as one revision; dropping the hand discards the choices | 468 passed; gesture replay samples unchanged; panel rendered offline | The L-to-pinch nudge confirmed by the user, on every L-hand control: fixed below |
+| M8 — L-hand dials held through a pinch | Implemented, validation pending | When the thumb of a hand working a dial (ring, marks, tone, stretch, take dial) closes toward the index tip or a pinch registers, the dial goes back to its value from just before the thumb started closing and holds, drawn bolder; marks knob and take dial clamped in the grammar | 477 passed; on the 7 recorded L-to-pinch moments (simulated): knob off 4/7 -> 1/7, dial angle 41 -> 2 deg (median) | A --trace recording made for it (turn, settle, pinch) to measure and tune, then replay samples |
 
 ## Log
 
@@ -1301,4 +1302,49 @@ Tests run and exact outcome: pytest (full) -> 468 passed. New: the knob on sprea
 Not checked: on camera. The risk to look for: moving from an L to a pinch may turn the knob a step
   before the pinch registers (the synthetic hands keep the index still). A --trace recording of the
   motion would become a replay sample.
+```
+
+```text
+Date: 2026-09-26
+Phase / issue IDs: milestone 8 stage 3 check, and the L-hand + pinch problem
+Status: the user: stage 3 works, but "Pinching after navigating with L hand switches the selection",
+  on every L-hand + pinch control, noticed since early on. Measured, fixed (the user chose the fix:
+  a rewind for all L-hand dials plus a visual cue, built now and tuned on a new recording after).
+Measurements (the 4 --trace recordings of 2026-09-25, 7 moments where an L became a pinch; scripts
+  kept in the session scratchpad, not in the repo):
+  - The angle the dials read (index MCP -> tip) turns a median 41 deg (p90 66, max 93) in the
+    approach, while the palm (wrist -> index MCP) turns 3.4 deg: curling the index to meet the thumb.
+    word-ring-commit shows 105 deg in 0.3 s; its knob only stayed put because the curling hand read as
+    FIST for a frame, which re-anchored the knob.
+  - The knob as the app ran it: 4/7 pinches landed 1-2 steps off the value 0.4 s before.
+  - Reading the palm instead: it follows a deliberate turn (r 0.85) at only ~45% of the angle with
+    twice the jitter; not used. Freezing the knob once the thumb nears the tip: 3/7 still off.
+    Rewinding at the pinch to where the thumb was clearly out: 1/7 off; to the latest moment within
+    0.1 palms of the thumb's farthest in the last 0.5 s: 1/7 off, angle error median 2.0 deg (max
+    11.7). A steady L holds the thumb 1.3-1.9 palms from the index tip; a thumb drifting in while
+    turning comes within 0.9 palms 2.3% of the time.
+Files and behavior changed:
+  palmcards/gestures.py: Grammar keeps the dials' values per frame in focus; when the thumb of the
+    hand working a dial (both hands for the stretch) comes within OPS.closing_enter (0.9) palms of the
+    index tip or a pinch registers, _rewind puts every dial back to its value from just before the
+    thumb started closing, and the dials hold (state.closing) until the thumb is past closing_leave
+    (1.0); they then pick up from that value. Logged "rewind" with what was undone. The marks knob and
+    Review's take dial are clamped to GestureState.dial_limits (set by the app), re-anchoring at the
+    ends, so a rewind can't land on a step the selection never took.
+  main.py: the marks picker reads the (clamped) knob directly; the app sets the limits for the marks
+    (one step per suggestion) and for the take dial (the takes that said the sentence).
+  palmcards/render.py, style.py: while held, the picked ring node is boxed, the marks outline is
+    thicker, the gauge knob and the stretch line are heavier.
+  palmcards/config.py: OPS.closing_enter/closing_leave/rewind_max_s/rewind_plateau, with the evidence.
+Trade-off: a thumb tucked hard against the index (within 0.9 palms of its tip) now holds a dial;
+  test_thumb_drifting_in_does_not_freeze_a_started_control uses a realistic drifted thumb (0.95).
+Tests: pytest (full) -> 477 passed. New: the synthetic approach turns the knob with the fix off (so
+  the tests exercise the bug); with it, the ring knob, the marks toggle, the tone commit, the stretch
+  and the take dial keep their values through the approach and the pinch; a thumb that closes and
+  opens without pinching lets the dial go on from its value; the marks knob stops at its ends and
+  turns back at once; the cue is drawn on all four. Replay samples unchanged; word-ring-commit replayed
+  through the new code holds the knob from the frame the thumb came within 0.7 palms.
+Next: the user records one --trace session made for this (turn, settle, pinch, ~10 times each on the
+  ring, the marks and the tone dial); measure before/after, tune closing_enter and the rewind, and cut
+  replay samples.
 ```

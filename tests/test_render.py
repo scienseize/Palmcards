@@ -409,3 +409,30 @@ def test_the_outlined_suggestion_and_the_accepted_ones():
     assert (outlined != elsewhere).any()  # the outline moves with the knob
     assert drawn(chosen).sum() > outlined.sum()  # accepted: solid, brighter than faded
 
+
+def test_a_closing_pinch_is_shown_on_the_dial_it_will_act_on():
+    from dataclasses import replace
+
+    from palmcards.edit import add_marks
+
+    ov = overlay()
+
+    def drawn(v):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, v)
+        return frame
+
+    ring = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=1, pointing=True))
+    tone = ViewState(mode="focus", level="sentence", focus=Hit(2, None), ops=OpsView(kind="tone", tone=0.4))
+    stretch = ViewState(mode="focus", level="paragraph", focus=Hit(4, None),
+                        ops=OpsView(kind="stretch", stretch=1.4, stretch_ends=((900, 300), (1100, 320))))
+    notes = parse_text(TEXT)
+    preview = add_marks(notes, 0, [("long_pause", 2)]).sentences[0]
+    states = tuple("suggested" if m.kind == "long_pause" else "" for m in preview.marks)
+    marks = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(0, None), ops=OpsView(kind="marks"),
+                      suggest="ready", suggest_sentence=preview, suggest_marks=states,
+                      suggest_current=states.index("suggested"))
+    for view in (ring, tone, stretch, marks):
+        held = replace(view, ops=replace(view.ops, closing=True))
+        assert (drawn(view) != drawn(held)).any(), view.ops.kind
+
