@@ -1865,3 +1865,40 @@ Live (the user, 2026-09-27): the step-by-step check (dots, sentence and word foc
   lift, tone, stretch, scroll ends, labels, a take with the follow, Review playback, reduced motion,
   sounds): all good.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: type and legibility pass (apple-design §12 materials/vibrancy, §15 typography,
+  §16 foundations): IBM Plex Mono, one type scale, label hierarchy, drawn bars, edge fades
+Status: implemented; automated checks passed; offline before/after renders checked; live check pending
+Changes:
+  palmcards/fonts/: IBM Plex Mono Regular, Medium, SemiBold and its OFL (google/fonts at
+    0b58fb37, SHA-256s in SOURCES.txt). DejaVu Sans Mono stays only for the characters Plex lacks
+    (▸ ▲ ▼ ● ○), drawn in the same cell on the same baseline (render._text, cmap via fontTools).
+  palmcards/style.py: TYPE (TypeStep: base, scale, weight, tracking em, leading em): display 5x UI
+    semibold -0.04; focus medium -0.01 leading 1.1; label 0.9 UI semibold +0.06; notes medium 0,
+    leading 1.2 (rows still 24 px at 720p); operation 0.72 UI +0.04; hint 0.6 UI +0.01 (+0.02 pushes
+    Review's short hint onto two rows at 1080p); small 0.56 UI +0.04, regular on a solid fill.
+    BAR (thickness 0.12 UI, round ends, faint white track, orange fill). Colors.label_state /
+    label_operation / label_hint (+ high contrast), bar_track / bar_fill. TEXT.edge_fade 1.25 rows.
+    Retired: TEXT.font, line_spacing, focus_leading, fade; LABEL scales, tracking, leading,
+    pill_scale; SUMMARY.scale, gap; ZONE hint/rec scales, flick strokes, hold_top/bottom;
+    COUNT_IN.scale; RING.take_scale; GAUGE.label_scale; CHIPS.symbol_scale; PLAYBAR.height;
+    Colors.orange_soft, hint.
+  palmcards/render.py: Face (font, tracking px, row height, where glyphs sit: caps and descenders
+    centred in the row, not hung from the font's ascent); every text site set in a TYPE step. The
+    current sentence, the unit under the hand, the focused unit, the picked ring node and the state
+    label in semibold. Label: state / operation / hint by size, weight and brightness. Text bars
+    ([=====     ]) gone: label_progress + _draw_bar after the operation's text; the zone's hold bar,
+    flick meter, playbar and a new count-in bar (emptying each second, timed from state.now when
+    the digit changes) share _draw_bar. Take table, keys help and alert line each one block
+    (_block). The meaning box in the notes' step. _fade: smoothstep over TEXT.edge_fade rows at an
+    edge with text beyond it, full once half a row lies beyond, none otherwise. Review's take lines
+    start a full padding under the sentence; the playbar sits in that gap.
+  tests/test_render.py: the label's hold is label_progress, not a text bar; the playbar's colour is
+    checked on its middle row (antialiased ends).
+Tests: pytest (full) -> 560 passed.
+Visual (headless, synthetic white-wall and dark-room plates through TextOverlay.draw, HEAD vs
+  working tree): Prepare browse and idle, word ring, tone, Rehearse with zone bars, count-in,
+  Review browse (take table) and focus (chips, playbar), tutorial with an alert; notes' edge fades.
+```

@@ -44,7 +44,10 @@ class Colors:
     # Highlighted text (the current sentence, the focused word): a little
     # deeper than the fills' orange, so it holds up on a bright wall.
     orange_text: RGBA = (240, 112, 0, 255)
-    orange_soft: RGBA = (255, 140, 0, 200)  # the label's second line: the operation
+    # The label, brightest to dimmest (with weight and size: TYPE.label, operation, hint).
+    label_state: RGBA = (255, 140, 0, 255)  # BROWSE BY WORD
+    label_operation: RGBA = (255, 140, 0, 205)  # what the operation is doing
+    label_hint: RGBA = (255, 140, 0, 155)  # the gesture hint
     # Dimmed text is white made see-through, not grey: grey vanishes on a pale wall.
     dim: RGBA = (255, 255, 255, 179)  # Rehearse: the section's other sentences; a focused word's sentence
     faint: RGBA = (255, 255, 255, 60)  # context around a focused unit
@@ -57,7 +60,6 @@ class Colors:
     shadow: RGBA = (0, 0, 0, 110)
     # A dark outline round every glyph drawn straight on the video (its width: OUTLINE).
     outline: RGBA = (0, 0, 0, 150)
-    hint: RGBA = (255, 140, 0, 150)  # the label's third line: the gesture hint
     # Chips and nodes.
     chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node
     chip_text: RGBA = (20, 20, 20, 255)
@@ -74,6 +76,9 @@ class Colors:
     label_fill: RGBA = (10, 10, 12, 190)  # behind the bottom-left pills
     alert_text: RGBA = (255, 255, 255, 255)
     scroll_track: RGB = (90, 90, 90)
+    # Every progress bar (BAR): a faint white track, filled in orange.
+    bar_track: RGBA = (255, 255, 255, 64)
+    bar_fill: RGBA = (255, 140, 0, 255)
     scroll_thumb: RGB = (235, 235, 235)
     # Accents drawn with OpenCV.
     yellow: RGB = (255, 215, 0)  # active fingertip, ring connectors, active zone, progress
@@ -151,30 +156,82 @@ class Shadow:
 
 
 @dataclass(frozen=True)
+class TypeStep:
+    """A step of the type scale: its size (x the notes' size or x the UI
+    size, TEXT), weight (TEXT.fonts), tracking (em between letters) and
+    leading (a row's height, em)."""
+    base: str  # "notes" | "ui"
+    scale: float
+    weight: str
+    tracking: float
+    leading: float
+
+
+@dataclass(frozen=True)
+class TypeScale:
+    """Every piece of text is set in one of these steps. Hierarchy comes from
+    size, weight and brightness together (Colors.label_*). Tracking tightens as
+    text grows and is slightly positive on the small all-caps labels and hints;
+    leading is tight on the enlarged focus text, comfortable on the notes."""
+    display: TypeStep = TypeStep("ui", 5.0, "semibold", -0.04, 1.0)  # the count-in's 3-2-1
+    # The focus panel's enlarged unit and a focused word's zoomed notes: x the
+    # size the panel fits (TEXT.focus_scales) or TEXT.word_zoom. Its current
+    # sentence (the focused unit, Rehearse's orange one) in semibold.
+    focus: TypeStep = TypeStep("notes", 1.0, "medium", -0.01, 1.1)
+    label: TypeStep = TypeStep("ui", 0.9, "semibold", 0.06, 1.25)  # the state: BROWSE BY WORD; the tutorial's step
+    # The notes (the current sentence and the unit under the hand in semibold);
+    # rows 24 px apart at 720p. Review's take lines are these at DETAIL.scale.
+    notes: TypeStep = TypeStep("notes", 1.0, "medium", 0.0, 1.2)
+    operation: TypeStep = TypeStep("ui", 0.72, "medium", 0.04, 1.25)  # the label's operation, the alert line, REC
+    # The label's gesture hint. Review's short hint (39 characters) must fit a
+    # row of the text column at 1080p: at +0.01 em it does (+0.02 em pushes it
+    # onto two: Plex is 14 px a character there).
+    hint: TypeStep = TypeStep("ui", 0.6, "medium", 0.01, 1.25)
+    # Pills, the keys, the take table, take chips, zone hints, gauge ends, more
+    # markers: medium over the video, regular on a solid fill (SMALL_ON_FILL).
+    small: TypeStep = TypeStep("ui", 0.56, "medium", 0.04, 1.2)
+
+
+SMALL_ON_FILL = "regular"
+
+
+@dataclass(frozen=True)
 class Text:
-    # Shipped with the app (Menlo, the old default, is derived from it); licence beside it.
-    font: Path = FONTS_DIR / "DejaVuSansMono.ttf"
-    # The notes: frame height / rows_per_frame (20 px at 720p, as big as in
+    # IBM Plex Mono, shipped with the app in three weights (licence and sources
+    # beside it): the notes in medium, the current sentence and the state label
+    # in semibold. Every weight is 0.6 em wide, so the grid is the same in all.
+    fonts: dict[str, Path] = field(default_factory=lambda: {
+        "regular": FONTS_DIR / "IBMPlexMono-Regular.ttf",
+        "medium": FONTS_DIR / "IBMPlexMono-Medium.ttf",
+        "semibold": FONTS_DIR / "IBMPlexMono-SemiBold.ttf",
+    })
+    # Characters Plex lacks (▸ ▲ ▼ ● ○, scripts it doesn't cover) come from
+    # DejaVu Sans Mono, drawn in the same cell on the same baseline.
+    fallback: Path = FONTS_DIR / "DejaVuSansMono.ttf"
+    # The notes (TYPE.notes; caps and descenders centred in each row, rows
+    # set by its leading, not the font's own ascent and descent): frame
+    # height / rows_per_frame (20 px at 720p, as big as in
     # Kat's frames: 12 px a character), made smaller (not below min_size)
     # only if a row of the text column would hold fewer than min_columns.
     rows_per_frame: int = 36
     min_columns: int = 28
     min_size: int = 12  # px
-    # Everything else the user reads (labels, pills, hints, the take table): frame height / this.
+    # The UI size, the base of TYPE's "ui" steps (labels, pills, hints, the take table): frame height / this.
     ui_rows_per_frame: int = 28
     ui_min_size: int = 16  # px
-    line_spacing: float = 1.0  # line height, x the font's own: Kat's rows are packed (24 px at 720p)
     # The text box fills the text column (LAYOUT.text): as many columns as
     # fit, and from under the label down to the pills as many rows as fit
     # (None), like Kat's block down the whole left side.
     visible_rows: int | None = None
     # A focused word: the notes zoomed by this, the word moved to the middle of the box.
     word_zoom: float = 1.6
-    # Leading shrinks as text grows: the enlarged focus text's rows, x its scaled line height.
-    focus_leading: float = 0.95
     meaning_min_size: int = 9  # smallest definition text in a narrow window; shrink to fit below the word
     preview_anchor: float = 0.2  # fixed starting row for live rewrites, fraction of the text viewport
-    fade: float = 0.5  # lines: rows partly scrolled out fade out over this at the box's top and bottom
+    # Where the text meets its viewport's top or bottom with more beyond it,
+    # it fades out over this many rows (half a row of it in the padding)
+    # instead of being cut; at full strength once a row lies beyond, none
+    # with nothing beyond (the first row at the top stays crisp).
+    edge_fade: float = 1.25
     # Everything below scales with the line height: padding inside the box is half a line.
     focus_scales: tuple[float, ...] = (1.4, 1.2, 1.0)  # focus panel: largest that fits the box wins
     focus_min_columns: int = 16  # ... with at least this many columns (Review's take chips narrow the panel)
@@ -194,27 +251,15 @@ class Chips:
     pad_y: tuple[int, int] = (2, 8)
     radius: tuple[int, int] = (3, 5)
     hover_scale: float = 1.0  # x the notes' size: word under the cursor
-    symbol_scale: float = 0.7  # x the UI size: the panel's more markers
 
 
 @dataclass(frozen=True)
 class Label:
-    """Kat's state label above the text box, no box: the state, the
-    operation (dimmer), the gesture hint (smallest, dimmest). Each wraps to
-    the text column, up to max_rows rows. Scales x the UI size."""
-    first_scale: float = 0.9
-    second_scale: float = 0.7
-    third_scale: float = 0.6
+    """Kat's state label above the text box, no box: the state (TYPE.label),
+    the operation (TYPE.operation, dimmer), the gesture hint (TYPE.hint,
+    smallest, dimmest). Each wraps to the text column, up to max_rows rows."""
     max_rows: tuple[int, int, int] = (1, 2, 2)
-    # Letter spacing, in em: small all-caps text reads better a little apart
-    # (Kat's label is visibly tracked); more on the larger first line. The
-    # hint line has none: Review's short hint (39 characters) fills a row of
-    # the text column at 1080p, and even 0.01 em would push it onto two.
-    tracking: tuple[float, float, float] = (0.10, 0.06, 0.0)
-    small_tracking: float = 0.04  # the pills and the command zone's hints
     min_top: int = 4  # px from the frame's top edge
-    leading: float = 1.1  # a row's height, x the font's own
-    pill_scale: float = 0.6  # the pills at the bottom left (CLOUD LLM, H: KEYS) and the keys help
 
 
 @dataclass(frozen=True)
@@ -228,11 +273,10 @@ class Detail:
 
 @dataclass(frozen=True)
 class Summary:
-    """Review, while browsing: the take table (the last few full takes side by side), bottom right."""
-    scale: float = 0.6  # x the UI size
+    """Review, while browsing: the take table (the last few full takes side by
+    side), bottom right, in TYPE.small on one dark block."""
     right: int = 16  # px from the frame's right edge
     bottom: int = 16  # px from the frame's bottom edge
-    gap: int = 0  # px between lines: one block
 
 
 @dataclass(frozen=True)
@@ -254,17 +298,28 @@ class Ring:
     curve_points: int = 16
     stroke: int = 3
     closing_box: int = 3  # px: the box around the picked node while the thumb closes into a pinch
-    # Review's take chips: a column at the text column's right edge.
-    take_scale: float = 0.6  # x the UI size
+    # Review's take chips (TYPE.small): a column at the text column's right edge.
     take_pitch: float = 0.142  # x the text box's height, between chip centres (pointing at them depends on it)
     take_gap: int = 8  # px between the chips and the panel's text
 
 
 @dataclass(frozen=True)
+class Bar:
+    """Every progress bar (a hold, what plays, the flick meter, the count-in):
+    a thin line with round ends, a faint track (Colors.bar_track) filled in
+    orange (Colors.bar_fill)."""
+    thickness: float = 0.12  # x the UI size (3 px at 720p)
+    min_thickness: int = 2  # px
+    label_em: float = 6.0  # a hold's bar after the label's text: at most this long, x the operation's size
+    label_min_em: float = 3.0  # ... and at least this (the text wraps sooner to leave it room)
+    gap_em: float = 0.8  # ... this far after the text
+    count_em: float = 0.5  # the count-in's bar under its digit: this far below it, x the UI size
+
+
+@dataclass(frozen=True)
 class Playbar:
-    """What plays (a take's clip, "hear it"): a thin bar under the focused unit."""
-    height: int = 3  # px
-    gap: int = 6  # px below the unit's last enlarged row
+    """What plays (a take's clip, "hear it"): a bar (BAR) under the focused unit."""
+    gap: float = 0.5  # its centre below the unit's last enlarged row, x the padding (Review's take lines start a padding below)
 
 
 @dataclass(frozen=True)
@@ -278,7 +333,6 @@ class Gauge:
     knob_r: int = 6
     knob_outline: int = 2
     closing_knob_outline: int = 3  # while the thumb closes into a pinch: the value is held
-    label_scale: float = 0.55  # x the UI size: the ends' labels, cold above, warm below
     rubber_max: float = 0.3  # past an end the knob goes at most this far on, x the half track
     labels: tuple[str, str] = ("formal", "conversational")
 
@@ -342,31 +396,28 @@ class Sound:
 @dataclass(frozen=True)
 class Zone:
     """Command zone contents (the zone's place is REHEARSE.zone in config.py):
-    corner marks like the hand box, hints as plain lines. Scales x the UI size."""
+    corner marks like the hand box, hints as plain lines (TYPE.small), the
+    recording clock (TYPE.operation), the flick meter and hold bar (BAR)."""
     stroke: int = 1
     active_stroke: int = 2
     corner: float = 0.1  # the corner marks' arms, x the zone's width
     alpha: float = 0.45  # the corner marks' opacity; full while a hand is in the zone
     inset_right: int = 2  # px, so the outline's right edge stays on screen
     inset_top: int = 1
-    hint_scale: float = 0.55
     hint_gap: int = 4  # px between hints
-    rec_scale: float = 0.75
     rec_dx: int = 10  # px right of the zone's centre
     mic_dx: int = 14  # px left of the REC chip
     mic_r: tuple[int, int] = (4, 8)  # (radius when silent, growth at full level)
     flick_dy: int = 30  # px above the zone's bottom
     flick_inset: int = 12
-    flick_stroke: int = 1
-    flick_fill: int = 4
     hold_inset: int = 6  # hold bar: inset from the zone's sides, px
-    hold_top: int = 12  # px above the zone's bottom
-    hold_bottom: int = 6
+    hold_dy: int = 9  # px above the zone's bottom
 
 
 @dataclass(frozen=True)
 class CountIn:
-    scale: float = 5  # x the UI size
+    """The 3-2-1 (TYPE.display), with a bar under it emptying each second."""
+    bar_em: float = 1.6  # the bar's length, x the digit's width
     y: float = 0.65  # centred in the hand zone (LAYOUT.hand), below the command zone, at this height
 
 
@@ -462,7 +513,9 @@ OUTLINE = Outline()
 HIGH_CONTRAST = replace(COLORS, text=(255, 255, 255, 255), context_fill=(50, 62, 115, 215),
                         dim=(255, 255, 255, 215), faint=(255, 255, 255, 130),
                         ring_sentence=(255, 255, 255, 215), ring_context=(255, 255, 255, 55),
-                        shadow=(0, 0, 0, 240), outline=(0, 0, 0, 220), hint=(255, 140, 0, 200), orange_soft=(255, 140, 0, 220),
+                        shadow=(0, 0, 0, 240), outline=(0, 0, 0, 220),
+                        label_operation=(255, 140, 0, 230), label_hint=(255, 140, 0, 205),
+                        bar_track=(255, 255, 255, 110),
                         label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255),
                         node_outline_dim=(245, 245, 245, 160))
 TEXT = Text()
@@ -472,6 +525,8 @@ DETAIL = Detail()
 RING = Ring()
 GAUGE = Gauge()
 PLAYBAR = Playbar()
+BAR = Bar()
+TYPE = TypeScale()
 MOTION = Motion()
 SOUND = Sound()
 ZONE = Zone()

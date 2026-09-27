@@ -51,6 +51,7 @@ looks (colours, fonts, sizes, spacing, positions) is in palmcards/style.py.
 
 from __future__ import annotations
 
+import functools
 import math
 import random
 import re
@@ -68,8 +69,8 @@ from palmcards.motion import Spring, rubberband
 from palmcards.notes import Sentence, parse_sentence
 from palmcards.preview import PreviewView
 from palmcards.style import (
-    CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT, MOTION, OUTLINE, PLAYBAR,
-    PLAYER, RING, SCRIM, SHADOW, TEXT, ZONE, bgr,
+    BAR, CHIPS, COLORS, COUNT_IN, SMALL_ON_FILL, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT,
+    MOTION, OUTLINE, PLAYBAR, PLAYER, RING, SCRIM, SHADOW, TEXT, TYPE, ZONE, TypeStep, bgr,
 )
 
 if TYPE_CHECKING:
@@ -157,10 +158,60 @@ KEYS_HELP = (
 )
 
 
-def load_font(size: int) -> ImageFont.FreeTypeFont:
-    if not TEXT.font.exists():
-        raise FileNotFoundError(f"font missing: {TEXT.font} (it ships in the repo; restore it with git)")
-    return ImageFont.truetype(TEXT.font, size)
+@functools.cache
+def load_font(size: int, weight: str = "medium") -> ImageFont.FreeTypeFont:
+    """The notes' font at this size and weight (TEXT.fonts), or "fallback" (TEXT.fallback)."""
+    path = TEXT.fallback if weight == "fallback" else TEXT.fonts[weight]
+    if not path.exists():
+        raise FileNotFoundError(f"font missing: {path} (it ships in the repo; restore it with git)")
+    return ImageFont.truetype(path, size)
+
+
+@functools.cache
+def _covered(path: str) -> frozenset[int]:
+    """The code points a font file has glyphs for."""
+    from fontTools.ttLib import TTFont
+    return frozenset(TTFont(path, lazy=True).getBestCmap())
+
+
+@functools.cache
+def _cell(font: ImageFont.FreeTypeFont, lh: int) -> tuple[int, int]:
+    """Where glyphs sit in a row `lh` px tall, caps and descenders centred
+    whatever the font's own ascent: (y from the row's top to draw at, with
+    Pillow's default top-of-ascent anchor; px left under the descenders)."""
+    cap = -font.getbbox("H", anchor="ls")[1]
+    desc = font.getbbox("g", anchor="ls")[3]
+    base = round((lh + cap - desc) / 2)
+    return base - font.getmetrics()[0], lh - base - desc
+
+
+@dataclass(frozen=True)
+class Face:
+    """Text set in a step of the type scale (style.TYPE) at one size: the
+    font, the tracking (px between letters), a row's height and where the
+    glyphs sit in a row."""
+    font: ImageFont.FreeTypeFont
+    tracking: float
+    line_h: int
+    dy: int  # from a row's top to draw at (Pillow's top-of-ascent anchor): caps centred in the row
+
+    @property
+    def size(self) -> int:
+        return self.font.size
+
+    @property
+    def advance(self) -> float:
+        """A character's cell: the text is monospace."""
+        return self.font.getlength("M") + self.tracking
+
+
+@functools.cache
+def face(size: int, weight: str, tracking: float, leading: float, line_h: int | None = None) -> Face:
+    """A face at this size and weight; `tracking` in em, `leading` a row's
+    height in em (or `line_h` px, where rows are set by something else)."""
+    font = load_font(size, weight)
+    lh = line_h if line_h is not None else round(size * leading)
+    return Face(font, tracking * size, lh, _cell(font, lh)[0])
 
 
 def resolve_scramble(text: str, progress: float, seed: int) -> str:
@@ -446,11 +497,10 @@ def layout(sentences: list[Sentence], columns: int, ids=None) -> list[Row]:
     return rows
 
 
-def _text_metrics(size: int) -> tuple[int, int, float]:
-    """(line height, height of the glyphs, character width) of the notes' font at this size."""
-    font = load_font(size)
-    glyphs = sum(font.getmetrics())
-    return int(glyphs * TEXT.line_spacing), glyphs, font.getlength("M")
+def _text_metrics(size: int) -> tuple[int, float]:
+    """(line height, character width) of the notes (TYPE.notes) at this size."""
+    f = face(size, TYPE.notes.weight, TYPE.notes.tracking, TYPE.notes.leading)
+    return f.line_h, f.advance
 
 
 class TextOverlay:
@@ -469,16 +519,17 @@ class TextOverlay:
         # The notes' size: smaller until a row of the column holds TEXT.min_columns characters.
         size = max(TEXT.min_size, h // TEXT.rows_per_frame)
         while size > TEXT.min_size:
-            line_h, _, char_w = _text_metrics(size)
+            line_h, char_w = _text_metrics(size)
             if (self.col_x1 - self.col_x0 - 2 * (line_h // 2)) / char_w >= TEXT.min_columns:
                 break
             size -= 1
         self.font_size = size
         self.ui_size = max(TEXT.ui_min_size, h // TEXT.ui_rows_per_frame)  # labels, hints, pills, the take table
-        self.font = load_font(self.font_size)
-        self._fonts = {self.font_size: self.font}
-        self.line_h, glyphs, self.char_w = _text_metrics(self.font_size)
-        self.row_gap = self.line_h - glyphs  # below each row's glyphs
+        self.notes = self._face(TYPE.notes)
+        self.font = self.notes.font
+        self.bold = self._face(TYPE.notes, "semibold").font  # the current sentence, the unit under the hand
+        self.line_h, self.char_w = self.notes.line_h, self.notes.advance
+        self.text_dy, self.row_gap = _cell(self.font, self.line_h)  # glyphs in the row; below them
         self.pad = self.line_h // 2
         self.halo_r = max(1.0, self.font_size * SHADOW.blur)
         # The box fills the text column, with as many columns as fit.
@@ -504,15 +555,15 @@ class TextOverlay:
         self.x = self.col_x0
         self.y = LABEL.min_top + self.label_h + self.pad // 2
         if visible_rows is None:
-            pill = round(self.ui_size * LABEL.pill_scale)
-            low = h - LABEL.min_top - (sum(self._get_font(pill).getmetrics()) + 2 * max(CHIPS.pad_y[0], pill // CHIPS.pad_y[1]) + 2)
+            pill = self._face(TYPE.small)
+            low = h - LABEL.min_top - (pill.line_h + 2 * max(CHIPS.pad_y[0], pill.size // CHIPS.pad_y[1]) + 2)
             visible_rows = max(3, (low - self.pad // 2 - self.y - 2 * self.pad) // self.line_h)
         self.visible_rows = visible_rows
         self.box_h = visible_rows * self.line_h + 2 * self.pad
         if self.y + self.box_h > h:  # a row count too tall for the frame: centred
             self.y = max(0, (h - self.box_h) // 2)
 
-        self._fades: dict[int, np.ndarray] = {}
+        self._count: tuple[int, float] | None = None  # the count-in's digit and when it came up
         self._scrim: np.ndarray | None = None  # its shape across the columns, 1 at full strength
         self._scrim_alpha: float | None = None  # its strength, following the room's brightness
         self._scrim_frames = 0
@@ -619,11 +670,20 @@ class TextOverlay:
 
     def label_lines(self, state: ViewState) -> tuple[str, str]:
         """Kat's two-line state label: mode and level, then the operation."""
+        return self._label(state)[:2]
+
+    def label_progress(self, state: ViewState) -> float | None:
+        """How far a hold the label names has got (0..1), drawn as a bar after
+        its operation line; None when it names none."""
+        return self._label(state)[2]
+
+    def _label(self, state: ViewState) -> tuple[str, str, float | None]:
         if state.title and state.app not in ("count_in", "rehearse"):
-            return state.title, state.note or state.status
+            return state.title, state.note or state.status, None
         if state.app in ("count_in", "rehearse"):
+            progress = None
             if state.hold_progress > 0:
-                second = f"{'CANCEL' if state.app == 'count_in' else 'STOP'}: HOLD  {_bar(state.hold_progress)}"
+                second, progress = f"{'CANCEL' if state.app == 'count_in' else 'STOP'}: HOLD", state.hold_progress
             elif state.note:
                 second = state.note
             elif state.calibration == "camera":
@@ -634,7 +694,7 @@ class TextOverlay:
                 second = f"STARTING IN {state.count_in}"
             else:
                 second = state.status
-            return state.title or ("DRILL" if state.drill is not None else "REHEARSE"), second
+            return state.title or ("DRILL" if state.drill is not None else "REHEARSE"), second, progress
 
         level = (state.level or "").upper()
         if state.mode == "focus":
@@ -645,15 +705,15 @@ class TextOverlay:
             first = f"BROWSE BY {level}"
         else:
             first = state.app.upper()
-        ops = state.ops
+        ops, progress = state.ops, None
         if state.note:
             second = state.note
         elif state.start_progress > 0:
-            second = f"START A TAKE: HOLD FIST  {_bar(state.start_progress)}"
+            second, progress = "START A TAKE: HOLD FIST", state.start_progress
         elif state.hold_progress > 0:
-            second = f"BACK TO PREPARE: HOLD  {_bar(state.hold_progress)}"
+            second, progress = "BACK TO PREPARE: HOLD", state.hold_progress
         elif state.palm_progress > 0:
-            second = f"STOP: HOLD  {_bar(state.palm_progress)}"
+            second, progress = "STOP: HOLD", state.palm_progress
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
@@ -684,7 +744,7 @@ class TextOverlay:
             second = "FOLD TO SELECT  /  THEN HOLD OPEN PALM: HEAR IT"
         else:
             second = state.status
-        return first, second
+        return first, second, progress
 
     def ring_words(self, state: ViewState) -> int:
         """Every node is the original word or a replacement."""
@@ -742,25 +802,35 @@ class TextOverlay:
 
     # --- drawing: text -----------------------------------------------------
 
-    def _get_font(self, size: int) -> ImageFont.ImageFont:
-        if size not in self._fonts:
-            self._fonts[size] = load_font(size)
-        return self._fonts[size]
+    @staticmethod
+    def _get_font(size: int, weight: str = "medium") -> ImageFont.FreeTypeFont:
+        return load_font(size, weight)
 
-    def _fade(self, h: int) -> np.ndarray:
-        """Alpha over a viewport `h` px tall: 1 on its rows, ramping to 0 over
-        TEXT.fade lines into the padding above and below, so a row partly
-        scrolled out fades instead of being cut through its letters."""
-        if h not in self._fades:
-            f = max(1.0, TEXT.fade * self.line_h)
-            y = np.arange(h, dtype=np.float32)
-            top = (y - (self.pad - f)) / f
-            bottom = (h - self.pad - self.row_gap + f - y) / f  # the last row's glyphs end row_gap above its cell
-            self._fades[h] = np.clip(np.minimum(top, bottom), 0.0, 1.0)[:, None, None]
-        return self._fades[h]
+    def _face(self, step: TypeStep, weight: str | None = None, scale: float = 1.0) -> Face:
+        """A step of the type scale at this frame's size (x `scale`)."""
+        base = self.font_size if step.base == "notes" else self.ui_size
+        return face(max(1, round(base * step.scale * scale)), weight or step.weight, step.tracking, step.leading)
 
-    def _faded(self, color: np.ndarray, inv: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        k = self._fade(color.shape[0])
+    def _fade(self, h: int, top: float = 1.0, bottom: float = 1.0) -> np.ndarray:
+        """Alpha over a viewport `h` px tall: where the text meets its top or
+        bottom it fades out over TEXT.edge_fade rows (smoothstep, half a row
+        of it in the padding) instead of being cut. `top` and `bottom` are
+        how much there is beyond each edge, in rows (half a row or more,
+        enough to fill the padding: the full fade; 0: none, so the first row
+        stays crisp until it scrolls)."""
+        f = max(1.0, TEXT.edge_fade * self.line_h)
+        y = np.arange(h, dtype=np.float32)
+        out = self.pad - self.line_h / 2  # fully faded this far into the padding
+        ramps = []
+        for k, t in ((top, (y - out) / f), (bottom, (h - out - y) / f)):
+            k = min(max(2.0 * k, 0.0), 1.0)
+            t = np.clip(t, 0.0, 1.0)
+            ramps.append(1.0 - k * (1.0 - t * t * (3 - 2 * t)))
+        return np.minimum(*ramps)[:, None, None]
+
+    def _faded(self, color: np.ndarray, inv: np.ndarray, top: float = 1.0,
+               bottom: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+        k = self._fade(color.shape[0], top, bottom)
         return color * k, 1.0 - (1.0 - inv) * k
 
     def _band_style(self, state: ViewState) -> tuple:
@@ -775,15 +845,23 @@ class TextOverlay:
         return ("idle", state.current)
 
     def _draw_span(self, draw: ImageDraw.ImageDraw, xy: tuple[float, float], sp: Span, font, color,
-                   under: ImageDraw.ImageDraw | None = None) -> None:
-        """A word or punctuation; its outline on `under` (text on a fill has none)."""
+                   under: ImageDraw.ImageDraw | None = None, tracking: float = 0.0) -> None:
+        """A word or punctuation, its top of ascent at xy (`tracking` px
+        between letters); its outline on `under` (text on a fill has none)."""
         if under is not None:
-            _outline(under, xy, sp.text, font)
-        draw.text(xy, sp.text, font=font, fill=color)
+            _outline(under, xy, sp.text, font, tracking)
+        _text(draw, xy, sp.text, font, tracking, fill=color)
+
+    def _zoom_face(self, weight: str | None = None) -> Face:
+        """A focused word's zoomed notes: TYPE.focus at TEXT.word_zoom times
+        the notes' size, on rows TEXT.word_zoom times theirs."""
+        st = TYPE.focus
+        return face(round(self.font_size * TEXT.word_zoom), weight or st.weight, st.tracking, st.leading,
+                    round(self.line_h * TEXT.word_zoom))
 
     def _fill_box(self, c0: int, c1: int, y: int) -> tuple[float, float, float, float]:
-        """A tight fill behind columns c0..c1 of the row drawn at y; rows' fills touch."""
-        top = y - self.row_gap // 2
+        """A tight fill behind columns c0..c1 of the row whose cell starts at y; rows' fills touch."""
+        top = y
         return (self.pad + c0 * self.char_w - FILL.pad_x, top,
                 self.pad + c1 * self.char_w + FILL.pad_x - 1, top + self.line_h - 1)
 
@@ -791,6 +869,10 @@ class TextOverlay:
         if kind == "browse":
             return C.unit_text if sp.sentence in which[0] else C.text
         return C.orange_text if sp.sentence == which else C.text  # idle: the current sentence
+
+    def _span_font(self, kind: str, which, sp: Span) -> ImageFont.FreeTypeFont:
+        """Semibold for the unit under the hand and the current sentence, else medium."""
+        return self.bold if sp.sentence in (which[0] if kind == "browse" else (which,)) else self.font
 
     def _render_band(self, style: tuple, start: int) -> tuple[np.ndarray, np.ndarray]:
         """Rows start..start+band_rows, with row `start` at y = pad: the
@@ -810,12 +892,13 @@ class TextOverlay:
                     if cols:
                         fd.rectangle(self._fill_box(min(a for a, _ in cols), max(b for _, b in cols), y), fill=color)
                 if any(sp.sentence in paragraph for _, sp in row.spans):  # Kat's bar beside the paragraph
-                    top = y - self.row_gap // 2
+                    top = y
                     fd.rectangle((FILL.bar_x, top, FILL.bar_x + FILL.bar_w - 1, top + self.line_h - 1), fill=C.orange)
             for col, sp in row.spans:
                 on_unit = kind == "browse" and sp.sentence in which[0]
-                self._draw_span(od if on_unit else td, (self.pad + col * self.char_w, y), sp, self.font,
-                                self._span_color(kind, which, sp), None if on_unit else ud)
+                self._draw_span(od if on_unit else td, (self.pad + col * self.char_w, y + self.text_dy), sp,
+                                self._span_font(kind, which, sp), self._span_color(kind, which, sp),
+                                None if on_unit else ud)
         img = Image.alpha_composite(Image.alpha_composite(fills, _halo(text, self.halo_r, under)), on_fill)
         return _premultiply(img)
 
@@ -831,9 +914,8 @@ class TextOverlay:
         key = (focus.sentence, focus.word, shown, ring)
         if self._zoom_key == key:
             return self._zoom
-        size = round(self.font_size * TEXT.word_zoom)
-        font = self._get_font(size)
-        lh, cw = round(self.line_h * TEXT.word_zoom), font.getlength("M")
+        zf = self._zoom_face()
+        font, size, lh, cw = zf.font, zf.size, zf.line_h, zf.advance
         cols = max(1, int((self.col_x1 - self.col_x0 - 2 * self.pad) / cw))
         if cols not in self._zoom_rows:
             self._zoom_rows[cols] = layout(self.sentences, cols)
@@ -847,6 +929,7 @@ class TextOverlay:
         img, under = (Image.new("RGBA", (self.col_x1, self.box_h), CLEAR) for _ in range(2))
         draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
         above, below = int(word_y // lh) + 1, int((self.box_h - word_y) // lh) + 1
+        dy = zf.dy
         for ri in range(max(0, word_row - above), min(len(rows), word_row + below)):
             y, after = word_y + (ri - word_row) * lh, False
             for c, sp in rows[ri].spans:
@@ -857,7 +940,7 @@ class TextOverlay:
                 if x + len(sp.text) * cw > 0 and x < self.col_x1:
                     color = (C.ring_sentence if ring else C.dim) if sp.sentence == focus.sentence else \
                         (C.ring_context if ring else C.faint)
-                    self._draw_span(draw, (x, y), sp, font, color, ud)
+                    self._draw_span(draw, (x, y + dy), sp, font, color, ud, zf.tracking)
         color, inv = self._faded(*_premultiply(_halo(img, self.halo_r, under)))
         top = self.y + self.margin + word_y
         self._zoom_key = key
@@ -884,7 +967,8 @@ class TextOverlay:
             self._band = self._render_band(key, self._band_start)
             self._band_key = key
         off = round((scroll - self._band_start) * self.line_h)
-        return self._faded(*_window(*self._band, off, self.box_h))
+        below = len(self.rows) - (scroll + self.visible_rows)
+        return self._faded(*_window(*self._band, off, self.box_h), scroll, below)
 
     def _panel_unit(self, state: ViewState) -> tuple[int, ...] | None:
         """Sentences shown enlarged in the panel instead of the scrolling text, if any."""
@@ -930,19 +1014,21 @@ class TextOverlay:
             return self._panel
         sents = [parse_sentence(replacement)] if replacement is not None else [self.sentences[i] for i in unit]
         ids = (unit[0],) if replacement is not None else unit
-        dfont = self._get_font(round(self.font_size * DETAIL.scale))
-        dlh = round(self.line_h * DETAIL.scale * DETAIL.leading)
-        dcols = max(DETAIL.min_columns, int((width - 2 * self.pad) / dfont.getlength("M")))
+        st = TYPE.notes  # Review's take lines: the notes' step, a little smaller, a little looser
+        df = face(round(self.font_size * DETAIL.scale), st.weight, st.tracking, st.leading,
+                  round(self.line_h * DETAIL.scale * DETAIL.leading))
+        dlh = df.line_h
+        dcols = max(DETAIL.min_columns, int((width - 2 * self.pad) / df.advance))
         dlines = [piece for line in detail
                   for piece in textwrap.wrap(line, dcols, subsequent_indent=DETAIL.indent) or [""]]
-        detail_h = len(dlines) * dlh + (self.pad // 2 if dlines else 0)
+        detail_h = len(dlines) * dlh + (self.pad if dlines else 0)  # below the unit: room for the playbar
         box_h = max(self.line_h * 3, self.box_h - header_h)
         avail = self.max_panel_h - header_h - 2 * self.pad - detail_h
         # The largest size that fits the viewport with enough columns; never smaller than normal.
         for scale in TEXT.focus_scales:
-            font = self._get_font(round(self.font_size * scale))
-            lh = round(self.line_h * scale * (TEXT.focus_leading if scale > 1 else 1.0))
-            cw = font.getlength("M")
+            # Enlarged: the focus step (tighter rows and letters); at the notes' size, the notes'.
+            ff = self._face(TYPE.focus if scale > 1 else TYPE.notes, scale=scale)
+            lh, cw = ff.line_h, ff.advance
             cols = int((width - 2 * self.pad) / cw)
             rows = layout(sents, cols, ids)
             if len(rows) * lh <= avail and cols >= TEXT.focus_min_columns:
@@ -971,13 +1057,14 @@ class TextOverlay:
         draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
         where: dict[int, tuple[int, int]] = {}
 
-        def draw_rows(rows_, font_, lh_, cw_, colors, y_):
+        def draw_rows(rows_, f, colors, y_, bold_=None, strong=lambda si: False):
             for row in rows_:
                 for col, sp in row.spans:
-                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, colors(sp.sentence), ud)
+                    self._draw_span(draw, (self.pad + col * f.advance, y_ + f.dy), sp,
+                                    bold_ if strong(sp.sentence) else f.font, colors(sp.sentence), ud, f.tracking)
                     top, bottom = where.get(sp.sentence, (y_, y_))
-                    where[sp.sentence] = (min(top, y_), max(bottom, y_ + lh_))
-                y_ += lh_
+                    where[sp.sentence] = (min(top, y_), max(bottom, y_ + f.line_h))
+                y_ += f.line_h
             return y_
 
         def unit_colors(si):
@@ -989,31 +1076,35 @@ class TextOverlay:
                 return C.focus_text
             return C.orange_text if si == current else C.dim
 
-        y = draw_rows(above, self.font, self.line_h, self.char_w, lambda si: C.faint, y)
+        def unit_strong(si):  # semibold: the current sentence, or the focused unit
+            return si == current if current is not None else preview_from is None or si < preview_from
+
+        y = draw_rows(above, self.notes, lambda si: C.faint, y)
         where.clear()  # context rows are not the unit
-        y = draw_rows(rows, font, lh, cw, unit_colors, y)
+        y = draw_rows(rows, ff, unit_colors, y, load_font(ff.size, "semibold"), unit_strong)
         rows_y = dict(where)
         if dlines:
-            y += self.pad // 2
+            y += self.pad
             for piece in dlines:
-                _outline(ud, (self.pad, y), piece, dfont)
-                draw.text((self.pad, y), piece, font=dfont, fill=C.detail_text)
+                _outline(ud, (self.pad, y + df.dy), piece, df.font, df.tracking)
+                _text(draw, (self.pad, y + df.dy), piece, df.font, df.tracking, fill=C.detail_text)
                 y += dlh
-        draw_rows(below, self.font, self.line_h, self.char_w, lambda si: C.faint, y)
+        draw_rows(below, self.notes, lambda si: C.faint, y)
         color, inv = _premultiply(_halo(img, self.halo_r, under))
         self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y, scale=scale)
         return self._panel
 
     # --- the panel's viewport ------------------------------------------------
 
-    def _label_size(self, line: int) -> int:
-        return round(self.ui_size * (LABEL.first_scale, LABEL.second_scale, LABEL.third_scale)[line])
+    def _label_face(self, line: int) -> Face:
+        """The label's lines: the state, the operation, the gesture hint."""
+        return self._face((TYPE.label, TYPE.operation, TYPE.hint)[line])
 
     def _label_wrap(self, text: str, line: int, width: float, max_rows: int | None = None) -> list[str]:
-        return self._wrap(text, self._label_size(line), width, max_rows, LABEL.tracking[line])
+        return self._wrap(text, self._label_face(line), width, max_rows)
 
     def _label_row_h(self, line: int) -> int:
-        return int(sum(self._get_font(self._label_size(line)).getmetrics()) * LABEL.leading)
+        return self._label_face(line).line_h
 
     @property
     def label_h(self) -> int:
@@ -1273,16 +1364,13 @@ class TextOverlay:
         rows = [panel.rows[i] for i in self._panel_unit(state) or () if i in panel.rows]
         if not rows:
             return
-        y = min(top - scroll + max(b for _, b in rows) + PLAYBAR.gap, bottom - PLAYBAR.height)
+        t = self._bar_w()
+        y = min(top - scroll + max(b for _, b in rows) + self.pad * PLAYBAR.gap, bottom - t / 2)
         if y < top:
             return
         x0 = self.x + self.margin + self.pad
         x1 = self.x + self.margin + panel.color.shape[1] - self.pad
-        h = PLAYBAR.height
-        cv2.rectangle(frame, (x0, y), (x1, y + h - 1), bgr(C.scroll_track), -1)
-        done = x0 + int((x1 - x0) * min(max(state.play_progress, 0.0), 1.0))
-        if done > x0:
-            cv2.rectangle(frame, (x0, y), (done, y + h - 1), bgr(C.orange), -1)
+        self._draw_bar(frame, x0, x1, y, state.play_progress)
 
     def _draw_scrollbar(self, frame: np.ndarray, top: int, view_h: int, scroll: float, height: int,
                         width: int, left: bool = False) -> None:
@@ -1292,49 +1380,64 @@ class TextOverlay:
         y0 = top + self.pad + int(span * scroll / height)
         y1 = top + self.pad + int(span * (scroll + view_h) / height)
         cv2.line(frame, (x, y0), (x, y1), bgr(C.scroll_thumb), 4, cv2.LINE_AA)
-        size = round(self.ui_size * CHIPS.symbol_scale)
+        f = self._face(TYPE.small, SMALL_ON_FILL)
         cx = self.x + self.margin + width / 2
         if scroll > 0:
-            self._blend_centered(frame, self._chip("▲ MORE", size, C.node_text, C.dark_fill), cx, top)
+            self._blend_centered(frame, self._chip("▲ MORE", f, C.node_text, C.dark_fill), cx, top)
         if scroll + view_h < height:
-            self._blend_centered(frame, self._chip("▼ MORE", size, C.node_text, C.dark_fill), cx, top + view_h)
+            self._blend_centered(frame, self._chip("▼ MORE", f, C.node_text, C.dark_fill), cx, top + view_h)
 
-    def _chip(self, text: str, size: int, fg, bg, outline=None, tracking: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
-        """A text label on a rounded rectangle, cached; `tracking` in em between letters."""
-        key = (text, size, fg, bg, outline, tracking)
+    def _chip(self, text: str, f: Face, fg, bg, outline=None) -> tuple[np.ndarray, np.ndarray]:
+        """A row of text in face `f` on a rounded rectangle, cached."""
+        key = (text, f, fg, bg, outline)
         if key not in self._chips:
             if len(self._chips) >= CHIP_CACHE_MAX:
                 self._chips.clear()
-            font = self._get_font(size)
-            ascent, descent = font.getmetrics()
+            size = f.size
             px, py = max(CHIPS.pad_x[0], size // CHIPS.pad_x[1]), max(CHIPS.pad_y[0], size // CHIPS.pad_y[1])
-            t = tracking * size
-            w, h = int(_text_w(font, text, t)) + 2 * px, ascent + descent + 2 * py
+            w, h = int(_text_w(f.font, text, f.tracking)) + 2 * px, f.line_h + 2 * py
             img = Image.new("RGBA", (w + 2, h + 2), CLEAR)
             draw = ImageDraw.Draw(img)
             if bg is not None or outline is not None:
                 radius = max(CHIPS.radius[0], size // CHIPS.radius[1])
                 draw.rounded_rectangle((1, 1, w, h), radius=radius, fill=bg, outline=outline)
-            _text(draw, (1 + px, 1 + py), text, font, t, fill=fg)
+            _text(draw, (1 + px, 1 + py + f.dy), text, f.font, f.tracking, fill=fg)
             self._chips[key] = _premultiply(img)
         return self._chips[key]
 
-    def _ink(self, text: str, size: int, fg, tracking: float = 0.0) -> tuple[np.ndarray, np.ndarray, int]:
-        """Text on a soft dark halo and outline, no box, cached: (colour,
-        inverse alpha, margin), the text's top left `margin` px in from the
-        patch's. `tracking`: extra space between letters, in em."""
-        key = ("ink", text, size, fg, C.shadow, C.outline, tracking)
+    def _block(self, lines: tuple[str, ...], f: Face, colors: tuple, bg) -> tuple[np.ndarray, np.ndarray]:
+        """Rows of text in face `f` on one rounded rectangle (the take table,
+        the keys, the alert line), a colour per row, cached."""
+        key = ("block", lines, f, colors, bg)
         if key not in self._chips:
             if len(self._chips) >= CHIP_CACHE_MAX:
                 self._chips.clear()
-            font = self._get_font(size)
-            r = max(1.0, size * SHADOW.blur)
+            size = f.size
+            px, py = max(CHIPS.pad_x[0], size // CHIPS.pad_x[1]), max(CHIPS.pad_y[0], size // CHIPS.pad_y[1])
+            w = int(max(_text_w(f.font, line, f.tracking) for line in lines)) + 2 * px
+            h = len(lines) * f.line_h + 2 * py
+            img = Image.new("RGBA", (w + 2, h + 2), CLEAR)
+            draw = ImageDraw.Draw(img)
+            draw.rounded_rectangle((1, 1, w, h), radius=max(CHIPS.radius[0], size // CHIPS.radius[1]), fill=bg)
+            for i, (line, fg) in enumerate(zip(lines, colors)):
+                _text(draw, (1 + px, 1 + py + i * f.line_h + f.dy), line, f.font, f.tracking, fill=fg)
+            self._chips[key] = _premultiply(img)
+        return self._chips[key]
+
+    def _ink(self, text: str, f: Face, fg) -> tuple[np.ndarray, np.ndarray, int]:
+        """A row of text in face `f` on a soft dark halo and outline, no box,
+        cached: (colour, inverse alpha, margin), the row's top left `margin`
+        px in from the patch's."""
+        key = ("ink", text, f, fg, C.shadow, C.outline)
+        if key not in self._chips:
+            if len(self._chips) >= CHIP_CACHE_MAX:
+                self._chips.clear()
+            r = max(1.0, f.size * SHADOW.blur)
             m = math.ceil(3 * r) + OUTLINE.width
-            t = tracking * size
-            img, under = (Image.new("RGBA", (int(_text_w(font, text, t)) + 2 * m + 1, sum(font.getmetrics()) + 2 * m),
+            img, under = (Image.new("RGBA", (int(_text_w(f.font, text, f.tracking)) + 2 * m + 1, f.line_h + 2 * m),
                                     CLEAR) for _ in range(2))
-            _outline(ImageDraw.Draw(under), (m, m), text, font, t)
-            _text(ImageDraw.Draw(img), (m, m), text, font, t, fill=fg)
+            _outline(ImageDraw.Draw(under), (m, m + f.dy), text, f.font, f.tracking)
+            _text(ImageDraw.Draw(img), (m, m + f.dy), text, f.font, f.tracking, fill=fg)
             self._chips[key] = (*_premultiply(_halo(img, r, under)), m)
         return self._chips[key]
 
@@ -1355,12 +1458,9 @@ class TextOverlay:
         _blend(frame, x, y, color, inv)
         return x + m, y + m, x + w - m, y + h - m
 
-    def _wrap(self, text: str, size: int, width: float, max_rows: int | None = None,
-              tracking: float = 0.0) -> list[str]:
-        """`text` wrapped to `width` px at this size (and tracking, in em);
-        past max_rows the last row ends in "…"."""
-        t = tracking * size
-        cols = max(4, int((width + t) / (self._get_font(size).getlength("M") + t)))
+    def _wrap(self, text: str, f: Face, width: float, max_rows: int | None = None) -> list[str]:
+        """`text` wrapped to `width` px in face `f`; past max_rows the last row ends in "…"."""
+        cols = max(4, int((width + f.tracking) / f.advance))
         rows = textwrap.wrap(text, cols) or [text]
         if max_rows is not None and len(rows) > max_rows:
             rows = rows[:max_rows]
@@ -1385,11 +1485,13 @@ class TextOverlay:
                 lines.append((2, "LEGACY MARKS NEED REVIEW; PREVIEW IS PLAIN TEXT"))
             width = self.col_x1 - self.x - self.pad
             return [(level, row) for level, line in lines for row in self._label_wrap(line, level, width)]
-        first, second = self.label_lines(state)
+        first, second, progress = self._label(state)
         operation, _, hint = second.partition(HINT_SEP)
         width = self.col_x1 - self.x - self.pad
+        # A hold's bar goes after the operation's text: leave it room on the row.
+        room = (BAR.label_min_em + BAR.gap_em) * self._label_face(1).size if progress is not None else 0
         rows = [(i, row) for i, text in enumerate((first, operation)) if text
-                for row in self._label_wrap(text, i, width, LABEL.max_rows[i])]
+                for row in self._label_wrap(text, i, width - (room if i == 1 else 0), LABEL.max_rows[i])]
         if state.app == "review" and hint == (forms := review_hint(state))[0]:
             # Review's hints: the short form when the long one needs two rows;
             # if even that is too wide, its hints packed whole onto the rows.
@@ -1413,36 +1515,70 @@ class TextOverlay:
         return rows
 
     def _draw_label(self, frame: np.ndarray, state: ViewState, top: int) -> None:
-        """No box: orange on a halo, dimmer and smaller line by line, ending
-        above `top`. Its first row stays put while a hint comes and goes; only
-        a label wrapped past three rows grows upward."""
+        """No box: orange on a halo, the state brightest and in semibold, the
+        operation dimmer, the hint smallest and dimmest (TYPE.label,
+        operation, hint; Colors.label_*), ending above `top`; a hold's bar
+        after the operation. Its first row stays put while a hint comes and
+        goes; only a label wrapped past three rows grows upward."""
         rows = self.label_rows(state)
-        colors = (C.orange, C.orange_soft, C.hint)
+        progress = self.label_progress(state)
+        last_op = max((k for k, (line, _) in enumerate(rows) if line == 1), default=None)
+        colors = (C.label_state, C.label_operation, C.label_hint)
         h = max(sum(self._label_row_h(i) for i in range(3)), sum(self._label_row_h(i) for i, _ in rows))
         y = max(LABEL.min_top, top - self.pad // 2 - h)
-        for line, text in rows:
-            self._blend_ink(frame, self._ink(text, self._label_size(line), colors[line], LABEL.tracking[line]),
-                            self.x + self.pad, y)
-            y += self._label_row_h(line)
+        for k, (line, text) in enumerate(rows):
+            f = self._label_face(line)
+            box = self._blend_ink(frame, self._ink(text, f, colors[line]), self.x + self.pad, y)
+            if k == last_op and progress is not None:
+                x0 = box[2] + BAR.gap_em * f.size
+                x1 = min(x0 + BAR.label_em * f.size, self.col_x1)
+                self._draw_bar(frame, x0, x1, y + f.line_h / 2, progress)
+            y += f.line_h
+
+    def _bar_w(self) -> int:
+        return max(BAR.min_thickness, round(self.ui_size * BAR.thickness))
+
+    def _draw_bar(self, frame: np.ndarray, x0: float, x1: float, y: float, progress: float,
+                  from_centre: bool = False) -> None:
+        """Every progress bar in one style (BAR): a thin line with round ends
+        from x0 to x1 centred on y, a faint track, `progress` of it filled in
+        orange from the left (or out from the centre both ways)."""
+        t = self._bar_w()
+        r = t / 2
+        a, b, y = int(round(x0 + r)), int(round(x1 - r)), int(round(y))
+        if b < a:
+            return
+        _line_blend(frame, (a, y), (b, y), C.bar_track[:3], t, C.bar_track[3] / 255)
+        p = min(max(progress, 0.0), 1.0)
+        if p <= 0:
+            return
+        if from_centre:
+            c, half = (a + b) / 2, (b - a) / 2 * p
+            a, b = int(round(c - half)), int(round(c + half))
+        else:
+            b = int(round(a + (b - a) * p))
+        _line_blend(frame, (a, y), (b, y), C.bar_fill[:3], t, C.bar_fill[3] / 255)
 
     def _node_size(self) -> int:
         return round(self.font_size * TEXT.word_zoom * RING.node_scale)
 
-    def _node(self, text: str, fg, fill, outline) -> tuple[np.ndarray, np.ndarray]:
-        """An options-ring node, Kat's style: text in a square box, a solid outline, roomy padding; cached."""
+    def _node(self, text: str, fg, fill, outline, weight: str = "medium") -> tuple[np.ndarray, np.ndarray]:
+        """An options-ring node, Kat's style: text in a square box, a solid
+        outline, roomy padding (the notes' step at the node's size); cached."""
         size = self._node_size()
-        key = ("node", text, size, fg, fill, outline)
+        key = ("node", text, size, fg, fill, outline, weight)
         if key not in self._chips:
             if len(self._chips) >= CHIP_CACHE_MAX:
                 self._chips.clear()
-            font = self._get_font(size)
+            f = face(size, weight, TYPE.notes.tracking, TYPE.notes.leading)
+            font, lh = f.font, f.line_h
             px, py = round(size * RING.node_pad[0]), round(size * RING.node_pad[1])
-            w, h = int(font.getlength(text)) + 2 * px, sum(font.getmetrics()) + 2 * py
+            w, h = int(_text_w(font, text, f.tracking)) + 2 * px, lh + 2 * py
             img = Image.new("RGBA", (w + 2, h + 2), CLEAR)
             draw = ImageDraw.Draw(img)
             draw.rounded_rectangle((1, 1, w, h), radius=RING.node_radius, fill=fill, outline=outline,
                                    width=RING.node_outline_w if outline else 0)
-            draw.text((1 + px, 1 + py), text, font=font, fill=fg)
+            _text(draw, (1 + px, 1 + py + f.dy), text, font, f.tracking, fill=fg)
             self._chips[key] = _premultiply(img)
         return self._chips[key]
 
@@ -1509,8 +1645,8 @@ class TextOverlay:
         """Review: the width the take chips' column needs at the text column's right, gap included."""
         if not state.takes:
             return 0
-        size = round(self.ui_size * RING.take_scale)
-        return max(self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)[0].shape[1]
+        f = self._face(TYPE.small, SMALL_ON_FILL)
+        return max(self._chip(label, f, C.node_text, C.dark_fill, C.node_outline)[0].shape[1]
                    for label in state.takes) + RING.take_gap
 
     def _take_chips(self, state: ViewState) -> list[tuple[tuple[np.ndarray, np.ndarray], float, float]]:
@@ -1520,12 +1656,12 @@ class TextOverlay:
         got = self._panel_origin(state) if state.takes else None
         if got is None:
             return []
-        size = round(self.ui_size * RING.take_scale)
+        f, shown = self._face(TYPE.small, SMALL_ON_FILL), self._face(TYPE.small, "semibold")
         x0, y = self.col_x1 - (self._takes_w(state) - RING.take_gap), got[3] + self.pad
         out = []
         for i, label in enumerate(state.takes):
-            chip = self._chip(label, size, C.chip_text, C.chip_fill) if i == state.take_shown \
-                else self._chip(label, size, C.node_text, C.dark_fill, C.node_outline)
+            chip = self._chip(label, shown, C.chip_text, C.chip_fill) if i == state.take_shown \
+                else self._chip(label, f, C.node_text, C.dark_fill, C.node_outline)
             h, w = chip[0].shape[:2]
             out.append((chip, x0 + w / 2, y + h / 2 + i * RING.take_pitch * self.box_h))
         return out
@@ -1563,7 +1699,7 @@ class TextOverlay:
         for i, (label, (nx, ny)) in enumerate(zip(labels, nodes)):
             nx, ny = cx + (nx - cx) * spread, cy + (ny - cy) * spread
             if i == picked:
-                chip = self._node(label, C.chip_text, C.chip_fill, None)
+                chip = self._node(label, C.chip_text, C.chip_fill, None, "semibold")
             else:
                 chip = self._node(label, C.node_text, C.node_fill, C.node_outline)
             h, w = chip[0].shape[:2]
@@ -1612,16 +1748,16 @@ class TextOverlay:
         follows the sentence's height and centre, not the surrounding context."""
         edge = GAUGE.knob_r + GAUGE.closing_knob_outline  # the knob stays inside the text column
         x = int(min(self.x + self.margin + self.box_w - self.pad // 2, self.col_x1 - edge))
-        size = round(self.ui_size * GAUGE.label_scale)
+        f = self._face(TYPE.small)
         a, b = sentence_bounds or (top, bottom)
-        label_room = sum(self._get_font(size).getmetrics()) + GAUGE.knob_r + self.pad
+        label_room = f.line_h + GAUGE.knob_r + self.pad
         low, high = top + label_room, bottom - label_room
         height = min(max(b - a + GAUGE.sentence_pad * self.line_h, GAUGE.min_lines * self.line_h),
                      GAUGE.max_lines * self.line_h, max(1, high - low))
         center = max(low + height / 2, min((a + b) / 2, high - height / 2))
         y0, y1 = round(center - height / 2), round(center + height / 2)
         for text, color, above in ((GAUGE.labels[0], C.cold, True), (GAUGE.labels[1], C.warm, False)):
-            ink = self._ink(text, size, (*color, 255))
+            ink = self._ink(text, f, (*color, 255))
             h, w = (n - 2 * ink[2] for n in ink[0].shape[:2])
             self._blend_ink(frame, ink, min(x + GAUGE.knob_r, self.col_x1 - ink[2]) - w,
                             y0 - h - GAUGE.knob_r // 2 if above else y1 + GAUGE.knob_r // 2)
@@ -1643,11 +1779,11 @@ class TextOverlay:
         _corners(frame, (x0, y0 + ZONE.inset_top, x1, y1), int((x1 - x0) * ZONE.corner), C.yellow if active else C.zone,
                  ZONE.active_stroke if active else ZONE.stroke, 1.0 if active else ZONE.alpha)
 
-        size = round(self.ui_size * ZONE.hint_scale)
+        f = self._face(TYPE.small)
         cx, y = (x0 + x1) / 2, y0 + self.pad
         if state.app == "rehearse":
             m, s = divmod(int(state.rec_s), 60)
-            chip = self._chip(f"REC {m}:{s:02d}", round(self.ui_size * ZONE.rec_scale), C.node_text, C.dark_fill)
+            chip = self._chip(f"REC {m}:{s:02d}", self._face(TYPE.operation), C.node_text, C.dark_fill)
             bx0, by0, _, by1 = self._blend_centered(frame, chip, cx + ZONE.rec_dx, y + chip[0].shape[0] / 2)
             # The dot swells with the microphone level: a flat dot means no sound is arriving.
             r0, grow = ZONE.mic_r
@@ -1661,22 +1797,15 @@ class TextOverlay:
         else:
             hints = ("HOLD OPEN PALM: BACK TO PREPARE",)
         for text in hints:  # one plain line each
-            ink = self._ink(text, size, C.node_text if active else C.dim, LABEL.small_tracking)
+            ink = self._ink(text, f, C.node_text if active else C.dim)
             y = self._blend_centered(frame, ink, cx, y + ink[0].shape[0] / 2 - ink[2])[3] + ZONE.hint_gap
 
         if state.app == "rehearse" and (active or state.flick_progress > 0):
             # Flick meter, while a hand is in the zone: fills as the hand swings sideways, so a near miss shows.
-            my, half = y1 - ZONE.flick_dy, (x1 - x0) // 2 - ZONE.flick_inset
-            cv2.line(frame, (int(cx - half), my), (int(cx + half), my), bgr(C.zone), ZONE.flick_stroke, cv2.LINE_AA)
-            if state.flick_progress > 0:
-                reach = int(half * state.flick_progress)
-                cv2.line(frame, (int(cx - reach), my), (int(cx + reach), my), bgr(C.yellow), ZONE.flick_fill,
-                         cv2.LINE_AA)
+            half = (x1 - x0) / 2 - ZONE.flick_inset
+            self._draw_bar(frame, cx - half, cx + half, y1 - ZONE.flick_dy, state.flick_progress, from_centre=True)
         if state.hold_progress > 0:
-            inset = ZONE.hold_inset
-            width = int((x1 - x0 - 2 * inset) * state.hold_progress)
-            cv2.rectangle(frame, (x0 + inset, y1 - ZONE.hold_top), (x0 + inset + width, y1 - ZONE.hold_bottom),
-                          bgr(C.yellow), -1, cv2.LINE_AA)
+            self._draw_bar(frame, x0 + ZONE.hold_inset, x1 - ZONE.hold_inset, y1 - ZONE.hold_dy, state.hold_progress)
 
     def _scrim_level(self, frame: np.ndarray) -> float:
         """How dark the scrim should be for this frame: the brightness of the
@@ -1732,7 +1861,8 @@ class TextOverlay:
             color, inv = self._panel_view(panel, scroll, view_h)
             clamped = int(self.clamp_panel_scroll(state, scroll))
             if panel.height > view_h or clamped != scroll:
-                color, inv = self._faded(color, inv)
+                color, inv = self._faded(color, inv, scroll / self.line_h,
+                                         (panel.height - scroll - view_h) / self.line_h)
             rows = [panel.rows[i] for i in self._panel_unit(state) or () if i in panel.rows]
             if key is not None and rows:
                 x0 = self.x + self.margin + self.pad
@@ -1782,9 +1912,11 @@ class TextOverlay:
         # Word chips are drawn over the cached band, so hovering never re-renders text.
         if state.mode == "browse" and state.level == "word" and state.hover and state.hover.word is not None:
             if (box := self.word_box(state.hover, self.shown_scroll(state))) is not None:
-                chip = self._chip(self.word_text(state.hover), round(self.font_size * CHIPS.hover_scale),
+                st = TYPE.notes  # in semibold, as the unit under the hand is; on the word's row
+                chip = self._chip(self.word_text(state.hover),
+                                  face(round(self.font_size * CHIPS.hover_scale), "semibold", st.tracking, st.leading),
                                   C.chip_text, C.chip_fill)
-                x0, y0, x1, y1 = self._blend_centered(frame, chip, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+                x0, y0, x1, y1 = self._blend_centered(frame, chip, (box[0] + box[2]) / 2, box[1] + self.line_h / 2)
                 if state.ops.closing:  # pinching: this word is held, the pinch will focus it
                     g = RING.closing_box
                     cv2.rectangle(frame, (x0 - g, y0 - g), (x1 + g, y1 + g), bgr(C.yellow), g, cv2.LINE_AA)
@@ -1800,8 +1932,10 @@ class TextOverlay:
                 text = "".join(SCRAMBLE[(ord(c) + int(state.now * 12)) % len(SCRAMBLE)] if c.isalpha() else c
                                for c in text)
             # Inline, in the gap the zoomed text left for it: orange, at the zoomed size (rising with a pinched hand).
-            color, inv, m = self._ink(text, self._word_zoom(state)[3], ink)
-            self._put(frame, int(zoom[0]) - m, int(zoom[1] - lift) - m, color, inv, g, layers)
+            zf = self._zoom_face("semibold")
+            color, inv, m = self._ink(text, zf, ink)
+            dy = zf.dy  # on the zoomed rows' baseline
+            self._put(frame, int(zoom[0]) - m, int(zoom[1] + dy - lift) - m, color, inv, g, layers)
         if layers is not None and target is not None:
             state.focus_motion.last = FocusFrame(key, layers, target, scale, self._ring_snap)
 
@@ -1817,9 +1951,19 @@ class TextOverlay:
         if state.app == "review" and state.mode == "focus" and state.takes and g is None:
             self._draw_takes(frame, state)
         if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
-            # In the hand zone, below the command zone: the hand is down during the count-in.
-            ink = self._ink(str(state.count_in), round(self.ui_size * COUNT_IN.scale), C.orange)
-            self._blend_centered(frame, ink, sum(LAYOUT.hand) / 2 * self.frame_w, self.frame_h * COUNT_IN.y)
+            # In the hand zone, below the command zone: the hand is down during
+            # the count-in. A bar under the digit empties over each second.
+            if self._count is None or self._count[0] != state.count_in:
+                self._count = (state.count_in, state.now)
+            f = self._face(TYPE.display)
+            ink = self._ink(str(state.count_in), f, C.label_state)
+            cx = sum(LAYOUT.hand) / 2 * self.frame_w
+            box = self._blend_centered(frame, ink, cx, self.frame_h * COUNT_IN.y)
+            half = f.advance * COUNT_IN.bar_em / 2
+            self._draw_bar(frame, cx - half, cx + half, box[3] + BAR.count_em * self.ui_size,
+                           1.0 - (state.now - self._count[1]))
+        else:
+            self._count = None
         self._draw_label(frame, state, top)
         low = self._draw_pills(frame, state)
         if state.alert:
@@ -1832,53 +1976,56 @@ class TextOverlay:
         return frame
 
     def _draw_meaning(self, frame: np.ndarray, meaning: str, word_bottom: float) -> None:
-        size = self.ui_size
+        """The selected word's meaning under it, on a navy box: the notes'
+        step, made smaller (not below TEXT.meaning_min_size) until it fits
+        above the box's bottom; its "MEANING" header dimmer."""
+        st = TYPE.notes
+        size = self.font_size
         x = self.x + self.margin
         pad = self.pad // 2
         width = int(self.col_x1 - x)
         y = round(word_bottom + pad)
         available = self.y + self.margin + self.box_h - y
         while True:
-            rows = ["MEANING", *self._wrap(meaning, size, width - 2 * pad)]
-            line_h = sum(self._get_font(size).getmetrics()) + 2
-            height = len(rows) * line_h + 2 * pad
+            f = face(size, st.weight, st.tracking, st.leading)
+            rows = ["MEANING", *self._wrap(meaning, f, width - 2 * pad)]
+            height = len(rows) * f.line_h + 2 * pad
             if height <= available or size <= TEXT.meaning_min_size:
                 break
             size -= 1
-        key = ("meaning", meaning, width, size)
+        key = ("meaning", meaning, width, f)
         if key not in self._chips:
             if len(self._chips) >= CHIP_CACHE_MAX:
                 self._chips.clear()
             img = Image.new("RGBA", (width, height), C.node_fill)
             draw = ImageDraw.Draw(img)
             for i, row in enumerate(rows):
-                draw.text((pad, pad + i * line_h), row, font=self._get_font(size),
-                          fill=C.orange if i == 0 else C.detail_text)
+                _text(draw, (pad, pad + i * f.line_h + f.dy), row, f.font, f.tracking,
+                      fill=C.label_operation if i == 0 else C.detail_text)
             self._chips[key] = _premultiply(img)
         _blend(frame, x, y, *self._chips[key])
 
     def _draw_alert(self, frame: np.ndarray, alert: str, bottom: int, low: int) -> int:
-        """The persistent alert line under the text, wrapped to the text
-        column, above `low`; returns the y under it."""
-        size = round(self.ui_size * LABEL.second_scale)
-        pad_x = 2 * max(CHIPS.pad_x[0], size // CHIPS.pad_x[1]) + 2
-        chips = [self._chip(row, size, C.alert_text, C.alert_fill)
-                 for row in self._wrap(alert, size, self.col_x1 - self.x - pad_x)]
-        y = min(bottom + self.pad // 2, low - sum(c[0].shape[0] for c in chips))
-        for chip in chips:
-            _blend(frame, self.x + self.margin, y, *chip)
-            y += chip[0].shape[0]
-        return y
+        """The persistent alert line under the text (TYPE.operation, white on
+        red), wrapped to the text column, above `low`; returns the y under it."""
+        f = self._face(TYPE.operation)
+        pad_x = 2 * max(CHIPS.pad_x[0], f.size // CHIPS.pad_x[1]) + 2
+        rows = tuple(self._wrap(alert, f, self.col_x1 - self.x - pad_x))
+        block = self._block(rows, f, (C.alert_text,) * len(rows), C.alert_fill)
+        y = min(bottom + self.pad // 2, low - block[0].shape[0])
+        _blend(frame, self.x + self.margin, y, *block)
+        return y + block[0].shape[0]
 
     def _draw_pills(self, frame: np.ndarray, state: ViewState) -> int:
-        """Bottom left: the CLOUD LLM chip whenever the text asked about can
-        leave the Mac, then the keys (or the keys help). Returns their top."""
+        """Bottom left (TYPE.small): the CLOUD LLM chip whenever the text
+        asked about can leave the Mac, then the keys (or the keys help).
+        Returns their top."""
         x, low = self.x + self.margin, self.frame_h - LABEL.min_top
-        size = round(self.ui_size * LABEL.pill_scale)
+        f = self._face(TYPE.small, SMALL_ON_FILL)
         top = low
         if state.llm == "cloud":
             text, fg = ("CLOUD LLM: SENDING", C.orange) if state.llm_busy else ("CLOUD LLM", C.dim)
-            chip = self._chip(text, size, fg, C.label_fill, tracking=LABEL.small_tracking)
+            chip = self._chip(text, f, fg, C.label_fill)
             _blend(frame, x, low - chip[0].shape[0], *chip)
             top = low - chip[0].shape[0]
             if state.keys_help:
@@ -1888,50 +2035,50 @@ class TextOverlay:
         if state.keys_help:
             top = self._draw_keys(frame, low)
         elif state.app in ("prepare", "count_in", "rehearse", "review"):
-            chip = self._chip("H: KEYS", size, C.dim, C.label_fill, tracking=LABEL.small_tracking)
+            chip = self._chip("H: KEYS", f, C.dim, C.label_fill)
             _blend(frame, x, low - chip[0].shape[0], *chip)
             top = min(top, low - chip[0].shape[0])
         return top
 
     def _draw_summary(self, frame: np.ndarray, lines: tuple[str, ...]) -> None:
-        """The take table at the bottom right: a chip per line (all the same
-        width, monospace, so the columns line up), the first (the takes) in orange."""
-        size = round(self.ui_size * SUMMARY.scale)
-        chips = [self._chip(t, size, C.orange if i == 0 else C.node_text, C.dark_fill) for i, t in enumerate(lines)]
-        y = self.frame_h - SUMMARY.bottom - sum(c[0].shape[0] + SUMMARY.gap for c in chips)
-        for color, inv in chips:
-            h, w = color.shape[:2]
-            _blend(frame, self.frame_w - SUMMARY.right - w, y, color, inv)
-            y += h + SUMMARY.gap
+        """The take table at the bottom right (TYPE.small): one dark block,
+        monospace so the columns line up, the first row (the takes) in orange."""
+        colors = tuple(C.orange if i == 0 else C.node_text for i in range(len(lines)))
+        color, inv = self._block(tuple(lines), self._face(TYPE.small, SMALL_ON_FILL), colors, C.dark_fill)
+        h, w = color.shape[:2]
+        _blend(frame, self.frame_w - SUMMARY.right - w, self.frame_h - SUMMARY.bottom - h, color, inv)
 
     def _draw_tutorial(self, frame: np.ndarray, step: int, of: int, text: str) -> None:
         """One gesture at a time, at the bottom right under the hand box (it
-        teaches the hand), right-aligned, with where it is in the steps."""
-        small, big = self._label_size(2), round(self.ui_size * LABEL.first_scale * 0.8)
+        teaches the hand), right-aligned: where it is in the steps and how to
+        skip (the label's hint), then what to do (the label's state)."""
+        small, big = self._label_face(2), self._label_face(0)
         dots = " ".join("●" if k < step else "○" for k in range(of))
         right = self.frame_w - SUMMARY.right
         width = right - LAYOUT.hand[0] * self.frame_w
-        rows = [(row, small, C.node_text) for row in self._wrap(f"{dots}   ENTER: SKIP  /  G: HIDE", small, width)] + \
-            [(row, big, C.orange) for row in self._wrap(text, big, width)]
-        heights = [int(sum(self._get_font(size).getmetrics()) * 1.15) for _, size, _ in rows]
-        y = self.frame_h - SUMMARY.bottom - sum(heights)
-        for (row, size, color), h in zip(rows, heights):
-            ink = self._ink(row, size, color)
+        rows = [(row, small, C.label_hint) for row in self._wrap(f"{dots}   ENTER: SKIP  /  G: HIDE", small, width)] + \
+            [(row, big, C.label_state) for row in self._wrap(text, big, width)]
+        y = self.frame_h - SUMMARY.bottom - sum(f.line_h for _, f, _ in rows)
+        for row, f, color in rows:
+            ink = self._ink(row, f, color)
             self._blend_ink(frame, ink, right - (ink[0].shape[1] - 2 * ink[2]), y)
-            y += h
+            y += f.line_h
 
     def _draw_keys(self, frame: np.ndarray, low: int) -> int:
-        """The keyboard fallback, bottom left, ending at `low`, as large as fits
-        the text column. Returns its top."""
-        size = round(self.ui_size * LABEL.pill_scale)
+        """The keyboard fallback (TYPE.small, smaller if need be), bottom left,
+        ending at `low`, as large as fits the text column. Returns its top."""
+        st = TYPE.small
+        size = self._face(st).size
         widest = max(KEYS_HELP, key=len)
-        while size > 8 and self._chip(widest, size, C.node_text, C.dark_fill)[0].shape[1] > self.col_x1 - self.x:
+        while True:
+            f = face(size, SMALL_ON_FILL, st.tracking, st.leading)
+            px = max(CHIPS.pad_x[0], size // CHIPS.pad_x[1])
+            if size <= 8 or _text_w(f.font, widest, f.tracking) + 2 * px + 2 <= self.col_x1 - self.x:
+                break
             size -= 1
-        chips = [self._chip(line, size, C.node_text, C.dark_fill) for line in KEYS_HELP]
-        y = top = low - sum(c[0].shape[0] for c in chips)
-        for chip in chips:
-            _blend(frame, self.x + self.margin, y, *chip)
-            y += chip[0].shape[0]
+        block = self._block(KEYS_HELP, f, (C.node_text,) * len(KEYS_HELP), C.dark_fill)
+        top = low - block[0].shape[0]
+        _blend(frame, self.x + self.margin, top, *block)
         return top
 
     # --- drawing: the take player ------------------------------------------
@@ -1939,10 +2086,11 @@ class TextOverlay:
     def draw_caption(self, frame: np.ndarray, words: list[tuple[str, str, bool]]) -> None:
         """A row of word chips under the text, left to right, until the frame's
         edge: (text, kind, being said now), kind as in PLAYER.caption."""
-        size = round(self.ui_size * PLAYER.caption_scale)
+        st = TYPE.notes
+        f = face(round(self.ui_size * PLAYER.caption_scale), st.weight, st.tracking, st.leading)
         x, y = self.x + self.margin, int(self.frame_h * PLAYER.caption_y)
         for text, kind, current in words:
-            chip = self._chip(text, size, PLAYER.caption[kind], PLAYER.caption_current if current else None)
+            chip = self._chip(text, f, PLAYER.caption[kind], PLAYER.caption_current if current else None)
             w = chip[0].shape[1]
             if x + w > self.frame_w - PLAYER.caption_right:
                 break
@@ -2053,21 +2201,23 @@ def draw_debug_text(frame: np.ndarray, lines: list[str]) -> None:
                     DEBUG.text_scale, bgr(C.debug_text), DEBUG.text_thickness, cv2.LINE_AA)
 
 
-def _bar(progress: float, width: int = 10) -> str:
-    filled = round(progress * width)
-    return "[" + "=" * filled + " " * (width - filled) + "]"
-
-
 def _text(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font, tracking: float = 0.0, **kw) -> None:
-    """`text` at xy; with `tracking` (px between letters) glyph by glyph at a
-    fixed advance: the font is monospace (Pillow has no letter spacing)."""
-    if not tracking:
+    """`text` with its top of ascent at xy; with `tracking` (px between
+    letters) glyph by glyph at a fixed advance: the font is monospace (Pillow
+    has no letter spacing). Characters the font lacks come from TEXT.fallback,
+    in the same cell on the same baseline."""
+    covered = _covered(font.path)
+    missing = any(ord(ch) not in covered for ch in text if not ch.isspace())
+    if not tracking and not missing:
         draw.text(xy, text, font=font, **kw)
         return
     step = font.getlength("M") + tracking
+    base = xy[1] + font.getmetrics()[0]
+    fallback = load_font(font.size, "fallback") if missing else font
     for i, ch in enumerate(text):
         if not ch.isspace():
-            draw.text((xy[0] + i * step, xy[1]), ch, font=font, **kw)
+            draw.text((xy[0] + i * step, base), ch, font=font if ord(ch) in covered else fallback,
+                      anchor="ls", **kw)
 
 
 def _text_w(font, text: str, tracking: float = 0.0) -> float:

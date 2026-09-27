@@ -1,0 +1,11 @@
+IBM Plex Mono (SIL Open Font License 1.1: OFL-IBMPlexMono.txt), from the Google Fonts
+repository at commit 0b58fb370093f9a9f4ff785d94405710b79de67c:
+https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/ibmplexmono/<file>
+
+6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46  IBMPlexMono-Regular.ttf
+a9b4c49bb299e05b5f6c481e7fb5e78943d2793249a0c8874ab574a2d1ea6755  IBMPlexMono-Medium.ttf
+d3c38e55c78f5b0f28009fddba4834ec503278936a5986032424c9bd2d23aa46  IBMPlexMono-SemiBold.ttf
+7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da  OFL-IBMPlexMono.txt (OFL.txt upstream)
+
+DejaVu Sans Mono (licence: LICENSE-DejaVu.txt) draws only the characters Plex Mono lacks
+(the ▸ ▲ ▼ ● ○ symbols, scripts Plex doesn't cover), in the same monospace cell.

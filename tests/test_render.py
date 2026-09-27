@@ -188,7 +188,9 @@ def test_section_unit_and_rehearse_panel_shows_the_section():
 def test_label_lines_for_takes():
     ov = overlay()
     assert ov.label_lines(ViewState(status="HOLD FIST: START A TAKE")) == ("PREPARE", "HOLD FIST: START A TAKE")
-    assert ov.label_lines(ViewState(start_progress=0.5))[1] == "START A TAKE: HOLD FIST  [=====     ]"
+    assert ov.label_lines(ViewState(start_progress=0.5))[1] == "START A TAKE: HOLD FIST"
+    assert ov.label_progress(ViewState(start_progress=0.5)) == 0.5  # drawn as a bar after the text
+    assert ov.label_progress(ViewState(status="HOLD FIST: START A TAKE")) is None
     assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2")
     assert ov.label_lines(ViewState(app="count_in", hold_progress=0.3))[1].startswith("CANCEL: HOLD")
     rehearse = ViewState(app="rehearse", status="SECTION 1/2: ONE")
@@ -244,7 +246,8 @@ def test_while_it_plays_the_hint_is_stop_and_a_held_palm_fills_the_stop_bar():
                        takes=("TAKE 1", "TAKE 2"), take_shown=1, playable=True, playing=True, play_progress=0.4)
     assert ov.label_lines(review)[1] == "TAKE 2  /  OPEN PALM: STOP"
     review.palm_progress = 0.5
-    assert ov.label_lines(review)[1] == "STOP: HOLD  [=====     ]"
+    assert ov.label_lines(review)[1] == "STOP: HOLD"
+    assert ov.label_progress(review) == 0.5
     prepare = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None), playing=True)
     assert ov.label_lines(prepare)[1] == "OPEN PALM: STOP"
     browse = ViewState(app="review", mode="browse", level="sentence", playing=True)
@@ -263,7 +266,8 @@ def test_a_thin_progress_bar_under_the_focused_unit_while_it_plays():
     rows = sorted(set(changed[:, 0]))
     assert rows[-1] - rows[0] < 12  # a thin bar, not a redraw
     orange = np.array(render.bgr(render.C.orange))
-    assert ((playing[rows[0]] == orange).all(axis=1)).sum() > 20  # its played half in orange
+    middle = rows[len(rows) // 2]  # the bar's edges are antialiased
+    assert ((playing[middle] == orange).all(axis=1)).sum() > 20  # its played half in orange
 
 
 def test_draw_count_in_and_rehearse():
