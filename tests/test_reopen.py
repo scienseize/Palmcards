@@ -206,12 +206,14 @@ def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_
     expected = np.zeros_like(shown)
     expected[:, 320:] = 200  # as others see you: the bright half on the right, and no notes on it
     differs = np.argwhere((np.abs(shown.astype(int) - expected) > 8).any(axis=2))
-    assert len(differs) and differs[:, 0].min() > 360 - 40  # nothing but the bar along the bottom
+    near_bottom = differs[:, 0] > 360 - 40
+    assert len(differs) and all(near_bottom | (differs[:, 1] > 640 - 0.06 * 640 - 150) & (differs[:, 0] < 40))
+    # nothing but the bar along the bottom (captions join it once a word is said) and "M: FLIP VIDEO" top right
     assert right[-1] == 0 and notes[-1] > 0  # the clip (1.5 s) over: the live mirror again, with the notes
 
 
-def test_the_replay_can_be_mirrored_and_captioned(tmp_path, monkeypatch):
-    frames = replayed_frames(tmp_path, monkeypatch, '{"replay_mirrored": true, "replay_captions": true}\n')
+def test_the_replay_can_be_mirrored_and_is_always_captioned(tmp_path, monkeypatch):
+    frames = replayed_frames(tmp_path, monkeypatch, '{"replay_mirrored": true}\n')
     left = [int(f[50:300, 240:310].mean()) for f in frames]
     right = [int(f[50:300, 330:350].mean()) for f in frames]
     replayed = [i for i, (a, b) in enumerate(zip(left, right)) if abs(a - 200) <= 6 and b <= 6]

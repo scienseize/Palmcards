@@ -2094,3 +2094,15 @@ Tests: pytest (full) -> 600 passed. New: marks from a synthetic take (filler, re
   frame loop replaying mirrored with captions appearing after the first word, m and w saved.
 Visual: the bar with each kind of mark and a caption line over the white-wall and dark-room plates.
 ```
+
+```text
+Date: 2026-09-28
+Phase / issue IDs: replay captions always on; "M: FLIP VIDEO" on the replay (user: "The captions should
+  just be default with no other option ... add a indicator that says m to flip the video")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: the w key and the replay_captions preference are gone: a replay always shows its captions.
+  render.draw_replay_hint: "M: FLIP VIDEO" (PLAYBAR.flip_hint) top right of the replay, TYPE.small on
+  the captions' band, inside the bar's inset. Keys help: "M  FLIP A REPLAYED VIDEO (MIRROR OR NOT)".
+Tests: pytest (full) -> 601 passed (captions shown with no preference set; the hint drawn top right;
+  m saved, no replay_captions preference).
+```

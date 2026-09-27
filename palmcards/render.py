@@ -155,7 +155,7 @@ KEYS_HELP = (
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
     "A  PLAY / STOP       P  BACK TO PREPARE",
     "E  CALIBRATE EYES AT THE NEXT TAKE",
-    "M  REPLAY MIRRORED   W  REPLAY CAPTIONS",
+    "M  FLIP A REPLAYED VIDEO (MIRROR OR NOT)",
     "REPLAY BAR: YELLOW FILLER, RED RESTART,",
     "  WHITE LONG PAUSE, BLUE LOOKED AWAY",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
@@ -2144,8 +2144,24 @@ def draw_replay_bar(frame: np.ndarray, progress: float, marks=(), span: tuple[fl
             _line_blend(frame, (at(a), below + 1), (max(at(b), at(a) + 1), below + 1), rgb, 3, alpha)
 
 
+def draw_replay_hint(frame: np.ndarray) -> None:
+    """On a replay, top right: that the m key flips the video (mirrored or as others see you)."""
+    h, w = frame.shape[:2]
+    st = TYPE.small
+    f = face(round(_replay_ui(h) * st.scale), SMALL_ON_FILL, st.tracking, st.leading)
+    text = PLAYBAR.flip_hint
+    pad = max(4, f.size // 3)
+    band_w, band_h = int(_text_w(f.font, text, f.tracking)) + 2 * pad, f.line_h + pad
+    img = Image.new("RGBA", (band_w, band_h), CLEAR)
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 0, band_w - 1, band_h - 1), radius=pad, fill=PLAYBAR.caption_band)
+    _text(draw, (pad, pad // 2 + f.dy), text, f.font, f.tracking, fill=C.dim)
+    inset = int(PLAYBAR.replay_inset * w)
+    _blend(frame, w - inset - band_w, PLAYBAR.hint_top, *_premultiply(img))
+
+
 def draw_replay_caption(frame: np.ndarray, words: list[tuple[str, str, bool]]) -> None:
-    """Captions (optional): what has been said so far in the replay, one line
+    """Captions: what has been said so far in the replay, one line
     above its bar on a faint band, coloured as in the take player (a filler
     yellow, a restart red, an ad-lib cyan), the word being said on a lighter
     ground; older words scroll off the left. `words`: (text, kind, being said now)."""

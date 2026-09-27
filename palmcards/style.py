@@ -333,11 +333,13 @@ class Playbar:
     })
     replay_tick: int = 9  # px: a filler's or a restart's tick
     replay_mark_gap: int = 4  # px between the bar and a mark
-    # Captions (optional, key w): one line of what was said, above the bar.
+    # Captions (always, on a replay): one line of what was said so far, above the bar.
     caption_scale: float = 0.72  # x the UI size
     caption_above: int = 26  # px from the bar's centre up to the line's bottom
     caption_band: RGBA = (0, 0, 0, 140)  # behind the line, for any video
     caption_max: float = 0.8  # x the frame width: older words scroll off the left
+    flip_hint: str = "M: FLIP VIDEO"  # top right of a replay: the key that mirrors it or not
+    hint_top: int = 16  # px from the frame's top edge
     gap: float = 0.5  # its centre below the unit's last enlarged row, x the padding (Review's take lines start a padding below)
 
 

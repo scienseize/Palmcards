@@ -925,3 +925,11 @@ def test_a_replays_bar_carries_its_marks_and_captions_sit_above_it():
     changed = np.argwhere((frame != before).any(axis=2))
     assert len(changed) and changed[:, 0].max() < bar_y - 10  # one line above the bar
     assert abs((changed[:, 1].min() + changed[:, 1].max()) / 2 - 640) < 3  # centred
+
+
+def test_a_replay_says_m_flips_it_top_right():
+    frame = np.full((720, 1280, 3), 128, np.uint8)
+    render.draw_replay_hint(frame)
+    changed = np.argwhere((frame != 128).any(axis=2))
+    assert len(changed) and changed[:, 0].max() < 60 and changed[:, 1].min() > 1280 * 0.75  # top right
+    assert changed[:, 1].max() <= 1280 * (1 - 0.06) + 1  # inside the bar's inset

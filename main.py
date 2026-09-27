@@ -85,7 +85,7 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   a hear the sentence (Prepare) / play the sentence or paragraph (Review), again to stop, u undo the last edit (Prepare), r retry failed analysis,
   e calibrate the eyes again at the next take,
   g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit,
-  m a take's video replayed mirrored or as others see you, w captions on the replay.
+  m flip a take's replayed video: mirrored, or as others see you (the default).
 Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
 Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
 """
@@ -120,7 +120,8 @@ from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_req
     meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
     FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
-    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_stats,
+    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_replay_hint,
+    draw_stats,
 )
 from palmcards.motion import Spring
 from palmcards.review import Board
@@ -371,12 +372,11 @@ class Takes:
         self.frame_size: tuple[int, int] | None = None  # the camera's, for the video
         self.video: VideoWriter | None = None  # the take's video being recorded
         # Review's replay of a take's video: the clip's span (app times), its bar's marks,
-        # its words for the captions; how it is shown (preferences, keys m and w).
+        # its words for the captions; mirrored or not (preference, key m).
         self.replay_span: tuple[float, float] | None = None
         self.replay_marks: list = []
         self.replay_words: list = []
         self.replay_mirrored = False
-        self.replay_captions = False
 
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown. In Review
@@ -743,11 +743,13 @@ class Takes:
         return frame.copy() if self.replay_mirrored else cv2.flip(frame, 1)
 
     def draw_replay(self, frame, progress: float) -> None:
-        """On a replayed frame: its bar with the clip's marks, and the captions if on (key w)."""
+        """On a replayed frame: the captions (what has been said so far), its bar
+        with the clip's marks, and a note that m flips the video."""
         draw_replay_bar(frame, progress, self.replay_marks, self.replay_span)
-        if self.replay_captions and (t := self.playback.clip_time(time.perf_counter())) is not None:
+        if (t := self.playback.clip_time(time.perf_counter())) is not None:
             draw_replay_caption(frame, [(text, kind, a <= t <= b + CAPTION_LINGER_S)
                                         for a, b, text, kind in self.replay_words if a <= t])
+        draw_replay_hint(frame)
 
     def clip_player(self):
         """The player for clips (Review's, "hear it"), made at the first play."""
@@ -1363,7 +1365,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     prefs = preferences.load(prefs_file)
     preferences.apply(prefs)  # before the overlay and the machines are built: box, holds, contrast
     takes.frame_size = (w, h)
-    takes.replay_mirrored, takes.replay_captions = prefs.replay_mirrored, prefs.replay_captions
+    takes.replay_mirrored = prefs.replay_mirrored
     takes.video_on = takes.video_on or prefs.video
     if takes.video_on:
         if devices.video is VideoWriter and (why := video_unavailable()):
@@ -1595,11 +1597,6 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             prefs.replay_mirrored = takes.replay_mirrored = not prefs.replay_mirrored
             preferences.save(prefs, prefs_file)
             view.note = "REPLAYS MIRRORED" if prefs.replay_mirrored else "REPLAYS AS OTHERS SEE YOU"
-            note_until = time.perf_counter() + NOTE_S
-        elif key == ord("w"):  # captions on a replay
-            prefs.replay_captions = takes.replay_captions = not prefs.replay_captions
-            preferences.save(prefs, prefs_file)
-            view.note = "REPLAY CAPTIONS ON" if prefs.replay_captions else "REPLAY CAPTIONS OFF"
             note_until = time.perf_counter() + NOTE_S
         elif key == ord("c"):
             prefs.high_contrast = not prefs.high_contrast
