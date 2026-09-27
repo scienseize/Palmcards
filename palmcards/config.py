@@ -206,6 +206,20 @@ class Recording:
 
 
 @dataclass(frozen=True)
+class Video:
+    # Video of each take (palmcards.video), opt-in: preferences `video`, or
+    # main.py --video. The clean mirrored camera frame, on the app clock.
+    enabled: bool = False
+    # Encoders tried in order; the first that opens is used (and named on the take).
+    codecs: tuple[str, ...] = ("h264_videotoolbox", "libx264", "mpeg4")
+    bitrate: int = 1_500_000  # bit/s: about 11 MB a minute at 720p
+    scale: float = 1.0  # x the camera frame (0.75: 960x540, about 6 MB a minute at a lower bitrate)
+    keyframe_s: float = 1.0  # a keyframe (and a fragment of the file) this often: what a crash can lose
+    queue_s: float = 0.5  # frames the loop can hand over before they are dropped (and recorded as a gap)
+    fps_guess: float = 30.0  # for sizing the queue and the encoder's rate hint; timestamps are real
+
+
+@dataclass(frozen=True)
 class Speech:
     backend: str = "mlx-whisper"  # palmcards.asr BACKENDS: "mlx-whisper" or "apple"
     model: str = "mlx-community/whisper-large-v3-turbo"  # or "mlx-community/whisper-small-mlx"
@@ -435,6 +449,7 @@ PREVIEW = Preview()
 KNOB = Knob()
 REHEARSE = Rehearse()
 RECORDING = Recording()
+VIDEO = Video()
 SPEECH = Speech()
 ANALYSIS = Analysis()
 ALIGN = Align()

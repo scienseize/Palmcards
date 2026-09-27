@@ -64,7 +64,7 @@ SESSIONS_DIR = data_dir()  # palmcards.paths: $PALMCARDS_DATA, the checkout's se
 SILENT_PEAK = 1e-3  # a take whose loudest sample is below this is silence
 SCHEMA = 3
 TAKE_WAV = re.compile(r"take-(\d+)\.wav$")
-TAKE_FILE = re.compile(r"take-(\d+)\.(?:wav|wav\.part|recording\.json)$")
+TAKE_FILE = re.compile(r"take-(\d+)\.(?:wav|wav\.part|recording\.json|mp4|mp4\.part)$")
 LLM_USAGE = "llm-usage.jsonl"
 STATUSES = ("saved", "interrupted", "failed")
 
@@ -109,6 +109,9 @@ class TakeRecord:
     metrics: dict | None = None  # palmcards.metrics: observations about the take, once analysed
     vision: dict | None = None  # face/pose/hand features during the take: file, calibration, counts, state
     gaze_check: dict | None = None  # main.py --gaze-check: {"seed", "t0" (app clock), "prompts"}
+    # Video of the take (opt-in; palmcards.video): state, file, t_first (app
+    # clock of its first frame), frames, dropped, gaps, codec, size; None: none recorded.
+    video: dict | None = None
 
     @property
     def silent(self) -> bool:
@@ -516,7 +519,7 @@ class Session:
             duration_s=round(manifest["samples"] / rate, 3), sample_rate=rate, peak=manifest["peak"],
             sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
             status=status, capture=capture, live=manifest.get("live"), vision=manifest.get("vision"),
-            gaze_check=manifest.get("gaze_check"),
+            gaze_check=manifest.get("gaze_check"), video=manifest.get("video"),
         )
         self.takes = [t for t in self.takes if t.number != take.number] + [take]
         self.takes.sort(key=lambda t: t.number)
@@ -544,10 +547,28 @@ class Session:
                 continue
             audio, _ = read_wav(wav)
             manifest["peak"] = round(float(np.abs(audio).max()) if len(audio) else 0.0, 5)
+            if manifest.get("video"):
+                manifest["video"] = self._recover_video(manifest["video"])
             finished = manifest["state"] in ("saved", "failed")
             status = ("failed" if manifest["state"] == "failed" else "saved") if finished else "interrupted"
             out.append(self.finish_take(manifest, status, recovered=True))
         return out
+
+    def _recover_video(self, video: dict) -> dict:
+        """The video of a take the app died recording: its .part (a fragmented
+        MP4, playable up to its last keyframe) renamed and measured."""
+        part, done = self.dir / f"{video['file']}.part", self.dir / video["file"]
+        if part.exists():
+            part.replace(done)
+        if not done.exists():
+            return {**video, "state": "failed", "error": "no video written"}
+        try:
+            from palmcards.video import video_info
+
+            info = video_info(done)
+        except Exception as exc:  # noqa: BLE001 - no PyAV here, or nothing readable in it
+            return {**video, "state": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        return {**video, **info, "state": "interrupted", "recovered": True}
 
     def save(self) -> None:
         self.acquire()

@@ -43,6 +43,8 @@ class Camera:
 
         self._cond = threading.Condition()
         self._frame: np.ndarray | None = None
+        self._frame_t = 0.0
+        self.last_t = 0.0  # when the frame read() last returned arrived (perf_counter): its capture time
         self._seq = 0
         self._taken = 0
         self._arrivals: deque[float] = deque(maxlen=31)
@@ -60,8 +62,9 @@ class Camera:
                     self._cond.notify_all()
                     return
                 self._frame = cv2.flip(frame, 1)
+                self._frame_t = time.perf_counter()
                 self._seq += 1
-                self._arrivals.append(time.perf_counter())
+                self._arrivals.append(self._frame_t)
                 self._cond.notify_all()
 
     def read(self, timeout: float = 2.0) -> np.ndarray:
@@ -75,6 +78,7 @@ class Camera:
             if self._failed and self._seq <= self._taken:
                 raise CameraError("Camera stopped delivering frames.")
             self._taken = self._seq
+            self.last_t = self._frame_t
             return self._frame
 
     @property

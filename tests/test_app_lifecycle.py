@@ -166,9 +166,9 @@ TAKE = {2: ("count_in", "count_in"), 3: ("take_start", "rehearse")}
 
 class Rig:
     def __init__(self, tmp_path, monkeypatch, script=TAKE, camera=None, tracker=None, keys=None,
-                 tracker_factory=None, live=None, vision=None, gaze_check=False):
+                 tracker_factory=None, live=None, vision=None, gaze_check=False, video=False, video_writer=None):
         self.tmp = tmp_path
-        self.gaze_check = gaze_check
+        self.gaze_check, self.video = gaze_check, video
         self.camera = camera or FakeCamera()
         self.tracker = tracker or FakeTracker()
         self.recorders = []
@@ -202,12 +202,15 @@ class Rig:
             log=lambda: GestureLog(tmp_path / "log.jsonl"), named_window=lambda *a: None, show=lambda *a: None,
             live=live or (lambda language, clock, hints: FakeLive()), vision=vision or (lambda: None),
             wait_key=wait_key, window_open=lambda name: True, destroy_windows=destroy)
+        if video_writer is not None:
+            self.devices.video = video_writer
         self.notes_path = tmp_path / "talk.md"
         self.notes_path.write_bytes(NOTES)
 
     def run(self):
         return main.run(self.notes_path, notes_from_bytes(NOTES, self.notes_path), NOTES, devices=self.devices,
-                        sessions_root=self.tmp / "sessions", prefs_file=self.prefs_file, gaze_check=self.gaze_check)
+                        sessions_root=self.tmp / "sessions", prefs_file=self.prefs_file, gaze_check=self.gaze_check,
+                        video=self.video)
 
     @property
     def prefs_file(self):
@@ -305,3 +308,54 @@ def test_a_cancelled_count_in_records_nothing(tmp_path, monkeypatch):
     assert rig.run() == 0
     assert rig.recorders[0].opened == 1 and rig.recorders[0].closed >= 1
     assert not (tmp_path / "sessions").exists()
+
+
+def software_video(folder, number, size):
+    from palmcards.video import VideoWriter
+
+    return VideoWriter(folder, number, size, codec="mpeg4")  # every PyAV build has it
+
+
+def test_with_video_on_a_take_keeps_its_video_beside_the_audio(tmp_path, monkeypatch):
+    pytest.importorskip("av")
+    rig = Rig(tmp_path, monkeypatch, keys={25: ord("q")}, video=True, video_writer=software_video)
+    assert rig.run() == 0
+    take = rig.session().take(1)
+    video = take.video
+    assert take.status == "saved" and video["state"] == "saved" and video["codec"] == "mpeg4"
+    assert video["frames"] >= 15 and video["dropped"] == 0 and video["file"] == "take-01.mp4"
+    assert (rig.session().dir / "take-01.mp4").exists()
+    assert abs(video["t_first"] - take.t_start) < 0.5  # on the same clock as the audio
+    rig.assert_closed_once()
+
+
+def test_a_camera_failure_mid_take_keeps_the_video_too(tmp_path, monkeypatch):
+    pytest.importorskip("av")
+    rig = Rig(tmp_path, monkeypatch, camera=FakeCamera(fail_at=30), video=True, video_writer=software_video)
+    with pytest.raises(CameraError):
+        rig.run()
+    take = rig.session().take(1)
+    assert take.status == "interrupted" and take.video["state"] == "saved" and take.video["frames"] > 0
+    rig.assert_closed_once()
+
+
+def test_without_video_a_take_has_none(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch, keys={25: ord("q")})
+    assert rig.run() == 0
+    assert rig.session().take(1).video is None and not list(rig.session().dir.glob("*.mp4"))
+
+
+def test_video_asked_for_but_unavailable_is_said_on_the_take(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(main, "video_unavailable", lambda: "PyAV is not installed")
+    rig = Rig(tmp_path, monkeypatch, keys={25: ord("q")}, video=True)
+    assert rig.run() == 0
+    assert rig.session().take(1).video == {"state": "off", "reason": "PyAV is not installed"}
+    assert "video off: PyAV is not installed" in capsys.readouterr().err
+
+
+def test_the_video_preference_turns_it_on_without_the_flag(tmp_path, monkeypatch):
+    pytest.importorskip("av")
+    rig = Rig(tmp_path, monkeypatch, keys={25: ord("q")}, video_writer=software_video)
+    rig.prefs_file.write_text('{"video": true}\n')
+    assert rig.run() == 0
+    assert rig.session().take(1).video["state"] == "saved"

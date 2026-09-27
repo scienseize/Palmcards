@@ -126,6 +126,8 @@ from palmcards.sounds import Cues
 from palmcards.metrics import summary as metrics_summary
 from palmcards.pick import Picker
 from palmcards.playback import ClipPlayer, Playback, span_clip
+from palmcards.video import VideoWriter
+from palmcards.video import unavailable as video_unavailable
 from palmcards.recording import TakeWriter
 from palmcards.revisions import from_snapshot
 from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
@@ -360,6 +362,10 @@ class Takes:
         self.calibrate_next = False  # e: calibrate the eyes again at the next count-in
         self.gaze_check = False  # main.py --gaze-check: every full take is a gaze check
         self.check: dict | None = None  # the gaze check being run: {"seed", "t0", "prompts"}
+        self.video_on = False  # record video of each take (preferences `video`, main.py --video)
+        self.video_off = ""  # why video was asked for and isn't recorded
+        self.frame_size: tuple[int, int] | None = None  # the camera's, for the video
+        self.video: VideoWriter | None = None  # the take's video being recorded
 
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown. In Review
@@ -847,6 +853,7 @@ class Takes:
                 return ""
             self.writer.mark_section(ev.t, self.section, "start")
             self.recorder.start(self.writer)
+            self._start_video(number)
             if self.drill is None and self.follow is not None:
                 self.follow.start_take(self.section)
                 self.recorder.tap = self.follow.tap
@@ -898,6 +905,31 @@ class Takes:
             view.scroll = overlay.scroll_to(view.current)
             return ""
         return ""
+
+    def _start_video(self, number: int) -> None:
+        """The take's video beside its audio, if asked for and possible."""
+        self.writer.video = None
+        if not self.video_on:
+            return
+        if self.video_off or self.frame_size is None:
+            self.writer.meta["video"] = {"state": "off", "reason": self.video_off or "no camera frame yet"}
+            return
+        try:
+            self.video = self.writer.video = self.devices.video(self.session.dir, number, self.frame_size)
+        except Exception as exc:  # the take goes on without video
+            print(f"take {number}: no video: {exc}", file=sys.stderr)
+            self.writer.meta["video"] = {"state": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+    def push_video(self, frame, t: float) -> None:
+        """A frame of the take being recorded (before anything is drawn on it),
+        with its capture time on the app clock. Never blocks."""
+        if self.video is None or self.writer is None:
+            return
+        first = self.video.t_first is None
+        self.video.push(frame.copy(), t)
+        if first and self.video.t_first is not None:  # the audio's manifest knows, should the app die mid-take
+            self.writer.meta["video"] = {"state": "recording", "file": self.video.file,
+                                         "t_first": round(self.video.t_first, 3), "codec": self.video.codec}
 
     def check_over(self, t: float) -> bool:
         """A gaze check stops its take after the last prompt."""
@@ -984,6 +1016,9 @@ class Takes:
         """Stop the microphone; the take finishes writing in the background."""
         writer, self.writer = self.writer, None
         self.check = None
+        if self.video is not None:
+            self.video.stop()  # finishes in the background, like the audio
+            self.video = None
         if writer is not None and (self.vision is None or self.vision.state == "take"):
             writer.meta["vision"] = self._save_vision(writer)
         if self.follow is not None and self.follow.follower is not None:
@@ -1008,12 +1043,20 @@ class Takes:
     def poll(self) -> str:
         """Add takes that finished writing to the session. Returns a label note."""
         note = ""
-        for writer in [w for w in self.finalizing if w.done.is_set()]:
+        for writer in [w for w in self.finalizing if w.done.is_set()
+                       and (getattr(w, "video", None) is None or w.video.done.is_set())]:
             self.finalizing.remove(writer)
             note = self._finish(writer, "saved") or note
         return note
 
     def _finish(self, writer: TakeWriter, status: str) -> str:
+        if (video := getattr(writer, "video", None)) is not None:
+            if not video.wait(RECORDING.finalize_timeout_s):
+                print(f"take {writer.number}: the video is still being written; it is recovered at the next start",
+                      file=sys.stderr)
+            writer.meta["video"] = video.summary()
+            if video.error:
+                print(f"take {writer.number}: video: {video.error}", file=sys.stderr)
         manifest = writer.manifest()
         if manifest["samples"] == 0:
             print(f"take {writer.number}: no audio was written ({writer.error or 'none arrived'})", file=sys.stderr)
@@ -1125,6 +1168,7 @@ class Devices:
     log: Callable = GestureLog.to_session_dir
     speaker: Callable = get_speaker
     player: Callable = ClipPlayer
+    video: Callable = VideoWriter  # (folder, take number, frame size); only with video on
     llm: Callable = get_provider  # None: the optional LLM is off
     vision: Callable = Watcher.open  # face and pose; None or an error: off (they are optional)
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
@@ -1153,6 +1197,8 @@ def main() -> int:
     ap.add_argument("--lang", default=SPEECH.language, help="language of the takes, for Whisper")
     ap.add_argument("--trace", action="store_true", help="record hand landmarks for offline replay")
     ap.add_argument("--no-follow", action="store_true", help="don't follow the voice during takes")
+    ap.add_argument("--video", action="store_true",
+                    help="record video of each take (also preferences `video`), replayed in Review")
     ap.add_argument("--open", metavar="RUN", help="reopen a saved session in Review")
     ap.add_argument("--gaze-check", action="store_true",
                     help="every take is a gaze check (timed prompts), for scripts/evaluate.py --gaze")
@@ -1175,7 +1221,7 @@ def main() -> int:
         print(f"warning: {warning}", file=sys.stderr)
     try:
         return run(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow,
-                   gaze_check=args.gaze_check, devices=Devices(llm=lambda: get_provider(args.llm)))
+                   gaze_check=args.gaze_check, video=args.video, devices=Devices(llm=lambda: get_provider(args.llm)))
     except CameraError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -1203,7 +1249,7 @@ def reopen(args) -> int:
     notes = from_snapshot(session.snapshot(session.current_revision))
     try:
         return run(session.notes, notes, b"", lang=session.language, trace=args.trace, follow=not args.no_follow,
-                   session=session, gaze_check=args.gaze_check,
+                   session=session, gaze_check=args.gaze_check, video=args.video,
                    devices=Devices(llm=lambda: get_provider(args.llm)))
     except CameraError as exc:
         print(exc, file=sys.stderr)
@@ -1212,7 +1258,8 @@ def reopen(args) -> int:
 
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
         devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled,
-        session: Session | None = None, prefs_file: Path | None = None, gaze_check: bool = False) -> int:
+        session: Session | None = None, prefs_file: Path | None = None, gaze_check: bool = False,
+        video: bool = False) -> int:
     """Open everything, run the frame loop, close everything.
 
     Every resource is registered for cleanup as soon as it exists, so a
@@ -1236,6 +1283,7 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
                                      source=source)
         takes = Takes(notes, session, log, devices, follow)
         takes.gaze_check = gaze_check
+        takes.video_on = video  # or the preference, read with the others in frame_loop
         try:
             takes.vision = devices.vision()
         except Exception as exc:  # a model missing or failing to load: the takes go on without
@@ -1261,6 +1309,14 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     h, w = frame.shape[:2]
     prefs = preferences.load(prefs_file)
     preferences.apply(prefs)  # before the overlay and the machines are built: box, holds, contrast
+    takes.frame_size = (w, h)
+    takes.video_on = takes.video_on or prefs.video
+    if takes.video_on:
+        if devices.video is VideoWriter and (why := video_unavailable()):
+            takes.video_off = why
+            print(f"video off: {why}", file=sys.stderr)
+        else:
+            print("video on: each take is recorded to take-NN.mp4 in the session folder")
     tutorial = Tutorial(active=not prefs.tutorial_done)
     overlay = TextOverlay(sentences, (w, h))
     modes = ModeMachine((w, h), log)
@@ -1298,6 +1354,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.current = min(view.current, len(sentences) - 1)
             view.scroll = overlay.clamp_scroll(view.scroll)
         tracker.submit(frame, start - t0)
+        takes.push_video(frame, (getattr(camera, "last_t", 0.0) or start) - t0)  # the clean frame, as captured
         if takes.vision is not None:  # before anything is drawn on the frame; idle outside calibration and takes
             takes.vision.frame(frame, start - t0, frame_index, late=(start - prev_start) * 1000 > BODY.late_ms)
         frame_index += 1
@@ -1371,6 +1428,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.count_in = max(1, math.ceil(modes.count_in_end - (start - t0)))
             view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" and takes.recorder else 0.0
             view.mic = takes.recorder.level if takes.recorder else 0.0
+            view.recording_video = takes.video is not None
             view.start_progress = 0.0
             view.detail = ()
         takes.sync_playback(grammar, view, overlay, start - t0)

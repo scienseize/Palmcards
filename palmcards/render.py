@@ -367,6 +367,7 @@ class ViewState:
     count_in: int = 0  # 3, 2, 1
     calibration: str | None = None  # count_in: the calibration step, "camera" (look into the lens) or "notes"
     rec_s: float = 0.0  # length of the take so far
+    recording_video: bool = False  # the take's video is being recorded too (the REC chip says so)
     mic: float = 0.0  # microphone level, 0..1
     zone_active: bool = False  # a hand is in the command zone
     hold_progress: float = 0.0  # open palm held in the zone, 0..1
@@ -1783,7 +1784,8 @@ class TextOverlay:
         cx, y = (x0 + x1) / 2, y0 + self.pad
         if state.app == "rehearse":
             m, s = divmod(int(state.rec_s), 60)
-            chip = self._chip(f"REC {m}:{s:02d}", self._face(TYPE.operation), C.node_text, C.dark_fill)
+            rec = f"REC {m}:{s:02d}" + (" · VIDEO" if state.recording_video else "")
+            chip = self._chip(rec, self._face(TYPE.operation), C.node_text, C.dark_fill)
             bx0, by0, _, by1 = self._blend_centered(frame, chip, cx + ZONE.rec_dx, y + chip[0].shape[0] / 2)
             # The dot swells with the microphone level: a flat dot means no sound is arriving.
             r0, grow = ZONE.mic_r

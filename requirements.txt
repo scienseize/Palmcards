@@ -39,3 +39,7 @@ pyobjc-framework-AVFoundation
 
 # Milestone 8: the optional cloud LLM (main.py --llm anthropic; imported only then)
 anthropic
+
+# Video of takes (opt-in: preferences `video`, main.py --video): H.264 through
+# VideoToolbox into a fragmented MP4 per take (palmcards/video.py).
+av

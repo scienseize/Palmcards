@@ -1931,3 +1931,41 @@ Tests: pytest (full) -> 567 passed. New: rendered audio plays with exact progres
 Checked on this Mac (rendered to a file, not played): sentence 2 -> 5.19 s of speech at 22050 Hz,
   rendered in 1.53 s; asked again, the kept audio at once.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: video of takes, stage 1 of 2: recording (plan
+  ~/.claude/plans/pasted-content-id-d486-type-and-crispy-hanrahan.md); stage 2 replays it in Review
+Status: implemented; automated and headless encoder checks passed; the user's camera check pending
+Changes:
+  requirements: PyAV (av 18.1.0; uv, numpy stays 1.26.4). Encoders here: h264_videotoolbox (used),
+    libx264, mpeg4; libopenh264 not built in. VIDEO.codecs tries them in that order.
+  palmcards/video.py (new): VideoWriter on the TakeWriter pattern: push(frame, t) never blocks (a
+    bounded queue, VIDEO.queue_s; a full queue drops the frame, gaps recorded as [app time, frames]);
+    each frame's capture time on the app clock is its timestamp (variable frame rate); a fragmented
+    MP4 (frag_keyframe+empty_moov+default_base_moof, flush_packets) with a keyframe forced every
+    VIDEO.keyframe_s by time, written as take-NN.mp4.part and renamed; states recording ->
+    finalizing -> saved | failed; no frames, no file. probe() (a real tiny encode per codec),
+    unavailable(), video_info() (frames and length from packets, nothing decoded).
+  palmcards/capture.py: Camera.last_t, the arrival time of the frame read() returned.
+  palmcards/config.py VIDEO; palmcards/prefs.py video (off); main.py --video.
+  main.py Takes: a VideoWriter per take beside the audio (Devices.video); the frame loop pushes a copy
+    of the clean frame right after the hand tracker gets it; the audio manifest names the video from
+    its first frame (recovery needs t_first); stop with the take; a take is added once audio and video
+    have both finished; take.video = the writer's summary, or off (reason) / failed (error). The REC
+    chip reads "REC m:ss · VIDEO" (render: ViewState.recording_video).
+  palmcards/session.py: TakeRecord.video; take numbers skip take-NN.mp4(.part); recover() renames a
+    video's .part and measures it (state interrupted, recovered).
+  palmcards/data.py: list shows video MB; drop-video RUN|--older-than DAYS [--yes] deletes only videos,
+    the takes then say "deleted".
+  scripts/bench_vision.py --video: the frames recorded too; dropped video frames fail the gate.
+  docs/evaluation.md: consent must name video if it is on.
+Tests: pytest (full) -> 581 passed; python -m palmcards.replay -> all ok. New: tests/test_video.py
+  (real timestamps, dropped frames and gaps without waiting, no encoder, even and scaled sizes, probe,
+  numbering, a SIGKILLed take's video recovered to its last keyframe, finish_take keeps video,
+  drop-video); app lifecycle with video (saved beside the audio on the same clock, kept on a camera
+  failure, none without video, unavailable said on the take, the preference turns it on).
+Checked on this Mac (headless, VideoToolbox, 1280x720 at 30 fps for 10 s): 300/300 frames, none
+  dropped; push with the frame copy 0.26 ms median (p99 0.37); finished 2 ms after stop; read back
+  300 frames over 9.97 s. Size on a synthetic moving texture 3 MB/min; a real camera to be measured.
+```

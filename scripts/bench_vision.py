@@ -1,7 +1,7 @@
 """Face and pose budget (milestone 7, stage 0): which landmarker rates keep the camera near 30 fps?
 
   python scripts/bench_vision.py [SESSION_DIR --take N] [--seconds S] [--warm S]
-                                 [--configs base,f3,p5,f3p5,...] [--face-side PX] [--json OUT]
+                                 [--configs base,f3,p5,f3p5,...] [--face-side PX] [--video] [--json OUT]
 
 Runs the load of a take, in one camera window:
   hands     the gesture recognizer on every frame, the mode machine in Rehearse,
@@ -11,6 +11,8 @@ Runs the load of a take, in one camera window:
             looped so one stream runs through the whole benchmark
   recording the microphone streamed to a take file in a temporary folder
             (deleted afterwards), through the app's own writer
+  video     with --video: the camera frames recorded too (palmcards.video,
+            the app's writer and encoder), into the same temporary folder
 
 and adds MediaPipe Face Landmarker and Pose Landmarker (palmcards.vision) at
 frame strides: `f3` = face on every 3rd frame, `p5` = pose on every 5th,
@@ -101,7 +103,8 @@ def newest_take(root: Path) -> tuple[Path, int]:
 
 
 class Bench:
-    def __init__(self, replay: Replay, recorder, writer, warm: float, seconds: float, face_side: int):
+    def __init__(self, replay: Replay, recorder, writer, warm: float, seconds: float, face_side: int,
+                 video_folder: Path | None = None):
         import cv2
 
         from palmcards.capture import Camera
@@ -115,6 +118,13 @@ class Bench:
         frame = self.camera.read()
         h, w = frame.shape[:2]
         self.size = (w, h)
+        self.video = None
+        if video_folder is not None:  # the app's video writer, recording every frame
+            from palmcards.video import VideoWriter, unavailable
+
+            if why := unavailable():
+                raise SystemExit(f"--video: {why}")
+            self.video = VideoWriter(video_folder, 1, (w, h))
         self.hands = HandTracker()
         self.modes = ModeMachine((w, h))
         self.modes.enter("rehearse", 0.0)
@@ -159,11 +169,15 @@ class Bench:
                 measuring, last = True, start
                 snap = {"reads": len(stream.run_ms), "overflows": self.recorder.overflows,
                         "gaps": len(self.writer.manifest()["discontinuities"]), "t": start,
+                        "video_frames": self.video.pushed if self.video else 0,
+                        "video_dropped": self.video.dropped if self.video else 0,
                         "thermal": thermal(),
                         **{f"{k}_{a}": getattr(tr, a) for k, tr in (("face", face), ("pose", pose)) if tr
                            for a in ("results", "found", "skipped", "submitted")}}
                 shown.clear()
             self.hands.submit(frame, t)
+            if self.video is not None:
+                self.video.push(frame.copy(), self.camera.last_t - self.t0)
             if (result := self.hands.poll()) is not None:
                 self.modes.update(*result)
             self.modes.tick(t)
@@ -211,6 +225,9 @@ class Bench:
                "audio": {"overflows": self.recorder.overflows - snap["overflows"],
                          "gaps": len(self.writer.manifest()["discontinuities"]) - snap["gaps"]},
                "peak_rss_mb": round(peak_rss_mb(), 1), "thermal": [snap["thermal"], thermal()]}
+        if self.video is not None:
+            out["video"] = {"codec": self.video.codec, "frames": self.video.pushed - snap["video_frames"],
+                            "dropped": self.video.dropped - snap["video_dropped"]}
         for key, tracker, ms in (("face", face, face_ms), ("pose", pose, pose_ms)):
             if tracker is None:
                 continue
@@ -223,6 +240,9 @@ class Bench:
         return out
 
     def close(self) -> None:
+        if self.video is not None:
+            self.video.stop()
+            self.video.wait(10)
         for tracker in (self.face, self.pose):
             if tracker is not None:
                 tracker.close()
@@ -246,6 +266,8 @@ def gate(r: dict, base: dict) -> list[str]:
         fails.append(f"live p90 {a} ms")
     if r["audio"]["overflows"] or r["audio"]["gaps"]:
         fails.append("audio dropped")
+    if r.get("video", {}).get("dropped"):
+        fails.append(f"video dropped {r['video']['dropped']}")
     return fails
 
 
@@ -309,6 +331,7 @@ def main() -> int:
     ap.add_argument("--configs", default=DEFAULT, help=f"settings in order (default {DEFAULT})")
     ap.add_argument("--face-side", type=int, default=BODY.face_max_side,
                     help=f"face frames downscaled to this many pixels on their long side (default {BODY.face_max_side})")
+    ap.add_argument("--video", action="store_true", help="record the camera frames too, as a take with video on")
     ap.add_argument("--json", type=Path, help="save the results here")
     args = ap.parse_args()
     configs = args.configs.split(",")
@@ -345,7 +368,8 @@ def main() -> int:
             print(f"live model ready in {load_s:.1f} s", flush=True)
             recorder.open()
             recorder.start(writer)
-            bench = Bench(replay, recorder, writer, args.warm, args.seconds, args.face_side)
+            bench = Bench(replay, recorder, writer, args.warm, args.seconds, args.face_side,
+                          Path(tmp) if args.video else None)
             replay.start()
             for name in configs:
                 print(f"  {name} ...", flush=True)

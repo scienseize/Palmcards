@@ -19,7 +19,7 @@ H3 originally measured eye contact, the share of speaking time spent looking at 
 
 ## Collecting takes
 
-- **Consent.** Every speaker agrees in writing to being recorded and to the recordings being used for evaluation. The labels file records `"consent": true`; `scripts/evaluate.py` refuses files without it. Recordings stay on the machine they were made on unless the speaker agrees otherwise.
+- **Consent.** Every speaker agrees in writing to being recorded and to the recordings being used for evaluation. The labels file records `"consent": true`; `scripts/evaluate.py` refuses files without it. Recordings stay on the machine they were made on unless the speaker agrees otherwise. Video of takes is off by default (preferences `video`, `main.py --video`); record it only if the speaker's written consent names video too, and `python -m palmcards.data drop-video` removes it (the audio and results stay).
 - **Spread.** Cover different voices (pitch range, age, accent), speaking styles (read, memorised, improvised), microphone distances (laptop at arm's length, closer, further), rooms (quiet, some noise), and languages. Fillers are detected in English only (`SPEECH.filler_languages`); other languages get the other measures.
 - **Hold-out.** Before any tuning, mark each take `"split": "tune"` or `"split": "holdout"`, keeping about a third as hold-out and never mixing a speaker across splits. Settings in `palmcards/config.py` (`METRICS`, `ALIGN`) are tuned on `tune` only. Hold-out results are reported once per change.
 

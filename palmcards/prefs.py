@@ -12,6 +12,9 @@ sessions (which are evidence and never change with your settings).
   reduced_motion nothing moves or scales, things fade (true / false; auto: as macOS's
                  Accessibility > Display > Reduce motion)
   sounds         soft sound cues in Prepare and Review (focus, back, commit, the ring's steps)
+  video          record video of each take, replayed in Review (off by default; main.py --video
+                 for one run). Video is far more personal than the audio: it stays in the session
+                 folder; python -m palmcards.data drop-video deletes it
   tutorial_done  the first-run gesture tutorial has been seen (key g shows it again)
 """
 
@@ -33,6 +36,7 @@ class Prefs:
     show_hand_box: bool = True
     reduced_motion: bool | None = None  # None: as macOS's setting
     sounds: bool = False
+    video: bool = False  # record video of each take (palmcards.video); main.py --video for one run
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
     stop_hold_s: float = REHEARSE.hold_s

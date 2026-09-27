@@ -5,11 +5,13 @@ automatically or without --yes.
   python -m palmcards.data export RUN DEST.zip       copy a session out (audio, notes, results)
   python -m palmcards.data delete RUN [--yes]        without --yes: says what would go
   python -m palmcards.data prune --older-than DAYS [--yes]
+  python -m palmcards.data drop-video RUN|--older-than DAYS [--yes]   videos only; audio and results stay
 
 RUN is a session folder name (or a unique prefix of one) under the data
 directory (palmcards.paths). A session another PalmCards has open is never
 deleted. Gesture logs are listed and pruned with the sessions that refer to
-them.
+them. Videos of takes (recorded only with video on) are the most personal
+part and the largest: drop-video deletes just them, and the takes note it.
 """
 
 from __future__ import annotations
@@ -46,10 +48,16 @@ def started(folder: Path) -> datetime:
     return datetime.strptime(folder.name[:15], "%Y%m%d-%H%M%S")
 
 
+def videos(folder: Path) -> list[Path]:
+    return sorted(folder.glob("take-*.mp4"))
+
+
 def describe(folder: Path) -> str:
     s = Session.load(folder)
+    video = sum(p.stat().st_size for p in videos(folder))
     return (f"{folder.name}  {len(s.takes)} take{'s' if len(s.takes) != 1 else ''}  "
-            f"{size(folder) / 1e6:.1f} MB  notes: {s.notes.name}")
+            f"{size(folder) / 1e6:.1f} MB" + (f" (video {video / 1e6:.1f} MB)" if video else "")
+            + f"  notes: {s.notes.name}")
 
 
 def export(folder: Path, dest: Path) -> Path:
@@ -82,6 +90,26 @@ def delete(folder: Path, root: Path, yes: bool) -> list[Path]:
     return doomed
 
 
+def drop_video(folder: Path, yes: bool) -> list[Path]:
+    """The session's take videos, if `yes` (each take's `video` then says
+    "deleted"); returns what goes (or would go). Refuses a session open elsewhere."""
+    session = Session.load(folder)
+    session.acquire()  # SessionBusy if another PalmCards has it open
+    try:
+        doomed = videos(folder)
+        if yes and doomed:
+            for p in doomed:
+                p.unlink()
+            when = datetime.now().isoformat(timespec="seconds")
+            for take in session.takes:
+                if take.video and take.video.get("file") and not (folder / take.video["file"]).exists():
+                    take.video = {**take.video, "state": "deleted", "deleted": when}
+            session.save()
+    finally:
+        session.release()
+    return doomed
+
+
 def main(argv: list[str] | None = None, root: Path | None = None) -> int:
     root = root or SESSIONS_DIR
     ap = argparse.ArgumentParser(prog="python -m palmcards.data", description=__doc__.split("\n\n")[0])
@@ -96,7 +124,13 @@ def main(argv: list[str] | None = None, root: Path | None = None) -> int:
     pr = sub.add_parser("prune")
     pr.add_argument("--older-than", type=float, required=True, metavar="DAYS")
     pr.add_argument("--yes", action="store_true")
+    dv = sub.add_parser("drop-video")
+    dv.add_argument("run", nargs="?")
+    dv.add_argument("--older-than", type=float, metavar="DAYS")
+    dv.add_argument("--yes", action="store_true")
     args = ap.parse_args(argv)
+    if args.cmd == "drop-video" and (args.run is None) == (args.older_than is None):
+        ap.error("drop-video: give a RUN or --older-than DAYS")
     try:
         if args.cmd == "list":
             print(f"sessions in {root}")
@@ -104,6 +138,20 @@ def main(argv: list[str] | None = None, root: Path | None = None) -> int:
                 print("  " + describe(folder))
         elif args.cmd == "export":
             print(f"exported to {export(find(root, args.run), args.dest)}")
+        elif args.cmd == "drop-video":
+            if args.run is not None:
+                folders = [find(root, args.run)]
+            else:
+                cutoff = datetime.now() - timedelta(days=args.older_than)
+                folders = [f for f in sessions(root) if started(f) < cutoff and videos(f)]
+            verb = "deleted" if args.yes else "would delete (add --yes)"
+            gone = []
+            for folder in folders:
+                try:
+                    gone += drop_video(folder, args.yes)
+                except SessionBusy as exc:
+                    print(f"kept (open): {exc}")
+            print("\n".join(f"{verb}: {p}" for p in gone) if gone else "no videos to delete")
         elif args.cmd == "delete":
             gone = delete(find(root, args.run), root, args.yes)
             verb = "deleted" if args.yes else "would delete (add --yes)"
