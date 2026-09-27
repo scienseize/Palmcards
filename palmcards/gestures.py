@@ -372,6 +372,14 @@ class HandTrack:
             self.pinch_start = None
         return events
 
+    def lift_progress(self, frame_h: float) -> float:
+        """How far a pinched hand has risen toward a commit (0..1): the wrist's
+        rise within the commit window over TIMING.commit_rise. 0 when not pinching."""
+        if not self.pinching or not self._lift or self.hand is None:
+            return 0.0
+        rise = max(y for _, y in self._lift) - float(self.hand.points[WRIST][1])
+        return _clamp(rise / (TIMING.commit_rise * frame_h))
+
 
 # --- relative cursor -----------------------------------------------------------
 
@@ -488,6 +496,7 @@ class GestureState:
     ring_pick: str | None = None
     ring_k: int = 0
     ring_turn: int = 0  # steps taken since the focus, + clockwise: the ring's rotation
+    ring_offset: float = 0.0  # how far past its step the knob is turned, in steps (display only)
     tone: float = 0.0  # -1 cold .. 1 warm
     stretch: float = 1.0  # length ratio
     closing: bool = False  # a pinch is coming or held: the dial or the pointed word is held (and shown so)
@@ -956,7 +965,7 @@ class Grammar:
         self._ring = RingSelection(self.ring_labels)
         self._knob = Knob()
         self._knob_fresh = True
-        s.turning, s.ring_k, s.ring_turn = False, 0, 0
+        s.turning, s.ring_k, s.ring_turn, s.ring_offset = False, 0, 0, 0.0
         s.ring_pick = self._ring.pick if s.op == "ring" else None
 
     def _turn_ring(self, t: float, p: HandTrack) -> None:
@@ -965,6 +974,7 @@ class Grammar:
         an op (node, word, dir). While the thumb closes into a pinch the knob is
         held (_guard_pinch), and it picks up again from its step."""
         s = self.state
+        s.ring_offset = 0.0
         if s.closing:
             s.turning = False
             return
@@ -986,6 +996,7 @@ class Grammar:
             s.ring_turn += d
             self.log(t, "op", op="ring_step", node=node, word=word, dir=d)
         s.ring_pick, s.ring_k = self._ring.pick, self._ring.k
+        s.ring_offset = self._knob.offset / self._knob.step_deg
 
     def _point_takes(self, t: float, events: list[GestureEvent]) -> None:
         """Review: an L-hand starts pointing at the focused sentence's takes (the

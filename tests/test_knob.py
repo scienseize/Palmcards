@@ -100,3 +100,17 @@ def test_regrip_carries_on_with_no_jump():
 @pytest.mark.parametrize("angles", [[], [0.0], [3.0, -3.0]])
 def test_holding_still_keeps_the_start_node(angles):
     assert turn(angles) == [0] * len(angles)
+
+
+def test_the_offset_is_how_far_past_its_step_the_knob_is_turned():
+    knob = Knob(step_deg=15, hyst_deg=4, dead_deg=5)
+    assert knob.offset == 0.0  # not held
+    knob.start(100.0)
+    knob.update(103.0)
+    assert knob.offset == pytest.approx(3.0)
+    knob.update(111.0)  # 11 deg: still on step 0, most of the way to the next
+    assert (knob.k, knob.offset) == (0, pytest.approx(11.0))
+    knob.update(112.0)  # past 11.5: step 1, and the offset carries on from its centre
+    assert (knob.k, knob.offset) == (1, pytest.approx(-3.0))
+    knob.release()
+    assert knob.offset == 0.0

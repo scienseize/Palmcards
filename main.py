@@ -117,7 +117,7 @@ from palmcards.preview import Previews
 from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
     meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
-    Hit, OpsView, TextOverlay, ViewState,
+    Hit, OpsView, PanelMotion, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
@@ -220,6 +220,8 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     ops = view.ops
     ops.kind, ops.pointing, ops.tone, ops.stretch = gs.op, gs.pointing or gs.turning, gs.tone, gs.stretch
     ops.stretch_ends, ops.closing = gs.stretch_ends, gs.closing  # ops.picked: the ring's knob (follow_ring)
+    ops.offset = gs.ring_offset
+    view.lift = gs.primary.lift_progress(grammar.h) if gs.mode == "focus" and gs.primary is not None else 0.0
 
 
 def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog,
@@ -1242,7 +1244,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         modes.enter(start_mode, 0.0)
     grammar = modes.grammar
     grammar.defer_edit_commit = True
-    view = ViewState()
+    view = ViewState(panel_motion=PanelMotion())
+    snap_panel = False  # the panel's scroll moved by a key: shown at once, not sprung
     show_debug = False
     note_until = None
     fps, work_ms, last = 0.0, 0.0, time.perf_counter()
@@ -1287,6 +1290,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if modes.mode == "rehearse" and takes.check_over(start - t0):  # a gaze check ends itself
             modes.enter("review", start - t0)
             events.append(GestureEvent("take_stop", start - t0))
+        snap_panel = snap_panel or any(ev.source == "key" for ev in queued)
         events, queued = queued + events, []
         if note := takes.poll_analysis():
             view.note, note_until = note, start + NOTE_S
@@ -1376,6 +1380,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if note_until is not None and start > note_until:
             view.note, note_until = "", None
 
+        overlay.follow_panel_scroll(view, snap=snap_panel)
+        snap_panel = False
         overlay.draw(frame, view)
         if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
             draw_hand_area(frame, grammar.cursor)
@@ -1414,11 +1420,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 unit = takes.section_sentences()
                 i = unit.index(view.current) if view.current in unit else 0
                 view.current = unit[min(max(i + step, 0), len(unit) - 1)]
-                view.panel_scroll = overlay.panel_scroll_to(view, view.current)
+                view.panel_scroll, snap_panel = overlay.panel_scroll_to(view, view.current), True
                 if takes.follow is not None:
                     takes.follow.jump(takes.section, view.current)  # the voice carries on from here
             elif view.mode == "focus" and overlay.panel_max_scroll(view):  # scroll the focused panel
                 view.panel_scroll = overlay.clamp_panel_scroll(view, view.panel_scroll + step * 3 * overlay.line_h)
+                snap_panel = True
                 page_pause_until = time.perf_counter() + TEXT.page_pause_s
             elif view.app in ("prepare", "review"):
                 view.current = min(max(view.current + step, 0), len(sentences) - 1)

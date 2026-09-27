@@ -273,6 +273,33 @@ class Gauge:
 
 
 @dataclass(frozen=True)
+class Motion:
+    """How things move (palmcards/motion.py springs). A spring's response is
+    roughly how long it takes to get there, in seconds; damping 1.0 means no
+    overshoot. What the hand drives directly follows it 1:1, no spring; springs
+    carry the rest (a node settling, a scroll the voice asked for) and pick up
+    from where they are when interrupted. Keys never animate."""
+    # The options ring: between the knob's steps it turns with the hand
+    # (ring_gain of the way, nothing within ring_flat steps of a node, so it
+    # rests on the node through the index's wobble), and it springs onto the
+    # node a step lands on.
+    ring: float = 0.10
+    ring_damping: float = 1.0
+    ring_gain: float = 0.5
+    ring_flat: float = 0.1  # steps
+    # The focus panel's scroll (Rehearse following the voice, the pages a tall
+    # panel turns by itself, the section handed on).
+    scroll: float = 0.30
+    # Pinch + lift: what the commit will act on rises with the pinched hand, up
+    # to lift_px at the commit's height.
+    lift_px: int = 6
+    # Backing out (the hand dropped): the focus fades by up to drop_fade and the
+    # ring's nodes are drawn in toward the word by up to drop_pull, as the timer runs.
+    drop_fade: float = 0.4
+    drop_pull: float = 0.3
+
+
+@dataclass(frozen=True)
 class Zone:
     """Command zone contents (the zone's place is REHEARSE.zone in config.py):
     corner marks like the hand box, hints as plain lines. Scales x the UI size."""
@@ -307,6 +334,12 @@ class CountIn:
 class Hands:
     tip_r: int = 4  # fingertip dots
     active_tip_r: int = 9  # index fingertip
+    # A curled finger's dot: smaller and faint, so the dots show the shape the
+    # hand is making from the first frame, before it counts (TIMING.stable_s).
+    curled_tip_r: int = 3
+    curled_alpha: float = 0.35
+    # While the hand's shape has changed but doesn't count yet, the active dot is a ring.
+    pending_ring_w: int = 2
     stretch_stroke: int = 2  # line between the two index tips, drawn under the text
     closing_stretch_stroke: int = 5  # ... while a thumb closes into a pinch: the length is held
     stretch_alpha: float = 0.45
@@ -395,6 +428,7 @@ DETAIL = Detail()
 RING = Ring()
 GAUGE = Gauge()
 PLAYBAR = Playbar()
+MOTION = Motion()
 ZONE = Zone()
 COUNT_IN = CountIn()
 SUMMARY = Summary()

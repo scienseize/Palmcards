@@ -64,11 +64,12 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from palmcards.config import CURSOR, KNOB, REHEARSE
-from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
+from palmcards.gestures import FINGER_TIPS, HAND_CONNECTIONS, INDEX_TIP, THUMB_TIP, TIPS
+from palmcards.motion import Spring
 from palmcards.notes import Sentence, parse_sentence
 from palmcards.preview import PreviewView
 from palmcards.style import (
-    CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT, OUTLINE, PLAYBAR,
+    CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT, MOTION, OUTLINE, PLAYBAR,
     PLAYER, RING, SCRIM, SHADOW, TEXT, ZONE, bgr,
 )
 
@@ -159,11 +160,16 @@ def resolve_scramble(text: str, progress: float, seed: int) -> str:
 
 
 def ring_rotation(ops: "OpsView", now: float) -> float:
-    """Where the options ring is in its turn (nodes, unwrapped): eased out."""
-    if ops.turned_t is None:
-        return ops.rot_to
-    p = min(max((now - ops.turned_t) / KNOB.rotate_s, 0.0), 1.0)
-    return ops.rot_from + (ops.rot_to - ops.rot_from) * (1 - (1 - p) ** 3)
+    """Where the options ring is in its turn (nodes, unwrapped): sprung."""
+    return ops.rot.at(now)
+
+
+def ring_follow(offset: float) -> float:
+    """How far the ring turns with the hand past its node (in nodes) for the
+    knob turned `offset` steps past its step: not at all near the node, then
+    MOTION.ring_gain of the way."""
+    past = max(0.0, abs(offset) - MOTION.ring_flat)
+    return math.copysign(past * MOTION.ring_gain, offset)
 
 
 @dataclass(frozen=True)
@@ -180,13 +186,15 @@ class OpsView:
     picked: int = 0  # ring node (ring_labels order), 0 = original word
     pointing: bool = False  # choosing: pointing at Review's takes, turning the ring
     # The ring turned like a knob (follow_ring): its rotation in nodes, unwrapped
-    # (+ clockwise), eases from rot_from to rot_to over KNOB.rotate_s from
-    # turned_t. `turn` is the grammar's ring_turn it has followed. `preview` is
+    # (+ clockwise), a spring (MOTION.ring) heading for rot_to, the node the
+    # knob is on, plus the part of the way to the next the hand has turned
+    # (`offset`, in steps: GestureState.ring_offset). `turn` is the grammar's
+    # ring_turn it has followed. `preview` is
     # the word shown in the sentence (the picked word node, else the word
     # itself); it scrambles in from scrambled_t. changed_t: when the pick last changed.
-    rot_from: float = 0.0
+    rot: Spring = field(default_factory=Spring)
     rot_to: float = 0.0
-    turned_t: float | None = None
+    offset: float = 0.0
     turn: int = 0
     nodes: int = 0
     pick_label: str | None = None
@@ -197,6 +205,14 @@ class OpsView:
     stretch: float = 1.0
     stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
     closing: bool = False  # the thumb is closing into a pinch: the dial is held where it was, drawn bolder
+
+
+@dataclass
+class PanelMotion:
+    """The focus panel's scroll as shown: a spring (MOTION.scroll) heading for
+    ViewState.panel_scroll, the unit it belongs to (TextOverlay.follow_panel_scroll)."""
+    spring: Spring = field(default_factory=Spring)
+    unit: tuple[int, ...] | None = None
 
 
 @dataclass
@@ -227,6 +243,9 @@ class ViewState:
     detail: tuple[str, ...] = ()  # Review focus: the lines under the sentence (a take each)
     summary: tuple[str, ...] = ()  # Review, browsing: the take table (palmcards.review), a line each
     panel_scroll: float = 0.0  # px into the focus panel's content (clamped when drawn)
+    # The app's: the panel scrolls to panel_scroll sprung (follow_panel_scroll). None: at once.
+    panel_motion: PanelMotion | None = None
+    lift: float = 0.0  # pinch + lift: how far the pinched hand has risen toward a commit, 0..1
     alert: str = ""  # persistent: recording or analysis trouble, until it is dealt with
     keys_help: bool = False  # the keyboard fallback, shown with `h`
     # Rehearse: the next section shown faint under the current one, while its
@@ -425,6 +444,7 @@ class TextOverlay:
         self._zoom = None
         self._zoom_rows: dict[int, list[Row]] = {}
         self._chips: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+        self._drawn_rows: dict[int, int] = {}  # the last frame's panel: sentence -> top of its rows on screen
 
     # --- units -------------------------------------------------------------
 
@@ -587,10 +607,10 @@ class TextOverlay:
 
     def follow_ring(self, state: ViewState, pick: str | None, turn: int) -> None:
         """The options ring follows the grammar's knob (GestureState.ring_pick,
-        ring_turn): the ring turns the way the hand went, the short way when
-        the nodes changed under it (alternatives arriving: they reflow, no
-        turn); a new word in the sentence scrambles in; a newly picked node's
-        box empties while its word moves up."""
+        ring_turn, ring_offset): the ring turns with the hand between nodes and
+        springs onto the node each step lands on, the way the hand went; the
+        nodes changing under it (alternatives arriving) reflow it, no turn; a
+        new word in the sentence scrambles in."""
         ops, now = state.ops, state.now
         labels = self.ring_labels(state)
         if not labels:
@@ -598,13 +618,12 @@ class TextOverlay:
         picked = labels.index(pick) if pick in labels else 0
         n = len(labels)
         if n != ops.nodes:
-            ops.rot_from = ops.rot_to = float(picked)
-            ops.turned_t, ops.nodes = None, n
+            ops.rot_to, ops.nodes = float(picked), n
+            ops.rot.snap(ops.rot_to, now)
         else:
             aim = ops.rot_to + (turn - ops.turn)  # where the knob's steps take it
-            target = picked + n * round((aim - picked) / n)
-            if target != ops.rot_to:
-                ops.rot_from, ops.rot_to, ops.turned_t = ring_rotation(ops, now), float(target), now
+            ops.rot_to = float(picked + n * round((aim - picked) / n))
+            ops.rot.retarget(ops.rot_to + ring_follow(ops.offset), now, MOTION.ring, MOTION.ring_damping)
         ops.turn = turn
         if ops.pick_label is not None and labels[picked] != ops.pick_label:
             ops.changed_t = now
@@ -954,6 +973,61 @@ class TextOverlay:
             scroll = bottom + self.pad - view
         return self.clamp_panel_scroll(state, scroll)
 
+    def shown_panel_scroll(self, state: ViewState) -> float:
+        """The panel's scroll as drawn: its spring's, which may run a little
+        past the ends while the text slides in; without one, panel_scroll clamped."""
+        m = state.panel_motion
+        if m is None or m.unit is None or m.unit != self._panel_unit(state):
+            return self.clamp_panel_scroll(state, state.panel_scroll)
+        return m.spring.at(state.now)
+
+    def follow_panel_scroll(self, state: ViewState, snap: bool = False) -> None:
+        """Once a frame, before drawing: the shown scroll heads for
+        panel_scroll, sprung (MOTION.scroll), or at once with `snap` (keys
+        never animate). A new unit in the panel (the section handed on, the
+        next section's preview coming or going) starts with the current
+        sentence where the last frame showed it, so the text slides into place
+        instead of jumping."""
+        m = state.panel_motion
+        if m is None:
+            return
+        unit = self._panel_unit(state)
+        if unit is None:
+            m.unit = None
+            return
+        target = self.clamp_panel_scroll(state, state.panel_scroll)
+        if unit != m.unit:
+            m.unit, start = unit, target
+            panel = self.panel(state)
+            seen = self._drawn_rows.get(state.current)
+            if not snap and seen is not None and state.current in panel.rows:
+                top = self._panel_top(self.panel_view_h(panel), panel.header_h)
+                start = panel.rows[state.current][0] + top - seen
+            m.spring.snap(start, state.now)
+        elif snap:
+            m.spring.snap(target, state.now)
+        m.spring.retarget(target, state.now, MOTION.scroll)
+
+    def _panel_view(self, panel: Panel, scroll: int, view_h: int) -> tuple[np.ndarray, np.ndarray]:
+        """The panel's content through its viewport at `scroll` px; clear
+        where a scroll past either end has nothing to show."""
+        if 0 <= scroll and scroll + view_h <= panel.height:
+            return panel.color[scroll:scroll + view_h], panel.inv[scroll:scroll + view_h]
+        color = np.zeros((view_h, *panel.color.shape[1:]), panel.color.dtype)
+        inv = np.ones((view_h, *panel.inv.shape[1:]), panel.inv.dtype)
+        a, b = max(0, scroll), min(panel.height, scroll + view_h)
+        if b > a:
+            color[a - scroll:b - scroll], inv[a - scroll:b - scroll] = panel.color[a:b], panel.inv[a:b]
+        return color, inv
+
+    @staticmethod
+    def _receding(state: ViewState, color: np.ndarray, inv: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """The focus fading (MOTION.drop_fade) as the hand drop's timer runs toward backing out."""
+        k = 1.0 - MOTION.drop_fade * state.drop_progress if state.mode == "focus" else 1.0
+        if k >= 1.0:
+            return color, inv
+        return color * k, 1.0 - k * (1.0 - inv)
+
     def _panel_top(self, view_h: int, extra_header: int = 0) -> int:
         box_top = self.y + self.margin
         reserved = LABEL.min_top + self.label_h + self.pad // 2 + extra_header
@@ -1181,7 +1255,8 @@ class TextOverlay:
                         pts[j][axis] -= over * wj * sign
             if not moved:
                 break
-        return [(x, y) for x, y in pts]
+        k = 1.0 - MOTION.drop_pull * state.drop_progress  # backing out: drawn in toward the word
+        return [(cx + (x - cx) * k, cy + (y - cy) * k) for x, y in pts]
 
     def _panel_origin(self, state: ViewState) -> tuple[Panel, float, float, int] | None:
         """The focus panel, where its content's (0, 0) is on screen, and its viewport's top."""
@@ -1190,7 +1265,7 @@ class TextOverlay:
             return None
         view_h = self.panel_view_h(panel)
         top = self._panel_top(view_h, panel.header_h)
-        return panel, self.x + self.margin, top - int(self.clamp_panel_scroll(state, state.panel_scroll)), top
+        return panel, self.x + self.margin, top - int(round(self.shown_panel_scroll(state))), top
 
     def _takes_w(self, state: ViewState) -> int:
         """Review: the width the take chips' column needs at the text column's right, gap included."""
@@ -1242,6 +1317,8 @@ class TextOverlay:
             else:
                 chip = self._node(label, C.node_text, C.node_fill, outline)
             h, w = chip[0].shape[:2]
+            if i == state.ops.picked:
+                ny -= MOTION.lift_px * state.lift  # rising with the pinched hand toward a commit
             a = _box_edge((cx, cy), (box[2] - box[0]) / 2 + RING.spoke_gap, (box[3] - box[1]) / 2 + RING.spoke_gap, (nx, ny))
             b = _box_edge((nx, ny), w / 2 + RING.spoke_gap, h / 2 + RING.spoke_gap, (cx, cy))
             ctrl = ((a[0] + b[0]) / 2 - (b[1] - a[1]) * RING.bow, (a[1] + b[1]) / 2 + (b[0] - a[0]) * RING.bow)
@@ -1370,21 +1447,25 @@ class TextOverlay:
         box_top = self.y + self.margin
         top, bottom = box_top, box_top + self.box_h
         panel, zoom = self.panel(state), None
+        lift = round(MOTION.lift_px * state.lift) if state.mode == "focus" else 0
+        self._drawn_rows = {}
         if panel is not None:
             view_h = self.panel_view_h(panel)
-            scroll = int(self.clamp_panel_scroll(state, state.panel_scroll))
+            scroll = int(round(self.shown_panel_scroll(state)))
             top = self._panel_top(view_h, panel.header_h)
             bottom = top + view_h
-            color, inv = panel.color[scroll:scroll + view_h], panel.inv[scroll:scroll + view_h]
-            if panel.height > view_h:
+            color, inv = self._panel_view(panel, scroll, view_h)
+            clamped = int(self.clamp_panel_scroll(state, scroll))
+            if panel.height > view_h or clamped != scroll:
                 color, inv = self._faded(color, inv)
-            _blend(frame, self.x + self.margin, top, color, inv)
+            _blend(frame, self.x + self.margin, top - lift, *self._receding(state, color, inv))
             if panel.height > view_h:
-                self._draw_scrollbar(frame, top, view_h, scroll, panel.height, panel.color.shape[1],
+                self._draw_scrollbar(frame, top, view_h, clamped, panel.height, panel.color.shape[1],
                                      left=state.ops.kind == "tone")
+            self._drawn_rows = {si: top - scroll + y0 for si, (y0, _) in panel.rows.items()}
         elif (zoom := self.focus_word_box(state)) is not None:
             color, inv, _, _ = self._word_zoom(state)
-            _blend(frame, 0, box_top, color, inv)
+            _blend(frame, 0, box_top, *self._receding(state, color, inv))
         else:
             _blend(frame, self.x + self.margin, box_top, *self._band_crop(state))
 
@@ -1406,8 +1487,8 @@ class TextOverlay:
             if state.loading:  # glyph scramble: the word is being rewritten
                 text = "".join(SCRAMBLE[(ord(c) + int(time.time() * 12)) % len(SCRAMBLE)] if c.isalpha() else c
                                for c in text)
-            # Inline, in the gap the zoomed text left for it: orange, at the zoomed size.
-            self._blend_ink(frame, self._ink(text, self._word_zoom(state)[3], C.orange_text), zoom[0], zoom[1])
+            # Inline, in the gap the zoomed text left for it: orange, at the zoomed size (rising with a pinched hand).
+            self._blend_ink(frame, self._ink(text, self._word_zoom(state)[3], C.orange_text), zoom[0], zoom[1] - lift)
 
         if state.mode == "focus" and state.play_progress is not None and panel is not None:
             self._draw_playbar(frame, state, panel, top, bottom, scroll)
@@ -1584,13 +1665,25 @@ def draw_strip(frame: np.ndarray, spans: list[tuple[float, float, str]], section
 # --- drawing: hands, debug and stats (OpenCV, straight onto the frame) ------
 
 def draw_fingertips(frame: np.ndarray, state: GestureState) -> None:
-    """Yellow dot on the active fingertip, small dots on the rest; cyan for a second hand."""
+    """Yellow dot on the active fingertip, small dots on the rest; cyan for a
+    second hand. A curled finger's dot is smaller and faint, so the dots show
+    the shape the hand makes from the first frame it is seen; while that shape
+    doesn't count yet (TIMING.stable_s) the active dot is a ring, filled once it does."""
     for track, color in ((state.secondary, C.cyan), (state.primary, C.yellow)):
         if track is None or track.hand is None:
             continue
+        f = track.feat
+        out = {} if f is None else {THUMB_TIP: f.thumb_out, **dict(zip(FINGER_TIPS, f.extended))}
+        pending = track.raw != track.stable
         for i in TIPS:
             c = tuple(int(v) for v in track.hand.points[i])
-            cv2.circle(frame, c, HANDS.active_tip_r if i == INDEX_TIP else HANDS.tip_r, bgr(color), -1, cv2.LINE_AA)
+            if i == INDEX_TIP and pending:
+                cv2.circle(frame, c, HANDS.active_tip_r, bgr(color), HANDS.pending_ring_w, cv2.LINE_AA)
+            elif not out.get(i, True):
+                _dot_blend(frame, c, HANDS.curled_tip_r, color, HANDS.curled_alpha)
+            else:
+                cv2.circle(frame, c, HANDS.active_tip_r if i == INDEX_TIP else HANDS.tip_r, bgr(color), -1,
+                           cv2.LINE_AA)
 
 
 def draw_landmarks(frame: np.ndarray, hand: Hand) -> None:
@@ -1696,6 +1789,18 @@ def _line_blend(frame: np.ndarray, a: tuple[int, int], b: tuple[int, int], color
     over = roi.copy()
     cv2.line(over, (a[0] - x0, a[1] - y0), (b[0] - x0, b[1] - y0), bgr(color), stroke, cv2.LINE_AA)
     roi[:] = over if alpha >= 1 else cv2.addWeighted(over, alpha, roi, 1 - alpha, 0)
+
+
+def _dot_blend(frame: np.ndarray, c: tuple[int, int], r: int, color, alpha: float) -> None:
+    """A filled dot blended at `alpha`; only the patch around it is touched."""
+    h, w = frame.shape[:2]
+    x0, y0, x1, y1 = max(0, c[0] - r - 1), max(0, c[1] - r - 1), min(w, c[0] + r + 2), min(h, c[1] + r + 2)
+    if x0 >= x1 or y0 >= y1:
+        return
+    roi = frame[y0:y1, x0:x1]
+    over = roi.copy()
+    cv2.circle(over, (c[0] - x0, c[1] - y0), r, bgr(color), -1, cv2.LINE_AA)
+    roi[:] = cv2.addWeighted(over, alpha, roi, 1 - alpha, 0)
 
 
 def _corners(frame: np.ndarray, box: tuple[int, int, int, int], arm: int, color, stroke: int, alpha: float) -> None:

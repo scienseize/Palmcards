@@ -31,6 +31,14 @@ class Knob:
     dead_deg: float = KNOB.dead_deg
     zero: float | None = None  # the angle of step 0's centre, while the knob is held
     k: int = 0
+    rel: float = 0.0  # the last angle, relative to zero
+
+    @property
+    def offset(self) -> float:
+        """Degrees the knob is turned past its step's centre (within the
+        hysteresis band, about +/- 11.5 deg): the app turns the ring this much
+        of the way with the hand. 0 while it isn't held."""
+        return 0.0 if self.zero is None else self.rel - self.k * self.step_deg
 
     def start(self, angle: float) -> None:
         """A new turn: this angle is step 0."""
@@ -46,7 +54,7 @@ class Knob:
     def update(self, angle: float) -> int:
         if self.zero is None:
             self.regrip(angle)
-        rel = angle - self.zero
+        rel = self.rel = angle - self.zero
         if abs(rel) <= self.dead_deg:
             self.k = 0
             return self.k

@@ -1755,3 +1755,40 @@ Risk: a playback sample depends on the app's focus_hold arriving a frame after p
   a pose that settles a frame differently in a replay can flip it (seen once, above).
 Pending: how the stop sounds on the Mac (reported by the user: not yet).
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: motion audit items 1-4 (apple-design, emil-design-eng, improve-animations,
+  translated to Pillow/OpenCV; the user chose items 1-4 of 12)
+Status: implemented; automated checks passed; not yet seen on the camera
+Changes:
+  palmcards/motion.py (new): Spring (response, damping; closed form in time since the last
+    retarget, so reading is pure and a retarget carries on from its place and speed; damping < 1
+    underdamped, > 1 treated as 1) and rubberband (Apple's formula, for later items).
+  palmcards/style.py: MOTION (ring 0.10 s, ring_gain 0.5, ring_flat 0.1 steps, scroll 0.30 s,
+    lift_px 6, drop_fade 0.4, drop_pull 0.3); HANDS curled_tip_r, curled_alpha, pending_ring_w.
+  palmcards/config.py: KNOB.rotate_s gone (the ring's turn is MOTION.ring).
+  palmcards/knob.py: Knob.offset, degrees past the step's centre. gestures.py: GestureState.ring_offset
+    (display only; 0 while closing or not turning); HandTrack.lift_progress(frame_h).
+  palmcards/render.py: the ring's rotation is a spring toward the node plus the hand's part of the
+    way (ring_follow), replacing the 0.12 s cubic ease that restarted at every step; PanelMotion and
+    TextOverlay.follow_panel_scroll / shown_panel_scroll (sprung; a new unit starts with the current
+    sentence where the last frame drew it: the section handed on slides up from its preview);
+    the panel viewport shows clear space past its ends while sliding; ViewState.lift raises the
+    panel, the picked node or the focused word; drop_progress fades the focus and draws the ring's
+    nodes in; draw_fingertips: curled fingers faint, the active dot a ring while raw != stable.
+  main.py: ViewState(panel_motion=PanelMotion()); follow_panel_scroll before each draw, snapped
+    after keys (j/k, the panel's key scroll, any key-sourced mode event); sync_view copies
+    ring_offset and the lift.
+  CLAUDE.md (knob paragraph, visual feedback, code layout).
+Tests: pytest (full) -> 548 passed before the knob offset test (tests/test_knob.py 13 passed after).
+  New: tests/test_motion.py; render: ring follows between nodes and rests on one, panel scroll
+  sprung and snapped, the section hand-over slide, fingertip dots, lift and drop fade; knob offset.
+Visual (headless strips, 30 fps): the ring follows 0 -> 0.25 nodes, clicks over (0.69, 0.93) at the
+  step, springs back to 1.00 when the hand lets go; the hand-over slides up in about 0.3 s. Seen
+  there: the new section is laid out at a larger scale than the old panel (the largest that fits),
+  so the text size still changes at the hand-over.
+Risk: the 1:1 ring shows what wobble the One Euro filter lets through; check on --trace recordings
+  (tune ring_gain / ring_flat, not the knob's hysteresis).
+Pending: the user's feel-check on the camera; items 5-12 of the audit.
+```

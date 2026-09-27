@@ -170,11 +170,10 @@ class Knob:
     min_cutoff: float = 1.0
     beta: float = 0.05
     d_cutoff: float = 1.0
-    # Animation: the ring turns to its new angle (eased) over rotate_s; the
-    # previewed word's glyphs resolve over scramble_s. (The picked node's box
-    # used to stay empty for a moment; turning steadily, the pick was never
-    # shown, so it is always drawn, highlighted.)
-    rotate_s: float = 0.12
+    # The previewed word's glyphs resolve over scramble_s. (The picked node's
+    # box used to stay empty for a moment; turning steadily, the pick was never
+    # shown, so it is always drawn, highlighted.) How the ring turns (with the
+    # hand, springing onto a node) is style.MOTION.
     scramble_s: float = 0.15
 
 
