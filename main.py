@@ -118,7 +118,7 @@ from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_req
     meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
     FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
-    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
+    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_stats, draw_zone_outline,
 )
 from palmcards.motion import Spring
 from palmcards.review import Board
@@ -713,10 +713,11 @@ class Takes:
             return None
 
     def replay_frame(self):
-        """While a take's clip plays with its video: that moment's frame (a copy
-        to draw on), else None (the live camera)."""
+        """While a take's clip plays with its video: that moment's frame flipped
+        back, as others see you (it is recorded mirrored), a new array to draw
+        on; else None (the live mirror)."""
         frame = self.playback.video_frame(time.perf_counter())
-        return None if frame is None else frame.copy()
+        return None if frame is None else cv2.flip(frame, 1)
 
     def clip_player(self):
         """The player for clips (Review's, "hear it"), made at the first play."""
@@ -740,8 +741,6 @@ class Takes:
         grammar.set_focus_hold(t, "play" if self.playback.playing and view.mode == "focus" else None)
         view.playing = self.playback.playing
         view.play_progress = self.playback.progress(now)
-        cur = self.playback.current
-        view.replaying = f"TAKE {cur.target[2]}" if cur is not None and cur.video is not None else ""
         view.palm_progress = grammar.state.palm_progress
 
     def alert_line(self, mode: str = "") -> str:
@@ -1498,20 +1497,25 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
 
         overlay.follow(view, snap=snap_panel)
         snap_panel = False
-        if (replay := takes.replay_frame()) is not None:  # a take's video while its clip plays; hands stay live
+        if (replay := takes.replay_frame()) is not None:
+            # A take's video while its clip plays, as others see you: nothing on
+            # it but how far it has got. Hands are still tracked live, so a fresh
+            # open palm stops it; the mirror and the notes come back after.
             frame = replay
-        overlay.draw(frame, view)
-        if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
-            draw_hand_area(frame, grammar.cursor)
-        if show_debug:
-            if view.app != "prepare":
-                draw_zone_outline(frame, modes.zone)
-            else:
-                draw_hand_box(frame, grammar.cursor)
-            for track in (grammar.state.primary, grammar.state.secondary):
-                if track is not None:
-                    draw_landmarks(frame, track.hand)
-        draw_fingertips(frame, grammar.state)
+            draw_replay_bar(frame, view.play_progress or 0.0)
+        else:
+            overlay.draw(frame, view)
+            if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
+                draw_hand_area(frame, grammar.cursor)
+            if show_debug:
+                if view.app != "prepare":
+                    draw_zone_outline(frame, modes.zone)
+                else:
+                    draw_hand_box(frame, grammar.cursor)
+                for track in (grammar.state.primary, grammar.state.secondary):
+                    if track is not None:
+                        draw_landmarks(frame, track.hand)
+            draw_fingertips(frame, grammar.state)
 
         now = time.perf_counter()
         fps = 0.9 * fps + 0.1 / max(now - last, 1e-6)

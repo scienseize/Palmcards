@@ -1995,3 +1995,22 @@ Tests: pytest (full) -> 588 passed; python -m palmcards.replay -> all ok. New: t
   the live camera again when it is over; the chip is drawn in the hand zone.
 Visual: Review focused, playing take 2 with video: the chip reads "▶ TAKE 2" over the zone's hint.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: user testing round (relaxed open palm, thumbs-up instead of the command zone,
+  clean replay; plan ~/.claude/plans/pasted-content-id-d486-type-and-crispy-hanrahan.md), stage 2 of
+  2 done first: the replay view (stage 1, the gestures, waits for the user's calibration trace)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes:
+  main.py: Takes.replay_frame flips the take's frame back (cv2.flip): the user sees themselves as
+    others do (video is recorded mirrored). While it plays the frame loop draws nothing on it but
+    render.draw_replay_bar: no overlay (notes, label, take chips), no hand-box corners, no fingertip
+    dots. The "▶ TAKE n" chip and ViewState.replaying are gone.
+  palmcards/render.py: draw_bar / bar_thickness at module level (TextOverlay._draw_bar uses them);
+    draw_replay_bar: a BAR along the bottom (PLAYBAR.replay_inset 0.06 of the width each side,
+    replay_bottom 24 px).
+Tests: pytest (full) -> 588 passed. The reopen frame-loop test now records a left/right-asymmetric
+  video: the shown frame is it flipped, with nothing but the bottom bar on it, and the mirror with the
+  notes before and after; the chip's render test became the bar's.
+```

@@ -368,7 +368,6 @@ class ViewState:
     calibration: str | None = None  # count_in: the calibration step, "camera" (look into the lens) or "notes"
     rec_s: float = 0.0  # length of the take so far
     recording_video: bool = False  # the take's video is being recorded too (the REC chip says so)
-    replaying: str = ""  # Review: the frame is a take's video, not the live mirror ("TAKE 2"); a chip says so
     mic: float = 0.0  # microphone level, 0..1
     zone_active: bool = False  # a hand is in the command zone
     hold_progress: float = 0.0  # open palm held in the zone, 0..1
@@ -1538,28 +1537,11 @@ class TextOverlay:
             y += f.line_h
 
     def _bar_w(self) -> int:
-        return max(BAR.min_thickness, round(self.ui_size * BAR.thickness))
+        return bar_thickness(self.ui_size)
 
     def _draw_bar(self, frame: np.ndarray, x0: float, x1: float, y: float, progress: float,
                   from_centre: bool = False) -> None:
-        """Every progress bar in one style (BAR): a thin line with round ends
-        from x0 to x1 centred on y, a faint track, `progress` of it filled in
-        orange from the left (or out from the centre both ways)."""
-        t = self._bar_w()
-        r = t / 2
-        a, b, y = int(round(x0 + r)), int(round(x1 - r)), int(round(y))
-        if b < a:
-            return
-        _line_blend(frame, (a, y), (b, y), C.bar_track[:3], t, C.bar_track[3] / 255)
-        p = min(max(progress, 0.0), 1.0)
-        if p <= 0:
-            return
-        if from_centre:
-            c, half = (a + b) / 2, (b - a) / 2 * p
-            a, b = int(round(c - half)), int(round(c + half))
-        else:
-            b = int(round(a + (b - a) * p))
-        _line_blend(frame, (a, y), (b, y), C.bar_fill[:3], t, C.bar_fill[3] / 255)
+        draw_bar(frame, x0, x1, y, progress, self._bar_w(), from_centre)
 
     def _node_size(self) -> int:
         return round(self.font_size * TEXT.word_zoom * RING.node_scale)
@@ -1798,9 +1780,6 @@ class TextOverlay:
         elif state.app == "count_in":
             hints = ("HOLD OPEN PALM: CANCEL",)
         else:
-            if state.replaying:  # where REC is during a take: this is a recording, not the mirror
-                chip = self._chip(f"▶ {state.replaying}", self._face(TYPE.operation), C.node_text, C.dark_fill)
-                y = self._blend_centered(frame, chip, cx, y + chip[0].shape[0] / 2)[3] + self.pad // 2
             hints = ("HOLD OPEN PALM: BACK TO PREPARE",)
         for text in hints:  # one plain line each
             ink = self._ink(text, f, C.node_text if active else C.dim)
@@ -2132,6 +2111,40 @@ def draw_strip(frame: np.ndarray, spans: list[tuple[float, float, str]], section
 
 
 # --- drawing: hands, debug and stats (OpenCV, straight onto the frame) ------
+
+def bar_thickness(ui_size: int) -> int:
+    return max(BAR.min_thickness, round(ui_size * BAR.thickness))
+
+
+def draw_bar(frame: np.ndarray, x0: float, x1: float, y: float, progress: float, thickness: int,
+             from_centre: bool = False) -> None:
+    """Every progress bar in one style (BAR): a thin line with round ends
+    from x0 to x1 centred on y, a faint track, `progress` of it filled in
+    orange from the left (or out from the centre both ways)."""
+    r = thickness / 2
+    a, b, y = int(round(x0 + r)), int(round(x1 - r)), int(round(y))
+    if b < a:
+        return
+    _line_blend(frame, (a, y), (b, y), C.bar_track[:3], thickness, C.bar_track[3] / 255)
+    p = min(max(progress, 0.0), 1.0)
+    if p <= 0:
+        return
+    if from_centre:
+        c, half = (a + b) / 2, (b - a) / 2 * p
+        a, b = int(round(c - half)), int(round(c + half))
+    else:
+        b = int(round(a + (b - a) * p))
+    _line_blend(frame, (a, y), (b, y), C.bar_fill[:3], thickness, C.bar_fill[3] / 255)
+
+
+def draw_replay_bar(frame: np.ndarray, progress: float) -> None:
+    """Review's replay of a take's video: the only thing drawn on it, how far
+    it has got, a bar along the bottom (PLAYBAR.replay_*)."""
+    h, w = frame.shape[:2]
+    inset = PLAYBAR.replay_inset * w
+    draw_bar(frame, inset, w - inset, h - PLAYBAR.replay_bottom, progress,
+             bar_thickness(max(TEXT.ui_min_size, h // TEXT.ui_rows_per_frame)))
+
 
 def draw_fingertips(frame: np.ndarray, state: GestureState) -> None:
     """Yellow dot on the active fingertip, small dots on the rest; cyan for a

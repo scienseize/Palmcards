@@ -892,11 +892,14 @@ def test_the_notes_give_a_little_when_pushed_past_their_end_and_spring_back():
     assert ov.shown_scroll(view) == 0.0
 
 
-def test_a_replayed_take_is_marked_where_rec_is_during_a_take():
-    ov = overlay()
-    live = ViewState(app="review", mode="browse", level="sentence")
-    replay = replace(live, replaying="TAKE 2")
-    a = ov.draw(np.full((720, 1280, 3), 128, np.uint8), live)
-    b = ov.draw(np.full((720, 1280, 3), 128, np.uint8), replay)
-    changed = np.argwhere((a != b).any(axis=2))
-    assert len(changed) and changed[:, 1].min() > 1280 * 0.55  # in the hand zone, by the command zone
+def test_a_replay_has_nothing_on_it_but_a_bar_along_the_bottom():
+    frame = np.full((720, 1280, 3), 128, np.uint8)
+    render.draw_replay_bar(frame, 0.5)
+    changed = np.argwhere((frame != 128).any(axis=2))
+    rows, cols = sorted(set(changed[:, 0])), changed[:, 1]
+    assert rows[0] > 720 - 40 and rows[-1] - rows[0] < 8  # one thin line near the bottom
+    assert cols.min() < 1280 * 0.1 and cols.max() > 1280 * 0.9  # across the frame
+    middle = frame[rows[len(rows) // 2]]
+    orange = np.array(render.bgr(render.C.bar_fill[:3]))
+    filled = np.where((middle == orange).all(axis=1))[0]
+    assert filled.max() < 1280 * 0.55  # half of it filled

@@ -164,8 +164,10 @@ def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_
 
     saved = saved_session(tmp_path)
     w = VideoWriter(saved.dir, 1, (640, 360), codec="mpeg4")
-    for i in range(60):  # take 1's video: 3 s of a bright frame from t_first 5.0, its audio's start
-        w.push(np.full((360, 640, 3), 200, np.uint8), 5.0 + i * 0.05)
+    recorded = np.zeros((360, 640, 3), np.uint8)
+    recorded[:, :320] = 200  # recorded mirrored: bright on the left
+    for i in range(60):  # take 1's video: 3 s of it from t_first 5.0, its audio's start
+        w.push(recorded.copy(), 5.0 + i * 0.05)
         __import__("time").sleep(0.005)
     w.stop()
     assert w.wait(10) and w.dropped == 0
@@ -174,15 +176,24 @@ def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_
     session.save()
     session.release()
 
-    shown = []
     rig = Rig(tmp_path, monkeypatch, script={}, keys={3: ord("a"), 260: ord("q")})
     rig.devices.player = FakePlayer
-    rig.devices.show = lambda name, frame: shown.append(int(frame[180, 290].mean()))  # the face zone: nothing drawn
+    frames = []
+    rig.devices.show = lambda name, frame: frames.append(frame.copy())
     session = Session.load(saved.dir)
     session.acquire()
     notes = notes_from_bytes(NOTES, rig.notes_path)
     assert main.run(session.notes, notes, b"", devices=rig.devices, session=session, prefs_file=rig.prefs_file) == 0
-    assert shown[:3] == [0, 0, 0]  # the live (black) camera before playing
-    replayed = [i for i, v in enumerate(shown) if abs(v - 200) <= 6]
-    assert replayed and replayed[0] <= 10  # the take's video from the first frames of the clip
-    assert shown[-1] == 0  # the clip (1.5 s) over: the live camera again
+    # The face zone (0.36-0.55 of the width) has nothing drawn on it: either side of the video's middle.
+    left = [int(f[50:300, 240:310].mean()) for f in frames]
+    right = [int(f[50:300, 330:350].mean()) for f in frames]
+    notes = [int(f[:, 38:230].max()) for f in frames]  # the text column
+    assert right[:3] == [0, 0, 0] and notes[0] > 0  # the live (black) mirror with the notes, before playing
+    replayed = [i for i, (a, b) in enumerate(zip(left, right)) if a <= 6 and abs(b - 200) <= 6]
+    assert replayed and replayed[0] <= 10  # the take's video from the first frames of the clip, flipped back
+    shown = frames[replayed[0]]
+    expected = np.zeros_like(shown)
+    expected[:, 320:] = 200  # as others see you: the bright half on the right, and no notes on it
+    differs = np.argwhere((np.abs(shown.astype(int) - expected) > 8).any(axis=2))
+    assert len(differs) and differs[:, 0].min() > 360 - 40  # nothing but the bar along the bottom
+    assert right[-1] == 0 and notes[-1] > 0  # the clip (1.5 s) over: the live mirror again, with the notes
