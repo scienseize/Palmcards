@@ -35,7 +35,7 @@ macOS asks for these on first use; allow them for the terminal app you run PalmC
 
 Notes are plain text; headings start sections. (Older versions read delivery marks such as `/`, `*word*` or `[slow]`; they are left out now, and the app says how many it ignored.)
 
-- **Prepare.** Hold a hand in the box on the right of the frame and the highlight follows it in the notes. One finger picks a word, two fingers a sentence, a flat hand a paragraph. Pinch or fold the fingers onto the thumb to focus. On a focused word, an open palm offers **hear it**, which speaks the sentence with that word stressed.
+- **Prepare.** Hold a hand in the box on the right of the frame and the highlight follows it in the notes. One finger picks a word, two fingers a sentence, a flat hand a paragraph. Pinch or fold the fingers onto the thumb to focus. Selecting a word shows its **meaning in context** (requires the optional LLM). Open your palm to reveal alternatives, turn an L-hand to choose, then pinch + lift to use one. To **hear it**, browse by sentence, fold to select one, then hold an open palm for about 0.6 s (or press `a`): the whole sentence is spoken. Release and hold again to replay.
 - **Rehearse.** Raise a closed fist and hold it for 1 s to start a take after a 3-2-1 count-in. The notes follow your voice. Flick sideways in the top-right zone to move on by hand. An open palm held there for 1.5 s stops the take.
 - **Review.** A table sets your last few takes side by side: length, pace, fillers, long pauses, restarts, pitch range, time looking at the screen, face touches, posture. Focus a sentence to see it in every take that said it. Pinch and lift on it to drill just that sentence.
 
@@ -85,7 +85,7 @@ Working now:
 
 Also working: exporting any version of your notes (`python -m palmcards.export RUN`).
 
-Optional: word alternatives and tone and length rewrites need a language model, and they are off by default. Suggestions are shown as previews that you choose to use; only what you explicitly ask about is sent (a word's sentence, a sentence or a paragraph).
+Optional: word meanings, alternatives and tone and length rewrites need a language model, and they are off by default. Selecting a word requests its meaning; opening your palm requests alternatives. Suggestions are shown as previews that you choose to use; only what you explicitly ask about is sent (a word's sentence, a sentence or a paragraph). Sentence **hear it** works without a language model.
 
 - **Cloud (Anthropic):** put `ANTHROPIC_API_KEY=...` in a `.env` file in the repo (gitignored) or in your environment, then run `python main.py --llm anthropic`. It uses `claude-haiku-4-5`. The text you ask about leaves your Mac, and a **CLOUD LLM** chip shows at the bottom left for as long as the cloud is on. The key is never printed, logged or saved. Each call's tokens are logged in the session (`llm-usage.jsonl`, never the text); `python -m palmcards.llm usage` sums them for every session, with a cost estimate (`python -m palmcards.llm usage RUN` for one).
 - **On your Mac (Ollama):** install [Ollama](https://ollama.com), run `ollama pull llama3.1:8b`, then `python main.py --llm ollama`. Nothing leaves the Mac.

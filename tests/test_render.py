@@ -103,16 +103,16 @@ def test_paragraph_unit_groups_sentences():
 def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
-    focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"))
+    focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), llm="local")
     assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "L-HAND, THEN TURN TO PICK")
-    # Only what works is offered: the word itself and hearing it (alternatives need the LLM).
-    assert ov.ring_labels(focus) == ("being", "hear it")
+    assert ov.ring_labels(focus) == ("being",)
+    focus.alternatives = ("present",)
     focus.ops.pointing, focus.ops.picked = True, 1
-    assert ov.label_lines(focus)[1] == "PINCH + LIFT: HEAR IT"
+    assert ov.label_lines(focus)[1] == 'PINCH + LIFT: USE "PRESENT"'
     focus.ops.picked = 0
     assert ov.label_lines(focus)[1] == "KEEP THE WORD (NO CHANGE)"
     focus.ops = OpsView()
-    assert ov.label_lines(focus)[1].startswith("OPEN PALM: HEAR IT")
+    assert ov.label_lines(focus)[1].startswith("OPEN PALM: ALTERNATIVES")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
     assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "SENTENCE TONE: WARM  (PREVIEW ONLY: NEEDS THE OPTIONAL LLM)")
     tone.drop_progress = 0.4
@@ -129,7 +129,7 @@ def test_labels_promise_a_rewrite_only_when_an_llm_is_on():
                             llm=llm)
         assert ov.label_lines(stretch)[1] == "PARAGRAPH LENGTH: FULLER +50%  /  PINCH + LIFT: ASK FOR A REWRITE"
         word = ViewState(mode="focus", level="word", focus=Hit(0, 1), llm=llm)
-        assert ov.label_lines(word)[1].startswith("OPEN PALM: ALTERNATIVES, HEAR IT")
+        assert ov.label_lines(word)[1].startswith("OPEN PALM: ALTERNATIVES")
     stretch.llm = ""
     assert ov.label_lines(stretch)[1].endswith("(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)")
 
@@ -153,7 +153,8 @@ def test_the_cloud_chip_shows_while_the_cloud_llm_is_on():
 def test_draw_focus_states_and_stubs():
     ov = overlay()
     for view in (
-        ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=1, pointing=True)),
+        ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=1, pointing=True),
+                  alternatives=("present",)),
         ViewState(mode="focus", level="sentence", focus=Hit(2, None), ops=OpsView(kind="tone", tone=-0.5)),
         ViewState(mode="focus", level="paragraph", focus=Hit(4, None),
                   ops=OpsView(kind="stretch", stretch=1.4, stretch_ends=((900, 300), (1100, 320)))),
@@ -350,7 +351,8 @@ def test_a_closing_pinch_is_shown_on_the_dial_it_will_act_on():
         ov.draw(frame, v)
         return frame
 
-    ring = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=1, pointing=True))
+    ring = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=1, pointing=True),
+                     alternatives=("present",))
     tone = ViewState(mode="focus", level="sentence", focus=Hit(2, None), ops=OpsView(kind="tone", tone=0.4))
     stretch = ViewState(mode="focus", level="paragraph", focus=Hit(4, None),
                         ops=OpsView(kind="stretch", stretch=1.4, stretch_ends=((900, 300), (1100, 320))))
@@ -364,7 +366,7 @@ def test_where_the_ring_nodes_and_the_take_chips_are():
     ring = ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"),
                      alternatives=("present", "around"))
     nodes = ov.ring_nodes(ring)
-    assert len(nodes) == len(ov.ring_labels(ring)) == 4
+    assert len(nodes) == len(ov.ring_labels(ring)) == 3
     box = ov.focus_word_box(ring)
     assert nodes[0][1] < box[1]  # the word itself at the top, the rest clockwise round it
     # Kat's bubble map: the zoomed word's row mid-box, the nodes round it inside the text column, none over another.
@@ -396,7 +398,7 @@ def test_where_the_ring_nodes_and_the_take_chips_are():
 
 def knob_view(**kw):
     return ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"),
-                     alternatives=("present", "around"), **kw)  # being, present, around, hear it
+                     alternatives=("present", "around"), **kw)  # being, present, around
 
 
 def test_resolve_scramble_resolves_left_to_right():
@@ -419,12 +421,12 @@ def test_the_ring_turns_the_picked_node_to_the_top():
     view = knob_view(now=10.0)
     ov.follow_ring(view, "being", 0)
     at_rest = ov.ring_nodes(view)
-    assert min(range(4), key=lambda i: at_rest[i][1]) == 0  # the word itself at 12 o'clock
+    assert min(range(3), key=lambda i: at_rest[i][1]) == 0  # the word itself at 12 o'clock
     ov.follow_ring(view, "present", 1)  # one step clockwise
     assert (view.ops.picked, view.ops.rot_from, view.ops.rot_to) == (1, 0.0, 1.0)
     halfway = ov.ring_nodes(replace(view, now=10.0 + KNOB.rotate_s / 2))
     settled = ov.ring_nodes(replace(view, now=10.0 + KNOB.rotate_s))
-    assert min(range(4), key=lambda i: settled[i][1]) == 1  # "present" came up to 12 o'clock
+    assert min(range(3), key=lambda i: settled[i][1]) == 1  # "present" came up to 12 o'clock
     cx = settled[1][0]
     assert settled[0][0] > cx  # and the word itself went on round, clockwise, to the right
     assert at_rest[1][0] < halfway[1][0] < settled[1][0] + 1  # on its way up from the left
@@ -435,8 +437,8 @@ def test_turning_back_past_the_word_wraps_the_short_way():
     ov = overlay()
     view = knob_view(now=5.0)
     ov.follow_ring(view, "being", 0)
-    ov.follow_ring(view, "hear it", -1)
-    assert (view.ops.picked, view.ops.rot_to) == (3, -1.0)  # turned back one node, not on three
+    ov.follow_ring(view, "around", -1)
+    assert (view.ops.picked, view.ops.rot_to) == (2, -1.0)
 
 
 def test_a_new_word_scrambles_into_the_sentence_and_the_label():
@@ -451,17 +453,11 @@ def test_a_new_word_scrambles_into_the_sentence_and_the_label():
     assert during != 'FOCUS BY WORD  "present"' and len(during) == len('FOCUS BY WORD  "present"')
     view.now = 3.0 + KNOB.scramble_s + 0.001
     assert ov.label_lines(view) == ('FOCUS BY WORD  "present"', 'PINCH + LIFT: USE "PRESENT"')
-    # The action node puts the word itself back in the sentence (scrambling
-    # back from "present"), never its own name.
-    ov.follow_ring(view, "hear it", 3)
+    # Returning to the original word restores it as a live preview.
+    ov.follow_ring(view, "being", 3)
+    view.ops.pointing = True
     view.now += KNOB.scramble_s + 0.001
-    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "PINCH + LIFT: HEAR IT")
-    # From the word itself, stepping onto an action node changes nothing in the sentence: no scramble.
-    view = knob_view(now=3.0)
-    ov.follow_ring(view, "being", 0)
-    ov.follow_ring(view, "hear it", -1)
-    assert view.ops.scrambled_t is None
-    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "PINCH + LIFT: HEAR IT")
+    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "KEEP THE WORD (NO CHANGE)")
 
 
 def test_the_picked_node_is_highlighted_at_once_and_while_turning():
@@ -486,29 +482,43 @@ def test_the_picked_node_is_highlighted_at_once_and_while_turning():
 
 def test_nodes_arriving_keep_the_pick_and_do_not_turn_the_ring():
     ov = overlay()
-    view = ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), now=2.0)
+    view = ViewState(app="prepare", mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), now=2.0,
+                     alternatives=("around",))
     ov.follow_ring(view, "being", 0)
-    ov.follow_ring(view, "hear it", 1)
+    ov.follow_ring(view, "around", 1)
     changed = view.ops.changed_t
     view.alternatives, view.now = ("present", "around"), 2.5
-    ov.follow_ring(view, "hear it", 1)
-    assert (view.ops.picked, view.ops.pick_label, view.ops.changed_t) == (3, "hear it", changed)
-    assert view.ops.turned_t is None and view.ops.rot_to == 3.0
+    ov.follow_ring(view, "around", 1)
+    assert (view.ops.picked, view.ops.pick_label, view.ops.changed_t) == (2, "around", changed)
+    assert view.ops.turned_t is None and view.ops.rot_to == 2.0
 
 
-def test_the_ring_action_node_has_a_dimmer_border(monkeypatch):
-    import palmcards.render as render
-
+def test_hear_it_is_offered_for_sentences_only():
     ov = overlay()
-    view = knob_view(now=9.0)
-    ov.follow_ring(view, "being", 0)
-    frame = np.full((720, 1280, 3), 128, np.uint8)
-    ov.draw(frame, view)
-    monkeypatch.setattr(render, "C", replace(render.C, node_outline_dim=render.C.node_outline))
-    same = np.full((720, 1280, 3), 128, np.uint8)
-    ov.draw(same, view)
-    assert (frame != same).any()
-    assert render.COLORS.node_outline_dim[3] < render.COLORS.node_outline[3]
+    assert "hear it" not in ov.ring_labels(knob_view())
+    for llm in ("", "local", "cloud"):
+        for mode in ("browse", "focus"):
+            sentence = ViewState(mode=mode, level="sentence", focus=Hit(0, None), llm=llm)
+            assert "HEAR IT" in ov.label_lines(sentence)[1]
+
+
+def test_meaning_fits_below_word_and_disappears_when_alternatives_open():
+    for w, h in ((640, 480), (1280, 720)):
+        ov = TextOverlay(parse_text("The river bank was steep.").sentences, (w, h))
+        view = ViewState(mode="focus", level="word", focus=Hit(0, 2), llm="local",
+                         meaning="abcdefghijklmno " * 12 + "meaning")
+        plain = np.full((h, w, 3), 128, np.uint8)
+        shown = plain.copy()
+        ov.draw(plain, replace(view, meaning=""))
+        ov.draw(shown, view)
+        ys, xs = np.nonzero(np.any(shown != plain, axis=2))
+        assert len(ys) and ys.min() > ov.focus_word_box(view)[3]
+        assert ys.max() < ov.y + ov.box_h and xs.max() < ov.col_x1
+        ring = replace(view, ops=OpsView(kind="ring"), alternatives=("shore",))
+        a, b = np.full((h, w, 3), 128, np.uint8), np.full((h, w, 3), 128, np.uint8)
+        ov.draw(a, ring)
+        ov.draw(b, replace(ring, meaning=""))
+        assert np.array_equal(a, b)
 
 
 # --- the three zones: text column, face, hand ----------------------------------------
@@ -522,6 +532,8 @@ def test_nothing_is_drawn_over_the_face():
         ViewState(mode="browse", level="word", hover=Hit(1, 0), status="RAISE A FIST: START A TAKE", llm="cloud"),
         ViewState(mode="browse", level="sentence", hover=Hit(1, 0), status="RAISE A FIST: START A TAKE"),
         ViewState(mode="browse", level="paragraph", hover=Hit(0, 0)),
+        ViewState(mode="focus", level="word", focus=Hit(0, 3), llm="local",
+                  meaning="Existing or present in a particular place or situation."),
         ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring", picked=1),
                   alternatives=("present", "around", "attending")),
         ViewState(mode="focus", level="sentence", focus=Hit(2, None), ops=OpsView(kind="tone", tone=0.4), llm="cloud"),

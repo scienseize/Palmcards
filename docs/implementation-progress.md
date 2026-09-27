@@ -1620,3 +1620,18 @@ Changes: CLAUDE.md: what PalmCards is (it measures takes and sets them side by s
   first; H2's reasoning is the side-by-side comparison; mark labels and mark agreement removed.
 The design-note artifact still describes delivery marks; CLAUDE.md says so where it links it.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: word meanings and sentence hear-it
+Changes: Selecting a word in Prepare requests a short contextual meaning from the optional LLM,
+  displayed below the word. Only opening the palm requests alternatives; the ring contains the
+  original word and replacements. Meanings are validated, cached per revision, cleared on edits,
+  and stale answers are discarded. Unavailable/failed meanings say so without repeated requests.
+  Hear-it moved to selected sentences: hold an open palm for ~0.6 s, or press a. It speaks the whole
+  sentence, once per hold; release and hold again to replay. Review still plays the selected take.
+Validation: full headless suite 469 passed; after the definition-card sizing adjustment and an added
+  layout test, targeted controls/render/LLM checks 69 passed (8 provider tests deselected, already
+  passed in the full run). Rendered at 1280x720 and 640x480, including maximum-length definitions.
+Pending: live camera/gesture and audible playback check by the user.
+```

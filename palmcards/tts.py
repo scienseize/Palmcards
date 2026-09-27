@@ -5,7 +5,7 @@
                                     a new say() cuts off the last one
     Speaker.stop()
 
-Used by the options ring's "hear it" node (milestone 8). macOS `say` is the
+Used by "hear it" on a selected sentence in Prepare. macOS `say` is the
 only engine so far.
 """
 

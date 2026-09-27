@@ -170,6 +170,7 @@ class Text:
     visible_rows: int | None = None
     # A focused word: the notes zoomed by this, the word moved to the middle of the box.
     word_zoom: float = 1.6
+    meaning_min_size: int = 9  # smallest definition text in a narrow window; shrink to fit below the word
     fade: float = 0.5  # lines: rows partly scrolled out fade out over this at the box's top and bottom
     # Everything below scales with the line height: padding inside the box is half a line.
     focus_scales: tuple[float, ...] = (1.4, 1.2, 1.0)  # focus panel: largest that fits the box wins
@@ -251,12 +252,15 @@ class Ring:
 @dataclass(frozen=True)
 class Gauge:
     """Vertical tone dial, in the text box's right padding."""
+    min_lines: float = 3.0  # track height in note line heights, sized to the focused sentence
+    max_lines: float = 7.0
+    sentence_pad: float = 0.5  # extra line height around the sentence
     step_px: int = 2
-    width: int = 4
-    knob_r: int = 8
+    width: int = 2
+    knob_r: int = 6
     knob_outline: int = 2
-    closing_knob_outline: int = 4  # while the thumb closes into a pinch: the value is held
-    label_scale: float = 0.6  # x the UI size: the ends' labels, cold above, warm below
+    closing_knob_outline: int = 3  # while the thumb closes into a pinch: the value is held
+    label_scale: float = 0.55  # x the UI size: the ends' labels, cold above, warm below
     labels: tuple[str, str] = ("formal", "conversational")
 
 

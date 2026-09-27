@@ -46,6 +46,17 @@ def test_alternatives_are_checked():
         llm.parse_alternatives("not json", "here")
 
 
+def test_meaning_is_contextual_and_validated():
+    system, user = llm.meaning_request(f"The bank was steep. {INJECTION}", "bank")
+    assert "as used in this sentence" in system
+    assert 'The word: "bank"' in user and "The bank was steep." in user
+    assert user.count("</notes>") == 1
+    assert llm.parse_meaning('{"meaning": "  The land beside a river.  "}') == "The land beside a river."
+    for value in (None, 3, [], "", "<markup>", "long " * 26, "a" * 201):
+        with pytest.raises(ValueError):
+            llm.parse_meaning(json.dumps({"meaning": value}))
+
+
 def test_rewrites_are_checked():
     assert llm.parse_rewrite(json.dumps({"text": "  Hey,   thanks for coming. "}), "Thank you for attending.",
                              "tone", 0.5) == "Hey, thanks for coming."
@@ -337,6 +348,63 @@ def test_alternatives_become_ring_nodes_and_a_revision(tmp_path, monkeypatch):
     assert takes.undo() == "UNDONE" and takes.notes.sentences[0].words[4].text == "here"
 
 
+def test_word_selection_shows_meaning_before_palm_requests_alternatives(tmp_path, monkeypatch):
+    from palmcards.render import Hit, ViewState
+
+    provider = FakeProvider(lambda s, u: json.dumps({"alternatives": ["present"]}) if "alternatives" in s
+                            else json.dumps({"meaning": "In this place."}))
+    takes = takes_with(tmp_path, monkeypatch, provider)
+    view = ViewState(mode="browse", level="word", hover=Hit(0, 4))
+    takes.sync_word(view, None)
+    assert not provider.calls  # hovering never sends text
+    view.mode, view.focus = "focus", Hit(0, 4)
+    takes.sync_word(view, None)
+    takes.sync_word(view, None)
+    poll_until(takes, lambda: (0, 4) in takes.meanings)
+    takes.sync_word(view, None)
+    assert view.meaning == "In this place." and not view.alternatives
+    assert len(provider.calls) == 1 and not takes.proposals
+    assert takes.notes_version == 0
+    takes.sync_word(view, "ring")
+    poll_until(takes, lambda: (0, 4) in takes.alternatives)
+    takes.sync_word(view, "ring")
+    assert view.alternatives == ("present",) and len(provider.calls) == 2
+    takes.use_alternative(0, 4, "present")
+    assert not takes.meanings  # definitions are for a specific revision
+    takes.close()
+
+
+def test_meaning_unavailable_and_failed_requests_do_not_repeat(tmp_path, monkeypatch):
+    from palmcards.render import Hit, ViewState
+
+    takes = takes_with(tmp_path, monkeypatch, None)
+    view = ViewState(mode="focus", level="word", focus=Hit(0, 4))
+    takes.sync_word(view, None)
+    assert "optional LLM" in view.meaning
+    takes.close()
+    provider = FakeProvider("bad json")
+    takes = takes_with(tmp_path, monkeypatch, provider)
+    takes.sync_word(view, None)
+    poll_until(takes, lambda: ("meaning", (0, 4)) in takes.llm_failed)
+    takes.sync_word(view, None)
+    takes.sync_word(view, None)
+    assert "unavailable" in view.meaning and len(provider.calls) == 1
+    takes.llm_failed.clear()  # apply_event clears this on a new selection
+    takes.sync_word(view, None)
+    poll_until(takes, lambda: len(provider.calls) == 2)
+    takes.close()
+
+
+def test_meaning_answer_for_old_notes_is_dropped(tmp_path, monkeypatch):
+    provider = FakeProvider('{"meaning": "In this place."}')
+    takes = takes_with(tmp_path, monkeypatch, provider)
+    takes.ask_meaning(0, 4)
+    takes.use_alternative(0, 4, "present")
+    poll_until(takes, lambda: not takes.assistant.pending)
+    assert not takes.meanings and not takes.proposals
+    takes.close()
+
+
 def test_a_tone_rewrite_is_a_proposal_until_used(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, FakeProvider(json.dumps({"text": "Thanks so much for being here."})))
     assert takes.ask_rewrite("tone", (0,), 0.6) == "ASKING FOR A WARMER VERSION..."
@@ -504,4 +572,3 @@ def test_a_failed_request_is_not_sent_again_until_a_new_focus(tmp_path, monkeypa
                      GestureLog(), takes=takes)
     takes.ask_alternatives(0, 1)  # focused again: asking again is the user's choice
     assert len(provider.calls) == 2
-

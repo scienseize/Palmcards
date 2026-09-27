@@ -7,7 +7,7 @@ or LLM.provider in config.py).
     Assistant.spent() -> [Usage]            every call's tokens, whatever came of it
 
 Rules it keeps:
-  - A request only ever starts from something the user did (opening the
+  - A request only ever starts from something the user did (selecting a word for its meaning, opening the
     options ring, committing a tone or length change);
     nothing is sent on its own.
   - Only what the task needs goes out (a sentence, or a paragraph), cut to
@@ -244,6 +244,23 @@ def _notes(text: str) -> str:
 
 # --- tasks: (system, user) out, a checked value back --------------------------------------
 
+def meaning_request(sentence: str, word: str) -> tuple[str, str]:
+    system = (f"{GUARD} Explain the meaning of the selected word as used in this sentence. "
+              "Use one short, plain-language definition, at most 25 words and 200 characters. "
+              'Reply as {"meaning": "..."}.')
+    return system, f"The word: {json.dumps(word)}\nThe sentence it is in:\n{_notes(sentence)}"
+
+
+def parse_meaning(reply: str) -> str:
+    text = json.loads(reply)["meaning"]
+    if not isinstance(text, str):
+        raise ValueError("meaning is not text")
+    text = " ".join(text.split())
+    if not text or len(text) > 200 or len(text.split()) > 25 or re.search(r"[\[\]*<>]", text):
+        raise ValueError("meaning must be a short plain-text definition")
+    return text
+
+
 def alternatives_request(sentence: str, word: str) -> tuple[str, str]:
     system = (f"{GUARD} Suggest up to {LLM.max_alternatives} alternatives for one word of a spoken sentence: "
               "words or very short phrases that fit the sentence and could be said in its place. "
@@ -316,6 +333,7 @@ def _object(**properties) -> dict:
 # schema does (the cloud); the parsers above check every answer either way.
 _TEXT = _object(text={"type": "string"})
 SCHEMAS = {
+    "meaning": _object(meaning={"type": "string"}),
     "alternatives": _object(alternatives={"type": "array", "items": {"type": "string"}}),
     "tone": _TEXT,
     "length": _TEXT,
@@ -327,7 +345,7 @@ SCHEMAS = {
 @dataclass
 class Answer:
     ticket: int
-    kind: str  # alternatives | tone | length
+    kind: str  # meaning | alternatives | tone | length
     key: tuple  # what it is about, e.g. (sentence, word)
     revision: str | None  # the notes revision the request was made on
     value: object = None  # checked result, or None with error

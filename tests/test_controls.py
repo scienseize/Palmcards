@@ -28,13 +28,47 @@ def focused(ops: OpsView, level="word", hit=Hit(0, 2)):
     return ViewState(app="prepare", mode="focus", level=level, focus=hit, hover=hit, ops=ops)
 
 
-def test_hear_it_speaks_the_sentence_stressing_the_word():
+def test_hear_it_speaks_the_selected_sentence():
     ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
-    view = focused(OpsView(kind="ring", picked=1))  # the word, hear it
     speaker, log = FakeSpeaker(), GestureLog()
-    main.apply_event(GestureEvent("commit", 1.0, "word", "ring"), view, ov, log, speaker)
-    assert speaker.said == [(["Thank", "you", "for", "being", "here."], {2})]
-    assert view.note.startswith("SPEAKING") and log.entries[-1]["kind"] == "hear"
+    assert main.hear_sentence(1, ov, speaker, log, 1.0) == "SPEAKING SENTENCE"
+    assert speaker.said == [(["We", "started", "with", "one", "question."], set())]
+    assert log.entries[-1]["kind"] == "hear" and log.entries[-1]["sentence"] == 1
+
+
+def test_hear_it_reports_failure():
+    class BrokenSpeaker:
+        def say_words(self, words):
+            raise OSError("unavailable")
+
+    ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
+    log = GestureLog()
+    assert main.hear_sentence(0, ov, BrokenSpeaker(), log, 1.0).startswith("COULD NOT SPEAK")
+    assert not log.entries
+
+
+@pytest.mark.parametrize("app", ["prepare", "review"])
+def test_sentence_palm_requires_selection_and_a_hold_and_rearms(app):
+    palm = main.SentencePalm()
+    view = focused(OpsView(), level="sentence", hit=Hit(0, None))
+    view.app = app
+    view.mode = "browse"
+    assert not palm.update(view, True, 0)
+    assert not palm.update(view, True, 2)
+    view.mode = "focus"
+    assert not palm.update(view, True, 3)
+    assert not palm.update(view, True, 3.3)
+    assert palm.update(view, True, 3.7)
+    assert not palm.update(view, True, 5)
+    assert not palm.update(view, False, 6)
+    assert not palm.update(view, True, 7)
+    assert palm.update(view, True, 7.7)
+    view.focus = Hit(1, None)
+    assert not palm.update(view, True, 8)
+    assert palm.update(view, True, 8.7)
+    view.level = "word"
+    assert not palm.update(view, True, 9)
+    assert not palm.update(view, True, 10)
 
 
 def test_keeping_the_word_is_no_change():

@@ -18,8 +18,8 @@ cursor_to_text() maps the relative hand-box cursor to such a point.
 
 On top of the text: the state label (Kat's `BROWSE BY WORD`, then the
 operation, then the gesture hint), and
-Prepare's operations: the options ring (the original word, its alternatives
-when the optional LLM is on, and "hear it"; an L-hand turns it like a
+Prepare's operations: the selected word's meaning, then an open palm spreads
+the options ring (the original word and alternatives when the optional LLM is on; an L-hand turns it like a
 knob, the picked node at 12 o'clock, its word scrambling into the sentence),
 and the tone gauge and stretch line; without the LLM these two only preview,
 and say so. While the
@@ -84,17 +84,16 @@ def set_contrast(high: bool) -> None:
     C = HIGH_CONTRAST if high else COLORS
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
-HEAR_IT = "hear it"  # the ring's last node, after the word itself and its alternatives
 HINT_SEP = "  /  "  # in the label's second line: the operation, then the gesture hints
 SCRAMBLE = "abcdefghijklmnopqrstuvwxyz#%&@$"
 FOCUS_HINTS = {  # without the optional LLM
-    "word": "OPEN PALM: HEAR IT  /  DROP HAND: BACK",
-    "sentence": "L-HAND, THEN TILT: TONE (PREVIEW ONLY)  /  DROP HAND: BACK",
+    "word": "MEANING AND ALTERNATIVES NEED THE OPTIONAL LLM  /  DROP HAND: BACK",
+    "sentence": "HOLD OPEN PALM: HEAR IT  /  L-HAND: TONE (PREVIEW ONLY)  /  DROP HAND: BACK",
     "paragraph": "TWO L-HANDS: LENGTH (PREVIEW ONLY)  /  DROP HAND: BACK",
 }
 FOCUS_HINTS_LLM = {
-    "word": "OPEN PALM: ALTERNATIVES, HEAR IT  /  DROP HAND: BACK",
-    "sentence": "L-HAND: TONE  /  DROP HAND: BACK",
+    "word": "OPEN PALM: ALTERNATIVES  /  DROP HAND: BACK",
+    "sentence": "HOLD OPEN PALM: HEAR IT  /  L-HAND: TONE  /  DROP HAND: BACK",
     "paragraph": "TWO L-HANDS: LENGTH  /  DROP HAND: BACK",
 }
 NEEDS_LLM = "(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)"
@@ -205,6 +204,7 @@ class ViewState:
     # ring), a request in flight (the word's glyphs scramble), and a proposal
     # for the focused unit (shown under it; pinch + lift uses it).
     alternatives: tuple[str, ...] = ()
+    meaning: str = ""  # shown on word selection, before opening alternatives
     loading: bool = False
     proposal: str = ""
     llm: str = ""  # the optional LLM in use: "cloud" (the text asked about leaves the Mac), "local", or ""
@@ -511,12 +511,11 @@ class TextOverlay:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
             second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "L-HAND, THEN TURN TO PICK"
+            if not state.llm:
+                second = "ALTERNATIVES NEED THE OPTIONAL LLM  /  DROP HAND: BACK"
             if ops.pointing or ops.picked:
                 picked = self.ring_labels(state)[ops.picked]
-                if picked == HEAR_IT and ops.picked >= self.ring_words(state):
-                    second = "PINCH + LIFT: HEAR IT"
-                else:
-                    second = "KEEP THE WORD (NO CHANGE)" if ops.picked == 0 else f'PINCH + LIFT: USE "{picked.upper()}"'
+                second = "KEEP THE WORD (NO CHANGE)" if ops.picked == 0 else f'PINCH + LIFT: USE "{picked.upper()}"'
         elif ops.kind == "tone":
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
             second = f"SENTENCE TONE: {tone}  " + ("/  PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM)
@@ -530,14 +529,15 @@ class TextOverlay:
             second = (FOCUS_HINTS_LLM if state.llm else FOCUS_HINTS).get(state.level, "")
         elif state.mode == "focus":
             second = state.status or "DROP HAND: BACK"
+        elif state.app == "prepare" and state.mode == "browse" and state.level == "sentence":
+            second = "FOLD TO SELECT  /  THEN HOLD OPEN PALM: HEAR IT"
         else:
             second = state.status
         return first, second
 
     def ring_words(self, state: ViewState) -> int:
-        """How many of ring_labels are words (the word itself and its
-        alternatives); the last is the action (hear it)."""
-        return len(self.ring_labels(state)) - 1 if state.focus is not None and state.focus.word is not None else 0
+        """Every node is the original word or a replacement."""
+        return len(self.ring_labels(state)) if state.focus is not None and state.focus.word is not None else 0
 
     def follow_ring(self, state: ViewState, pick: str | None, turn: int) -> None:
         """The options ring follows the grammar's knob (GestureState.ring_pick,
@@ -580,11 +580,11 @@ class TextOverlay:
         return ops.preview
 
     def ring_labels(self, state: ViewState) -> tuple[str, ...]:
-        """The word as it is, its alternatives, hear it. Word alternatives
+        """The word as it is and its alternatives. Word alternatives
         need the optional LLM and are not offered without one."""
         if state.focus is None or state.focus.word is None:
-            return ("original", HEAR_IT)
-        return (self.word_text(state.focus), *state.alternatives, HEAR_IT)
+            return ("original",)
+        return (self.word_text(state.focus), *state.alternatives)
 
     # --- drawing: text -----------------------------------------------------
 
@@ -1127,10 +1127,9 @@ class TextOverlay:
         and there, so the ring shows what is picked however fast it turns."""
         labels = self.ring_labels(state)
         cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
-        words = self.ring_words(state)
         held = None
         for i, (label, (nx, ny)) in enumerate(zip(labels, self.ring_nodes(state))):
-            outline = C.node_outline if i < words else C.node_outline_dim  # hear it: an action
+            outline = C.node_outline
             if i == state.ops.picked:
                 chip = self._node(label, C.chip_text, C.chip_fill, None)
             else:
@@ -1150,14 +1149,22 @@ class TextOverlay:
             x0, y0, x1, y1 = (int(v) for v in held)
             cv2.rectangle(frame, (x0 - g, y0 - g), (x1 + g, y1 + g), bgr(C.yellow), g, cv2.LINE_AA)
 
-    def _draw_gauge(self, frame: np.ndarray, tone: float, top: int, bottom: int, closing: bool = False) -> None:
+    def _draw_gauge(self, frame: np.ndarray, tone: float, top: int, bottom: int, closing: bool = False,
+                    sentence_bounds: tuple[float, float] | None = None) -> None:
         """Vertical tone dial in the text box's right padding, just right of
         the text: cold (blue, "formal") at the top, warm (orange,
-        "conversational") at the bottom, each end labelled."""
+        "conversational") at the bottom, each end labelled. Its compact track
+        follows the sentence's height and centre, not the surrounding context."""
         edge = GAUGE.knob_r + GAUGE.closing_knob_outline  # the knob stays inside the text column
         x = int(min(self.x + self.margin + self.box_w - self.pad // 2, self.col_x1 - edge))
-        y0, y1 = top + self.pad, bottom - self.pad
         size = round(self.ui_size * GAUGE.label_scale)
+        a, b = sentence_bounds or (top, bottom)
+        label_room = sum(self._get_font(size).getmetrics()) + GAUGE.knob_r + self.pad
+        low, high = top + label_room, bottom - label_room
+        height = min(max(b - a + GAUGE.sentence_pad * self.line_h, GAUGE.min_lines * self.line_h),
+                     GAUGE.max_lines * self.line_h, max(1, high - low))
+        center = max(low + height / 2, min((a + b) / 2, high - height / 2))
+        y0, y1 = round(center - height / 2), round(center + height / 2)
         for text, color, above in ((GAUGE.labels[0], C.cold, True), (GAUGE.labels[1], C.warm, False)):
             ink = self._ink(text, size, (*color, 255))
             h, w = (n - 2 * ink[2] for n in ink[0].shape[:2])
@@ -1285,6 +1292,8 @@ class TextOverlay:
         if panel is None and zoom is not None:
             if state.ops.kind == "ring":
                 self._draw_ring(frame, state, zoom)
+            elif state.app == "prepare" and state.meaning:
+                self._draw_meaning(frame, state.meaning, zoom[3])
             text = self.focus_word(state)
             if state.loading:  # glyph scramble: the word is being rewritten
                 text = "".join(SCRAMBLE[(ord(c) + int(time.time() * 12)) % len(SCRAMBLE)] if c.isalpha() else c
@@ -1293,7 +1302,10 @@ class TextOverlay:
             self._blend_ink(frame, self._ink(text, self._word_zoom(state)[3], C.orange_text), zoom[0], zoom[1])
 
         if state.mode == "focus" and state.ops.kind == "tone":
-            self._draw_gauge(frame, state.ops.tone, top, bottom, state.ops.closing)
+            bounds = None
+            if panel is not None and state.focus is not None and state.focus.sentence in panel.rows:
+                bounds = tuple(top - scroll + y for y in panel.rows[state.focus.sentence])
+            self._draw_gauge(frame, state.ops.tone, top, bottom, state.ops.closing, bounds)
         if state.app in ("count_in", "rehearse", "review"):
             self._draw_zone(frame, state)
         if state.app == "review" and state.mode == "focus" and state.takes:
@@ -1312,6 +1324,32 @@ class TextOverlay:
         if state.tutorial is not None:
             self._draw_tutorial(frame, *state.tutorial)
         return frame
+
+    def _draw_meaning(self, frame: np.ndarray, meaning: str, word_bottom: float) -> None:
+        size = self.ui_size
+        x = self.x + self.margin
+        pad = self.pad // 2
+        width = int(self.col_x1 - x)
+        y = round(word_bottom + pad)
+        available = self.y + self.margin + self.box_h - y
+        while True:
+            rows = ["MEANING", *self._wrap(meaning, size, width - 2 * pad)]
+            line_h = sum(self._get_font(size).getmetrics()) + 2
+            height = len(rows) * line_h + 2 * pad
+            if height <= available or size <= TEXT.meaning_min_size:
+                break
+            size -= 1
+        key = ("meaning", meaning, width, size)
+        if key not in self._chips:
+            if len(self._chips) >= CHIP_CACHE_MAX:
+                self._chips.clear()
+            img = Image.new("RGBA", (width, height), C.node_fill)
+            draw = ImageDraw.Draw(img)
+            for i, row in enumerate(rows):
+                draw.text((pad, pad + i * line_h), row, font=self._get_font(size),
+                          fill=C.orange if i == 0 else C.detail_text)
+            self._chips[key] = _premultiply(img)
+        _blend(frame, x, y, *self._chips[key])
 
     def _draw_alert(self, frame: np.ndarray, alert: str, bottom: int, low: int) -> int:
         """The persistent alert line under the text, wrapped to the text

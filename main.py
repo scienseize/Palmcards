@@ -7,7 +7,7 @@
       NOTES_FILE: .txt, .md or .docx; defaults to the sample
       --lang: language spoken in the takes, for Whisper (default en)
       --trace: also record every hand result's landmarks, for offline replay
-      --llm: the optional LLM for word alternatives and rewrites (default: off,
+      --llm: the optional LLM for word meanings, alternatives and rewrites (default: off,
              or config LLM.provider). "anthropic" is the cloud: the sentence or paragraph you ask
              about leaves the Mac (ANTHROPIC_API_KEY from the environment or .env); a CLOUD LLM
              chip shows while it is on. Each call's tokens: python -m palmcards.llm usage
@@ -20,14 +20,14 @@ the right of the frame; it steers the highlight in the text on the left.
                            browse by word / sentence / paragraph
   top or bottom of the box scroll
   pinch (word), fold fingers onto the thumb (sentence, paragraph)
-                           focus
-  open palm (word)         options ring: the word, alternatives (with --llm), "hear it";
+                           focus; a word shows its meaning (with --llm)
+  open palm (word)         options ring: the word and alternatives (with --llm);
                            make an L and turn it like a knob: one option per ~15 degrees, tilting right
                            turns the ring clockwise; the picked word previews in the sentence
   L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
+  hold open palm (sentence) hear the selected sentence (~0.6 s; also key a)
   two L-hands (paragraph)  length stretch
   pinch + lift             commit: an alternative makes a new notes revision (u undoes it);
-                           "hear it" speaks the sentence, the focused word emphasised;
                            tone and length ask the LLM for a rewrite, shown as a proposal when the unit
                            is focused again (pinch + lift uses it); without --llm they say they need it
   drop the hand for 1 s    back out
@@ -73,7 +73,7 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   t start a take, x stop it (or cancel the count-in), n next section, b previous section,
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
-  a play the focused sentence (Review), u undo the last edit (Prepare), r retry failed analysis,
+  a hear the sentence (Prepare) / play the take (Review), u undo the last edit (Prepare), r retry failed analysis,
   e calibrate the eyes again at the next take,
   g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit.
 Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
@@ -106,9 +106,9 @@ from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.edit import replace_text, replace_word
 from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
-    parse_alternatives, parse_rewrite, rewrite_request
+    meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
-    HEAR_IT, Hit, OpsView, TextOverlay, ViewState,
+    Hit, OpsView, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
@@ -131,9 +131,37 @@ SCREENS_DIR = SESSIONS_DIR / "screens"
 WINDOW = "PalmCards"
 NOTE_S = 1.5  # how long a commit message stays in the label
 LLM_NOTE_S = 3.0  # an LLM answer or failure arrives while you're doing something else: it stays longer
-PLAY_HOLD_S = 0.6  # open palm held on a focused sentence in Review: play it
+PLAY_HOLD_S = 0.6  # open palm on a focused sentence: hear it (Prepare), play a take (Review)
 HINT_EVERY_S = 6.0  # a hint about a gesture that didn't act is shown at most this often
 ENTER = 13
+
+
+def hear_sentence(sentence: int, overlay: TextOverlay, speaker, log: GestureLog, t: float) -> str:
+    try:
+        speaker.say_words([w.text for w in overlay.sentences[sentence].words])
+    except OSError as exc:
+        print(f"text to speech failed: {exc}", file=sys.stderr)
+        return "COULD NOT SPEAK (SEE TERMINAL)"
+    log(t, "hear", sentence=sentence)
+    return "SPEAKING SENTENCE"
+
+
+@dataclass
+class SentencePalm:
+    """One playback per held palm; changing target or releasing it rearms it."""
+    target: tuple[str, int] | None = None
+    since: float = 0.0
+    played: bool = False
+
+    def update(self, view: ViewState, palm: bool, now: float) -> bool:
+        target = (view.app, view.focus.sentence) if palm and view.app in ("prepare", "review") \
+            and view.mode == "focus" and view.level == "sentence" and view.focus is not None else None
+        if target != self.target:
+            self.target, self.since, self.played = target, now, False
+        if target is not None and not self.played and now - self.since >= PLAY_HOLD_S:
+            self.played = True
+            return True
+        return False
 
 
 def nonactivation_hint(mode: str, gs, zone_active: bool, open_s: float) -> str:
@@ -199,15 +227,6 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
             view.note = takes.ask_rewrite("tone" if ev.op == "tone" else "length", unit, ev.value)
         elif ev.op is None and takes is not None and unit in takes.proposals:
             view.note = takes.use_proposal(unit)
-        elif picked == HEAR_IT and view.focus is not None:
-            s = overlay.sentences[view.focus.sentence]
-            try:
-                (speaker or get_speaker()).say_words([w.text for w in s.words], {view.focus.word})
-                view.note = f'SPEAKING, STRESSING "{overlay.word_text(view.focus).upper()}"'
-            except OSError as exc:
-                view.note = "COULD NOT SPEAK (SEE TERMINAL)"
-                print(f"text to speech failed: {exc}", file=sys.stderr)
-            log(ev.t, "hear", sentence=sentence, word=view.focus.word)
         elif ev.op in ("tone", "stretch"):
             what = "TONE" if ev.op == "tone" else "LENGTH"
             log(ev.t, "commit_stub", level=ev.level, sentence=sentence, op=ev.op, value=ev.value)
@@ -253,6 +272,7 @@ class Takes:
             print(describe(provider))
         self.assistant = Assistant(provider) if provider is not None else None
         self.alternatives: dict[tuple[int, int], tuple[str, ...]] = {}  # (sentence, word) -> words, this revision
+        self.meanings: dict[tuple[int, int], str] = {}
         self.proposals: dict[tuple[int, ...], tuple[str, object, str]] = {}  # unit -> (kind, value, text shown)
         self.llm_failed: set[tuple[str, tuple]] = set()  # (kind, key) that failed: not asked again until a new focus
         self.reset_pick()
@@ -333,6 +353,7 @@ class Takes:
         self.board = Board(notes)
         self._fill_board()
         self.alternatives, self.proposals = {}, {}  # they were for other text
+        self.meanings = {}
         self.llm_failed = set()
         if self.follow is not None:
             self.follow.notes = notes
@@ -340,7 +361,7 @@ class Takes:
 
     # --- the optional LLM: requests from explicit actions, answers as previews ---
 
-    LLM_WHAT = {"alternatives": "ALTERNATIVES", "tone": "TONE REWRITE", "length": "LENGTH REWRITE"}
+    LLM_WHAT = {"meaning": "MEANING", "alternatives": "ALTERNATIVES", "tone": "TONE REWRITE", "length": "LENGTH REWRITE"}
 
     @property
     def no_llm(self) -> str:
@@ -363,6 +384,38 @@ class Takes:
         if rid is None or (first is not None and rid == first["id"] and first["provenance"] == "imported"):
             return "imported"
         return rid
+
+    def ask_meaning(self, sentence: int, word: int) -> None:
+        """Selecting a word asks for its meaning in context, once per revision."""
+        key = (sentence, word)
+        if self.assistant is None or key in self.meanings or self.assistant.asking("meaning", key) \
+                or ("meaning", key) in self.llm_failed:
+            return
+        s = self.notes.sentences[sentence]
+        self.assistant.ask("meaning", key, self._llm_revision(),
+                           meaning_request(s.text, s.words[word].text), parse_meaning)
+        self.log(time.perf_counter() - self.t0, "llm", ask="meaning", sentence=sentence, word=word)
+
+    def sync_word(self, view: ViewState, op: str | None) -> None:
+        """A selected word shows its meaning; only an open palm asks for alternatives."""
+        key = (view.focus.sentence, view.focus.word) if view.mode == "focus" and view.level == "word" \
+            and view.focus is not None and view.focus.word is not None else None
+        view.meaning, view.alternatives, view.loading = "", (), False
+        if key is None:
+            return
+        self.ask_meaning(*key)
+        if self.assistant is None:
+            view.meaning = "Meaning needs the optional LLM. See README to set it up."
+        elif key in self.meanings:
+            view.meaning = self.meanings[key]
+        elif ("meaning", key) in self.llm_failed:
+            view.meaning = "Meaning unavailable. Select this word again to retry."
+        else:
+            view.meaning = "Loading meaning..."
+        if op == "ring":
+            self.ask_alternatives(*key)
+            view.alternatives = self.alternatives.get(key, ())
+            view.loading = bool(self.assistant and self.assistant.asking("alternatives", key))
 
     def ask_alternatives(self, sentence: int, word: int) -> None:
         """Opening the options ring on a word: ask once for alternatives."""
@@ -412,6 +465,9 @@ class Takes:
                     self.llm_alert = "CLOUD LLM: API KEY REJECTED (SEE TERMINAL)"
                 note = f"{self.LLM_WHAT.get(a.kind, a.kind.upper())} FAILED: {a.reason}, NOTHING CHANGED"
                 self.llm_failed.add((a.kind, a.key))
+                continue
+            if a.kind == "meaning":
+                self.meanings[a.key] = a.value
                 continue
             if a.kind == "alternatives":
                 self.alternatives[a.key] = tuple(a.value)
@@ -1044,7 +1100,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     speaker = devices.speaker()
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
-    palm_since, played_for = None, None  # Review: an open palm held on a focused sentence plays it
+    sentence_palm = SentencePalm()
     hint_after, rehearse_open_since = 0.0, None
     notes_seen = takes.notes_version
     frame_index = 0
@@ -1102,18 +1158,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
         if modes.mode == "prepare":  # the optional LLM: what the focused word or unit has
-            word_key = (view.focus.sentence, view.focus.word) if view.mode == "focus" and view.focus is not None \
-                and view.focus.word is not None else None
-            if word_key and grammar.state.op == "ring":
-                takes.ask_alternatives(*word_key)  # opening the ring asks
-            view.alternatives = takes.alternatives.get(word_key, ()) if word_key else ()
-            view.loading = bool(word_key) and takes.assistant is not None and \
-                takes.assistant.asking("alternatives", word_key)
+            takes.sync_word(view, grammar.state.op)
             unit = tuple(overlay.unit(view.level, view.focus.sentence)) \
                 if view.mode == "focus" and view.focus is not None and view.level in ("sentence", "paragraph") else ()
             proposal = takes.proposals.get(unit) if unit else None
             view.proposal = proposal[2] if proposal else ""
-            if word_key and grammar.state.op == "ring":  # the knob turns the ring (its nodes come from here)
+            if view.focus is not None and view.focus.word is not None and grammar.state.op == "ring":
                 grammar.set_ring_labels(start - t0, overlay.ring_labels(view))
                 overlay.follow_ring(view, grammar.state.ring_pick, grammar.state.ring_turn)
         if modes.mode in ("prepare", "review"):
@@ -1133,18 +1183,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.mic = takes.recorder.level if takes.recorder else 0.0
             view.start_progress = 0.0
             view.detail = ()
-        focused = view.focus.sentence if view.app == "review" and view.mode == "focus" and view.level == "sentence" \
-            and view.focus is not None else None
         palm = grammar.state.primary is not None and grammar.state.primary.stable == OPEN
-        if focused is None or not palm:
-            palm_since = None
-            if focused is None:
-                played_for = None
-        elif palm_since is None:
-            palm_since = start
-        elif start - palm_since >= PLAY_HOLD_S and played_for != focused:
-            view.note, note_until = takes.play_sentence(focused), start + NOTE_S
-            played_for = focused
+        if sentence_palm.update(view, palm, start):
+            focused = view.focus.sentence
+            view.note = hear_sentence(focused, overlay, speaker, log, start - t0) if view.app == "prepare" \
+                else takes.play_sentence(focused)
+            note_until = start + NOTE_S
         if tutorial.update(grammar.state, events, start - t0) and tutorial.done:
             prefs.tutorial_done = True
             preferences.save(prefs, prefs_file)
@@ -1244,9 +1288,11 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             overlay = TextOverlay(sentences, (w, h))  # its cached text was drawn in the old colours
         elif key == ord("u") and view.app == "prepare":
             view.note, note_until = takes.undo(), time.perf_counter() + NOTE_S
-        elif key == ord("a") and view.app == "review":
+        elif key == ord("a") and view.app in ("prepare", "review"):
             sentence = view.focus.sentence if view.focus is not None else view.current
-            view.note, note_until = takes.play_sentence(sentence), time.perf_counter() + NOTE_S
+            view.note = hear_sentence(sentence, overlay, speaker, log, time.perf_counter() - t0) \
+                if view.app == "prepare" else takes.play_sentence(sentence)
+            note_until = time.perf_counter() + NOTE_S
         elif key == ord("e"):
             view.note, note_until = takes.recalibrate(), time.perf_counter() + NOTE_S
         elif key == ord("d"):
