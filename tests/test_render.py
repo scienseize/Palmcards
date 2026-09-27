@@ -557,8 +557,9 @@ def test_the_picked_node_is_highlighted_at_once_and_while_turning():
     from palmcards.style import COLORS, MOTION
 
     ov = overlay()
-    view = knob_view(now=1.0)
-    ov.follow_ring(view, "being", 0)
+    view = knob_view(now=0.0)
+    ov.follow_ring(view, "being", 0)  # the ring opens out of the word
+    view.now = 1.0
     ov.follow_ring(view, "present", 1)
     for now in (1.0 + 1 / 30, 1.0 + MOTION.ring / 2, 3.0):  # just after the step, mid-turn, settled
         frame = np.full((720, 1280, 3), 128, np.uint8)
@@ -736,3 +737,106 @@ def test_what_a_commit_acts_on_rises_with_the_pinched_hand_and_the_focus_fades_a
     dropping = drawn(replace(view, drop_progress=1.0))
     ink = lambda f: np.abs(f[:, ov.col_x0:ov.col_x1].astype(int) - 128).sum()
     assert ink(dropping) < ink(still)  # fading
+
+
+def test_the_ring_opens_out_of_the_word():
+    ov = overlay()
+    view = knob_view(now=0.0)
+    ov.follow_ring(view, "being", 0)
+
+    def drawn(now):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, replace(view, now=now))
+        return frame
+
+    box = ov.focus_word_box(view)
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    far = max(ov.ring_nodes(view), key=lambda n: abs(n[1] - cy))  # the node farthest above or below the word
+    x, y = int(far[0]), int(far[1])
+    ink = lambda f: np.abs(f[y - 3:y + 4, x - 12:x + 12].astype(int) - 128).sum()
+    assert ink(drawn(0.0)) < ink(drawn(1.0))  # not out there yet, then there
+    assert ov.ring_nodes(replace(view, now=0.0)) == ov.ring_nodes(replace(view, now=1.0))  # the layout itself stays
+
+
+def test_the_focus_grows_out_of_its_sentence_and_shrinks_back_into_it():
+    from palmcards.render import FocusMotion
+    from palmcards.style import MOTION
+
+    ov = overlay()
+    view = ViewState(app="prepare", mode="browse", level="sentence", hover=Hit(1, None), now=0.0,
+                     focus_motion=FocusMotion())
+    ov.follow(view)
+
+    def drawn(v):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, v)
+        return frame
+
+    notes = drawn(view)
+    view.mode, view.focus = "focus", Hit(1, None)
+    ov.follow(view)
+    start = drawn(view)  # p = 0: the notes as they were, the panel not yet drawn
+    home = view.focus_motion.home
+    assert home is not None and home[1] < home[3]
+    view.now = MOTION.focus_in / 2
+    mid = drawn(view)
+    view.now = 2.0
+    focused = drawn(view)
+    assert view.focus_motion.last is not None and ov._growing(view) is None
+    diff = lambda a, b: np.abs(a.astype(int) - b).mean()
+    assert diff(start, notes) < diff(focused, notes)  # it starts at the notes
+    assert diff(mid, notes) > 0 and diff(mid, focused) > 0  # and is on its way
+    # Backed out: it shrinks back into the notes.
+    view.mode, view.hover, view.focus = "browse", Hit(1, None), None
+    ov.follow(view)
+    leaving = drawn(view)
+    assert diff(leaving, focused) < diff(leaving, notes)  # at first, still as focused
+    view.now = 4.0
+    ov.follow(view)
+    assert np.array_equal(drawn(view), notes) and view.focus_motion.last is None  # then the notes, as before
+
+
+def test_without_the_apps_springs_the_focus_is_drawn_focused_at_once():
+    ov = overlay()
+    focused = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None))
+    assert ov._growing(focused) is None
+
+
+def test_the_tone_knob_gives_a_little_past_its_end_and_springs_back():
+    from palmcards.render import OpsView
+
+    ov = overlay()
+    view = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None), now=0.0,
+                     ops=OpsView(kind="tone", tone=1.0, tone_over=0.5, dialing=True))
+    ov.follow(view)
+    past = ov.shown_tone(view)
+    assert 1.0 < past < 1.3  # on past the end, not as far as the hand
+    view.ops.tone_over = 5.0
+    ov.follow(view)
+    assert past < ov.shown_tone(view) < 1.3  # further, with rising resistance
+    view.ops.dialing, view.ops.tone_over, view.now = False, 0.0, 1.0  # let go: back to the end
+    ov.follow(view)
+    assert ov.shown_tone(view) > 1.0
+    view.now = 2.0
+    assert ov.shown_tone(view) == 1.0
+
+
+def test_the_stretch_line_shows_its_limits():
+    from palmcards.render import OpsView
+
+    ov = overlay()
+    ends = ((800.0, 300.0), (1200.0, 300.0))
+
+    def drawn(raw):
+        frame = np.full((720, 1280, 3), 128, np.uint8)
+        ov.draw(frame, ViewState(app="prepare", mode="focus", level="paragraph", focus=Hit(4, None),
+                                 ops=OpsView(kind="stretch", stretch=min(max(raw, 0.5), 2.0), stretch_raw=raw,
+                                             stretch_ends=ends)))
+        return frame
+
+    within, past = drawn(1.5), drawn(4.0)
+    near_end = lambda f: np.abs(f[298:303, 1150:1190].astype(int) - 128).sum()
+    assert 0 < near_end(past) < near_end(within)  # beyond the fullest: fainter toward the hands
+    short = drawn(0.25)  # closer than the shortest: ticks where the limit would end, out beyond the hands
+    tick = lambda f: np.abs(f[293:308, 595:606].astype(int) - 128).sum()  # the limit: twice as far out, at x 600
+    assert tick(short) > 0 and tick(within) == 0

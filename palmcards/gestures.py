@@ -499,6 +499,12 @@ class GestureState:
     ring_offset: float = 0.0  # how far past its step the knob is turned, in steps (display only)
     tone: float = 0.0  # -1 cold .. 1 warm
     stretch: float = 1.0  # length ratio
+    # Display only: while a hand drives the tone dial or the stretch
+    # (`dialing`), how far past its ends the hand has gone (tone_over, in tone
+    # units; stretch_raw, the ratio unclamped). The values above stay clamped.
+    dialing: bool = False
+    tone_over: float = 0.0
+    stretch_raw: float = 1.0
     closing: bool = False  # a pinch is coming or held: the dial or the pointed word is held (and shown so)
     stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
     drop_progress: float = 0.0  # 0..1 while backing out
@@ -541,6 +547,7 @@ class Grammar:
         self._ring = RingSelection(DEFAULT_RING)
         self._knob_fresh = True  # the next L starts the knob (step 0); later ones pick it up again
         self._tilt_filter = OneEuro(KNOB.min_cutoff, KNOB.beta, KNOB.d_cutoff)
+        self._tone_filter = OneEuro(KNOB.min_cutoff, KNOB.beta, KNOB.d_cutoff)  # the tone dial's tilt, like the knob's
         self._point_hist: deque[tuple[float, float, tuple[float, float]]] = deque()  # (t, thumb, point)
         self._point_held = False  # a pinch has the pointer: held at its rewound value
         self._dial_hist: deque[dict] = deque()  # focus: the dials' values per frame, for the rewind
@@ -733,6 +740,7 @@ class Grammar:
         s = self.state
         s.mode, s.op, s.scroll_rate = "focus", None, 0.0
         s.pointing, s.point, s.tone, s.stretch, s.stretch_ends, s.drop_progress = False, None, 0.0, 1.0, None, 0.0
+        s.dialing, s.tone_over, s.stretch_raw = False, 0.0, 1.0
         self._reset_ring()
         self._focus_armed = False
         self._commit_armed_t = None
@@ -752,6 +760,7 @@ class Grammar:
         events.append(ev)
         self.log(t, kind, level=s.level, op=s.op, value=ev.value)
         s.mode, s.op, s.pointing, s.stretch_ends, s.drop_progress = "browse", None, False, None, 0.0
+        s.dialing, s.tone_over, s.stretch_raw = False, 0.0, 1.0
         s.turning, s.palm_progress = False, 0.0
         s.closing = False
         self._focus_armed = False
@@ -1018,17 +1027,23 @@ class Grammar:
             if s.op == "ring":
                 self._turn_ring(t, p)
         elif s.level == "sentence":
+            s.dialing, s.tone_over = False, 0.0
             if not s.closing and self._holds_l(p, self._tilt0 is not None):
-                tilt = p.feat.tilt
+                if s.op != "tone" or self._tilt0 is None:  # (re)starting: don't blend in the hand from before
+                    self._tone_filter.reset()
+                tilt = float(self._tone_filter(np.array([p.feat.tilt]), t)[0])
                 if s.op != "tone":
                     s.op, self._tilt0 = "tone", tilt
                     self.log(t, "op", op="tone")
                 elif self._tilt0 is None:  # dial picked up again: continue from its value
                     self._tilt0 = tilt - s.tone * OPS.tone_range_deg
-                s.tone = _clamp((tilt - self._tilt0) / OPS.tone_range_deg, -1.0, 1.0)
+                raw = (tilt - self._tilt0) / OPS.tone_range_deg
+                s.tone = _clamp(raw, -1.0, 1.0)
+                s.dialing, s.tone_over = True, raw - s.tone
             else:
                 self._tilt0 = None
         elif s.level == "paragraph":
+            s.dialing = False
             started = self._d0 is not None
             if not s.closing and self._holds_l(p, started) and self._holds_l(q, started):
                 a, b = p.hand.point(INDEX_TIP), q.hand.point(INDEX_TIP)
@@ -1038,12 +1053,13 @@ class Grammar:
                     self.log(t, "op", op="stretch")
                 elif self._d0 is None:
                     self._d0 = d / s.stretch
-                s.stretch = _clamp(d / self._d0, OPS.stretch_min, OPS.stretch_max)
-                s.stretch_ends = (a, b)
+                s.stretch_raw = d / self._d0
+                s.stretch = _clamp(s.stretch_raw, OPS.stretch_min, OPS.stretch_max)
+                s.stretch_ends, s.dialing = (a, b), True
             elif not s.closing:
-                self._d0, s.stretch_ends = None, None
+                self._d0, s.stretch_ends, s.stretch_raw = None, None, s.stretch
             else:
-                self._d0 = None  # held while a hand closes; the line stays
+                self._d0, s.stretch_raw = None, s.stretch  # held while a hand closes; the line stays
 
 
 # --- rehearse: command zone and modes ------------------------------------------

@@ -117,7 +117,7 @@ from palmcards.preview import Previews
 from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
     meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
-    Hit, OpsView, PanelMotion, TextOverlay, ViewState,
+    FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
 from palmcards.review import Board
@@ -221,6 +221,7 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     ops.kind, ops.pointing, ops.tone, ops.stretch = gs.op, gs.pointing or gs.turning, gs.tone, gs.stretch
     ops.stretch_ends, ops.closing = gs.stretch_ends, gs.closing  # ops.picked: the ring's knob (follow_ring)
     ops.offset = gs.ring_offset
+    ops.dialing, ops.tone_over, ops.stretch_raw = gs.dialing, gs.tone_over, gs.stretch_raw
     view.lift = gs.primary.lift_progress(grammar.h) if gs.mode == "focus" and gs.primary is not None else 0.0
 
 
@@ -1244,7 +1245,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         modes.enter(start_mode, 0.0)
     grammar = modes.grammar
     grammar.defer_edit_commit = True
-    view = ViewState(panel_motion=PanelMotion())
+    view = ViewState(panel_motion=PanelMotion(), focus_motion=FocusMotion())
     snap_panel = False  # the panel's scroll moved by a key: shown at once, not sprung
     show_debug = False
     note_until = None
@@ -1380,7 +1381,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if note_until is not None and start > note_until:
             view.note, note_until = "", None
 
-        overlay.follow_panel_scroll(view, snap=snap_panel)
+        overlay.follow(view, snap=snap_panel)
         snap_panel = False
         overlay.draw(frame, view)
         if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:

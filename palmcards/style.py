@@ -204,6 +204,12 @@ class Label:
     second_scale: float = 0.7
     third_scale: float = 0.6
     max_rows: tuple[int, int, int] = (1, 2, 2)
+    # Letter spacing, in em: small all-caps text reads better a little apart
+    # (Kat's label is visibly tracked); more on the larger first line. The
+    # hint line has none: Review's short hint (39 characters) fills a row of
+    # the text column at 1080p, and even 0.01 em would push it onto two.
+    tracking: tuple[float, float, float] = (0.10, 0.06, 0.0)
+    small_tracking: float = 0.04  # the pills and the command zone's hints
     min_top: int = 4  # px from the frame's top edge
     pill_scale: float = 0.6  # the pills at the bottom left (CLOUD LLM, H: KEYS) and the keys help
 
@@ -269,6 +275,7 @@ class Gauge:
     knob_outline: int = 2
     closing_knob_outline: int = 3  # while the thumb closes into a pinch: the value is held
     label_scale: float = 0.55  # x the UI size: the ends' labels, cold above, warm below
+    rubber_max: float = 0.3  # past an end the knob goes at most this far on, x the half track
     labels: tuple[str, str] = ("formal", "conversational")
 
 
@@ -287,6 +294,17 @@ class Motion:
     ring_damping: float = 1.0
     ring_gain: float = 0.5
     ring_flat: float = 0.1  # steps
+    ring_open: float = 0.18  # the ring opening out of the word (from 0.35 of the way out, faded in)
+    # The focus grows out of its unit's place in the notes and shrinks back
+    # into it on the way out, a little faster (the notes crossfading under it).
+    focus_in: float = 0.22
+    focus_out: float = 0.16
+    # The tone knob springs back to its value when the hand stops driving it
+    # (a pinch's rewind, the L dropped past an end); past an end it follows the
+    # hand with rising resistance (motion.rubberband, this constant; how far:
+    # GAUGE.rubber_max).
+    dial: float = 0.10
+    rubber: float = 0.55
     # The focus panel's scroll (Rehearse following the voice, the pages a tall
     # panel turns by itself, the section handed on).
     scroll: float = 0.30
@@ -343,6 +361,10 @@ class Hands:
     stretch_stroke: int = 2  # line between the two index tips, drawn under the text
     closing_stretch_stroke: int = 5  # ... while a thumb closes into a pinch: the length is held
     stretch_alpha: float = 0.45
+    # Past the length's limits: the part of the line beyond the fullest this
+    # faint; past the shortest, ticks this long where the limit would end.
+    stretch_over_alpha: float = 0.15
+    stretch_tick: int = 10  # px
     # The hand box's corners while a hand is up: small and faint.
     area_arm: float = 0.06  # x the box's width
     area_min_arm: int = 8  # px

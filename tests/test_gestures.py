@@ -430,7 +430,7 @@ def test_an_open_palm_on_a_focused_sentence_changes_nothing():
     assert g.state.op == "tone" and g.state.tone > 0.4
     tone = g.state.tone
     _, t = run(g, hold(open_palm, 0.3), t)
-    assert g.state.op == "tone" and g.state.tone == tone  # the tone preview stays
+    assert g.state.op == "tone" and g.state.tone == pytest.approx(tone)  # the tone preview stays
     assert [e["op"] for e in g.log.entries if e["kind"] == "op"] == ["tone"]
     events, _ = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
     assert [(e.kind, e.op) for e in events] == [("commit", "tone")]

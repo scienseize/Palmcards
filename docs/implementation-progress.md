@@ -1792,3 +1792,42 @@ Risk: the 1:1 ring shows what wobble the One Euro filter lets through; check on 
   (tune ring_gain / ring_flat, not the knob's hysteresis).
 Pending: the user's feel-check on the camera; items 5-12 of the audit.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: motion audit items 5-8 (focus grows and shrinks, ring opens, dials, label tracking)
+Status: implemented; automated checks passed; not yet seen on the camera
+Changes:
+  palmcards/render.py: FocusMotion / FocusFrame / Grow; TextOverlay.follow (panel scroll, focus,
+    dials, once a frame), follow_focus, _home (the unit's rows or the word in the notes), _put (a
+    patch scaled and faded by the growth; context faded in place), _band_faded (the notes under it,
+    alpha squared: gone sooner, less showing twice). A sentence or paragraph: only its own rows grow
+    from their place (the panel's context rows fade in where they are: scaling the whole panel
+    showed the context twice); a word: the zoomed notes grow about the word, the inline word with
+    them. The last focused frame is kept (FocusFrame) and shrinks back into the unit's place on the
+    way out, the ring collapsing into the word. Ring, meaning, gauge, playbar and take chips wait
+    until it has grown (GROWN = 0.99: settling within 0.001 took 0.33 s, holding the ring back).
+    OpsView.opened: the ring opens out of the word (0.35 of the way out, faded in). follow_dials /
+    shown_tone: the gauge knob 1:1 while dialing, rubberband past an end, sprung back after.
+    _draw_stretch: past stretch_max the line beyond the limit fainter; under stretch_min, ticks.
+    _text / _text_w: letter spacing glyph by glyph (monospace); _ink, _chip, _wrap take tracking;
+    label rows wrap with it.
+  palmcards/gestures.py: the tone tilt One Euro smoothed (KNOB's settings; reset when the dial
+    starts or is picked up); GestureState.dialing, tone_over, stretch_raw (display only).
+  palmcards/style.py: MOTION ring_open 0.18, focus_in 0.22, focus_out 0.16, dial 0.10, rubber 0.55;
+    GAUGE.rubber_max 0.3; HANDS.stretch_over_alpha 0.15, stretch_tick 10; LABEL.tracking
+    (0.10, 0.06, 0.0), small_tracking 0.04 (pills, zone hints). The hint line has none: Review's
+    39-character short hint fills a row at 1080p (38.6 columns at 0.02 em).
+  main.py: ViewState(focus_motion=FocusMotion()); overlay.follow(view, snap); sync_view copies
+    dialing, tone_over, stretch_raw.
+  tests/test_gestures.py: the tone preview staying through an open palm compared with approx
+    (the filter settling moved it by 1e-16).
+Tests: pytest (full) -> 554 passed; python -m palmcards.replay -> all ok. New: ring opens out of
+  the word; focus grows out of its sentence and shrinks back; no growth without the app's spring;
+  tone knob past its end and back; stretch limits.
+Visual (headless strips, 30 fps): the sentence grows from its place in about 0.2 s, the context
+  crossfading; the word focus zooms about the word and the ring opens out of it; backing out
+  shrinks both back into the notes.
+Pending: the user's feel-check on the camera; items 9-12 (reduced motion, browse rubber band,
+  sound cues, leading).
+```
