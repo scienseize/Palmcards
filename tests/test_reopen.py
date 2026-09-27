@@ -10,7 +10,7 @@ import pytest
 
 import main
 from palmcards.notes import notes_from_bytes, parse_text
-from palmcards.playback import sentence_clip
+from palmcards.playback import sentence_clip, span_clip
 from palmcards.review import Board
 from palmcards.revisions import index_map, to_snapshot
 from palmcards.session import Session, write_wav
@@ -51,6 +51,42 @@ def test_a_sentence_clip_is_its_words_padded(tmp_path):
     clip, rate = sentence_clip(session, take, 0)
     assert rate == 16000 and len(clip) == int(1.5 * 16000)  # 1 s of words, 0.25 s each side
     assert sentence_clip(session, take, 1) is None  # not said
+
+
+def test_a_paragraph_clip_runs_from_its_first_word_to_its_last(tmp_path):
+    (tmp_path / "n.md").write_text(TEXT)
+    session = Session.create(tmp_path / "n.md", root=tmp_path / "s")
+    audio = np.linspace(-0.5, 0.5, 16000 * 6).astype(np.float32)
+    take = session.add_take(audio, 16000, 10.0, datetime.now(), [(0.0, 0)])
+    take.alignment = {"sentences": [{"start": 11.0, "end": 12.0}, {"start": 12.5, "end": 14.0},
+                                    {"start": None, "end": None}]}
+    clip, _ = span_clip(session, take, [0, 1, 2])
+    assert len(clip) == int(3.5 * 16000)  # 11.0 to 14.0, and 0.25 s each side
+    assert span_clip(session, take, [2]) is None
+
+
+def test_a_focused_paragraph_plays_from_the_take_it_shows(tmp_path, monkeypatch):
+    from palmcards.gestures import GestureLog
+    from tests.test_llm import FakeSupervisor
+
+    monkeypatch.setattr(main, "Supervisor", FakeSupervisor)
+    (tmp_path / "n.md").write_text(TEXT)
+    session = Session.create(tmp_path / "n.md", root=tmp_path / "s")
+    audio = np.full(16000 * 6, 0.1, np.float32)
+    take = session.add_take(audio, 16000, 10.0, datetime.now(), [(0.0, 0)])
+    aligned = {"sentences": [{"sentence": 0, "status": "spoken", "start": 11.0, "end": 12.0, "words": [0, 1, 2]},
+                             {"sentence": 1, "status": "spoken", "start": 12.5, "end": 14.0, "words": [3, 4, 5]},
+                             {"sentence": 2, "status": "skipped", "start": None, "end": None, "words": [None]}],
+               "fillers": [], "restarts": [], "extras": [], "unsure": []}
+    session.set_result(take.number, take.transcript_name, aligned)
+    FakePlayer.played = []
+    takes = main.Takes(session.current_notes(), session, GestureLog(), main.Devices(player=FakePlayer), follow=False)
+    takes._fill_board()
+    assert takes.paragraph(1) == [0, 1] and takes.paragraph(2) == [2]
+    assert takes.play_paragraph([0, 1]) == "PLAYING TAKE 1, PARAGRAPH"
+    assert FakePlayer.played == [(int(3.5 * 16000), 16000)]
+    assert takes.play_paragraph([2]) == "NO TAKE TO PLAY"
+    takes.close()
 
 
 class FakePlayer:

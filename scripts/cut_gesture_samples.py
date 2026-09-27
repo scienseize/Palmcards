@@ -18,6 +18,12 @@ the log) have no ring steps in their log; their `expected` takes the steps
 from the replay instead, so the sample still pins down how the knob reads
 those turns.
 
+A recording made before a behaviour existed shows the old result in its log
+(one finger in Review browsed words until 2026-09-27). Such a segment is
+named in FROM_REPLAY with the reason: its grammar entries (focus, back,
+commit, op, palm_hold) are taken from the replay and printed, to be checked
+by eye against the log; its mode and zone entries stay the live ones.
+
 Before writing, each sample is replayed through the current gesture code.
 It must reproduce the live result, or, for a known issue, must still show
 the issue (so a stale note can't hide a fix).
@@ -65,7 +71,20 @@ SEGMENTS = [
      "After a pinch the hand turns over (tilt ~145 deg) and rests closed for about a second. Nothing happens.", None),
     ("curling-flat-hand-is-not-a-take", "20260925-024808", (213.7, 229.7), "prepare",
      "Flat hand browsing paragraphs curls into a fist for 2.5 s, then folds to focus and stretches; no take.", None),
+    ("review-one-finger-sentence", "20260926-193557", (293.2, 298.6), "review",
+     "In Review one finger browses sentences: pinching it focuses the sentence (not a word), dropping the hand "
+     "backs out.", None),
+    ("review-paragraph-play", "20260927-162724", (72.5, 86.5), "review",
+     "In Review a flat hand folds to focus a paragraph; an open palm held on it plays the paragraph "
+     "(palm_hold), once; dropping the hand backs out.", None),
 ]
+
+# Segments whose grammar entries come from the replay (see the docstring): name -> why.
+FROM_REPLAY = {
+    "review-one-finger-sentence": "recorded when one finger browsed words in Review: the log has focus word at "
+                                  "295.23 and back word at 298.07; the replay has the sentence at the same times",
+}
+GRAMMAR_KINDS = ("focus", "back", "commit", "op", "palm_hold")
 
 
 def main() -> int:
@@ -100,7 +119,13 @@ def main() -> int:
             **({"inputs": inputs} if inputs else {}),
             "frames": frames,
         }
-        if not any(e["kind"] == "ring_nodes" for e in live):  # before the knob: its steps from the replay
+        if name in FROM_REPLAY:
+            kept = [e for e in sample["expected"] if e["kind"] not in GRAMMAR_KINDS]
+            replayed = [e for e in replay(sample) if e["kind"] in GRAMMAR_KINDS]
+            sample["expected"] = sorted(kept + replayed, key=lambda e: e["t"])
+            sample["description"] += f" Expected grammar entries from the replay: {FROM_REPLAY[name]}."
+            print(f"      {name}: from the replay {replayed}")
+        elif not any(e["kind"] == "ring_nodes" for e in live):  # before the knob: its steps from the replay
             steps = [e for e in replay(sample) if e.get("op") == "ring_step"]
             sample["expected"] = sorted(sample["expected"] + steps, key=lambda e: e["t"])
         problems = differences(sample["expected"], replay(sample))

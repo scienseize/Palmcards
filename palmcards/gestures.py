@@ -15,6 +15,11 @@ The grammar (Kat's "gestural editing/writing"):
                             tone dial (sentence); two L hands = length stretch (paragraph)
   pinch + lift commits      back to Browse at the same level
   drop the hand backs out   out of frame or below the bottom band for 1 s
+  held open palm            on a focused sentence: hear it (Prepare) or play it (Review);
+                            on a focused paragraph in Review: play it
+
+Review has no word level: one finger browses sentences there (and a pinch
+focuses the sentence), as two fingers do.
 
 The cursor is relative: a hand box on the right of the frame maps onto the
 text box on the left; its top and bottom bands scroll.
@@ -72,7 +77,9 @@ HAND_CONNECTIONS = [
 # Pose classes.
 ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", "PINCH", "FIST", "NONE"
 LEVEL_OF_SHAPE = {ONE: "word", TWO: "sentence", FLAT: "paragraph"}
-SHAPE_OF_LEVEL = {v: k for k, v in LEVEL_OF_SHAPE.items()}
+# Review has nothing to do with a word: one finger browses sentences there, so
+# no hand shape leads to a dead end.
+REVIEW_LEVEL_OF_SHAPE = {ONE: "sentence", TWO: "sentence", FLAT: "paragraph"}
 FOLD_TIPS = {TWO: (INDEX_TIP, MIDDLE_TIP), FLAT: (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)}
 # The options ring before alternatives arrive: just the original word.
 DEFAULT_RING = ("original",)
@@ -445,7 +452,8 @@ class GestureLog:
 @dataclass
 class GestureEvent:
     # Grammar: "focus" | "commit" | "back" | "rewind" (a pinch took Review's take
-    # pointer back to before the curl). Modes: "count_in" | "drill" (a
+    # pointer back to before the curl) | "palm_hold" (an open palm held on the
+    # focused unit: hear it, or play it). Modes: "count_in" | "drill" (a
     # count-in for one sentence) | "count_in_cancel" | "take_start" |
     # "next_section" | "previous_section" | "take_stop" | "to_prepare".
     kind: str
@@ -499,6 +507,11 @@ class Grammar:
         self.operations = True  # Prepare's ring, tone and stretch; off in Review
         self.defer_edit_commit = False  # the app accepts only a complete, already displayed preview
         self.take_dial = False  # Review's take dial on a focused sentence
+        self.shape_levels = LEVEL_OF_SHAPE  # hand shape -> level (Review: REVIEW_LEVEL_OF_SHAPE)
+        self.palm_levels: tuple[str, ...] = ("sentence",)  # levels a held open palm acts on
+        self._browse_shape: str | None = None  # the shape that set the browse level
+        self._palm_since: float | None = None  # focus: open palm held since
+        self._palm_done = False  # focus: this hold has acted
         self._primary_key: str | None = None
         self._lost_since: float | None = None  # browse: primary hand missing
         self._gone_since: float | None = None  # focus: hand missing or dropped
@@ -553,6 +566,8 @@ class Grammar:
         self._focus_armed = False
         self._commit_armed_t = None
         self._tilt0 = self._d0 = self._p0 = None
+        self._browse_shape = None
+        self._palm_since, self._palm_done = None, False
         self._reset_ring()
 
     def update(self, hands: list[Hand], t: float) -> list[GestureEvent]:
@@ -623,8 +638,9 @@ class Grammar:
             return
         self._lost_since = None
 
-        if p.stable in LEVEL_OF_SHAPE:
-            level = LEVEL_OF_SHAPE[p.stable]
+        if p.stable in self.shape_levels:
+            level = self.shape_levels[p.stable]
+            self._browse_shape = p.stable
             if s.mode != "browse" or s.level != level:
                 s.mode, s.level = "browse", level
                 self.log(t, "browse", level=level)
@@ -632,25 +648,28 @@ class Grammar:
         if s.mode != "browse":
             return
 
-        # The cursor only follows the hand while it holds the level's shape,
+        # The cursor only follows the hand while it holds a shape of the level,
         # so closing the hand to focus doesn't drag the highlight along.
-        if p.raw == SHAPE_OF_LEVEL[s.level]:
+        if self.shape_levels.get(p.raw) == s.level:
             s.cursor = self.cursor.update(p.hand.point(INDEX_TIP), t)
             s.scroll_rate = self.cursor.scroll_rate
         else:
             s.scroll_rate = 0.0
-        if s.level == "word":
+        # One finger closes by pinching (a word in Prepare, a sentence in
+        # Review); two fingers and a flat hand fold onto the thumb.
+        pointing = self._browse_shape == ONE
+        if pointing:
             self._hold_word(t, p)
         else:
             s.closing = False
 
         if not self._focus_armed:
             return
-        if (s.level == "word" and p.stable == PINCH) or (s.level != "word" and "fold" in primary_events):
+        if (pointing and p.stable == PINCH) or (not pointing and "fold" in primary_events):
             self._enter_focus(t, events)
 
     def _hold_word(self, t: float, p: HandTrack) -> None:
-        """Browse by word: a pinch drags the index tip as it curls to meet the
+        """Browse with one finger (by word; by sentence in Review): a pinch drags the index tip as it curls to meet the
         thumb (in recorded sessions 4 of 7 pinches landed on another word, mostly
         the line below). When the pinch registers, the cursor goes back to where
         it was just before the thumb started moving in, and stays there (the
@@ -685,6 +704,7 @@ class Grammar:
         self._gone_since = None
         self._tilt0 = self._d0 = self._p0 = None
         self._point_held = False
+        self._palm_since, self._palm_done = None, False
         self._dial_hist.clear()
         self._point_hist.clear()
         s.closing = False
@@ -737,11 +757,27 @@ class Grammar:
                     return
 
         self._guard_pinch(t)
+        self._hold_palm(t, p, events)
         if self.operations:
             self._operate(t, events)
         elif self.take_dial and s.level == "sentence":
             self._point_takes(t, events)
         self._remember(t)
+
+    def _hold_palm(self, t: float, p: HandTrack, events: list[GestureEvent]) -> None:
+        """An open palm held OPS.play_hold_s on the focused unit, at a level in
+        palm_levels: a "palm_hold" event (the app hears or plays the unit).
+        Once per hold: letting go or a new focus arms it again."""
+        s = self.state
+        if p.stable != OPEN or s.level not in self.palm_levels:
+            self._palm_since, self._palm_done = None, False
+            return
+        if self._palm_since is None:
+            self._palm_since = t
+        if not self._palm_done and t - self._palm_since >= OPS.play_hold_s:
+            self._palm_done = True
+            events.append(GestureEvent("palm_hold", t, s.level))
+            self.log(t, "palm_hold", level=s.level)
 
     # -- dials and pinches: curling the index to pinch must not turn a dial --
 
@@ -1197,6 +1233,8 @@ class ModeMachine:
         self.grammar.reset()
         self.grammar.operations = mode == "prepare"
         self.grammar.take_dial = mode == "review"
+        self.grammar.shape_levels = REVIEW_LEVEL_OF_SHAPE if mode == "review" else LEVEL_OF_SHAPE
+        self.grammar.palm_levels = ("sentence", "paragraph") if mode == "review" else ("sentence",)
         self.zone.reset()
         self._fist_since, self.start_progress = None, 0.0
         self.log(t, "mode", mode=mode)

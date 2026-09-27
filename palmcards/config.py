@@ -134,6 +134,9 @@ class Ops:
     closing_leave: float = 1.0
     rewind_max_s: float = 0.5
     rewind_plateau: float = 0.1
+    # An open palm held this long on a focused unit: hear the sentence
+    # (Prepare), play the sentence or paragraph from the take it shows (Review).
+    play_hold_s: float = 0.6
 
 
 @dataclass(frozen=True)

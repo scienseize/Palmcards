@@ -47,28 +47,41 @@ def test_hear_it_reports_failure():
     assert not log.entries
 
 
-@pytest.mark.parametrize("app", ["prepare", "review"])
-def test_sentence_palm_requires_selection_and_a_hold_and_rearms(app):
-    palm = main.SentencePalm()
-    view = focused(OpsView(), level="sentence", hit=Hit(0, None))
-    view.app = app
-    view.mode = "browse"
-    assert not palm.update(view, True, 0)
-    assert not palm.update(view, True, 2)
-    view.mode = "focus"
-    assert not palm.update(view, True, 3)
-    assert not palm.update(view, True, 3.3)
-    assert palm.update(view, True, 3.7)
-    assert not palm.update(view, True, 5)
-    assert not palm.update(view, False, 6)
-    assert not palm.update(view, True, 7)
-    assert palm.update(view, True, 7.7)
-    view.focus = Hit(1, None)
-    assert not palm.update(view, True, 8)
-    assert palm.update(view, True, 8.7)
-    view.level = "word"
-    assert not palm.update(view, True, 9)
-    assert not palm.update(view, True, 10)
+def test_a_held_palm_hears_the_focused_sentence_in_prepare_and_keeps_the_focus():
+    ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
+    speaker, log = FakeSpeaker(), GestureLog()
+    view = focused(OpsView(), level="sentence", hit=Hit(1, None))
+    until = main.apply_event(GestureEvent("palm_hold", 1.0, "sentence"), view, ov, log, speaker)
+    assert view.note == "SPEAKING SENTENCE" and until is not None
+    assert speaker.said[0][0][0] == "We"
+    assert view.focus == Hit(1, None)  # still focused: hold again to hear it again
+
+
+class FakeTakes:
+    def __init__(self):
+        self.played = []
+
+    def play_sentence(self, sentence):
+        self.played.append(("sentence", sentence))
+        return "PLAYING SENTENCE"
+
+    def play_paragraph(self, sentences):
+        self.played.append(("paragraph", list(sentences)))
+        return "PLAYING PARAGRAPH"
+
+
+def test_a_held_palm_plays_the_focused_sentence_or_paragraph_in_review():
+    notes = parse_text("One two three. Four five six.\n\nSeven eight nine.")
+    ov = TextOverlay(notes.sentences, (1280, 720))
+    takes, log = FakeTakes(), GestureLog()
+    view = focused(OpsView(), level="sentence", hit=Hit(1, None))
+    view.app = "review"
+    assert main.play_focus(view, ov, log, None, takes, 1.0) == "PLAYING SENTENCE"
+    view.level = "paragraph"
+    assert main.play_focus(view, ov, log, None, takes, 2.0) == "PLAYING PARAGRAPH"
+    view.focus = Hit(2, None)
+    main.play_focus(view, ov, log, None, takes, 3.0)
+    assert takes.played == [("sentence", 1), ("paragraph", [0, 1]), ("paragraph", [2])]
 
 
 def test_keeping_the_word_is_no_change():

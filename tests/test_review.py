@@ -138,7 +138,7 @@ def test_review_points_at_take_chips_and_says_when_there_is_nothing_to_choose(tm
 
     takes.sync_review(g, view, ov, 0.0)
     assert view.takes == ("TAKE 1", "TAKE 2", "TAKE 3 (DRILL)") and view.take_shown == 2  # the latest said it
-    assert "L-HAND, THEN POINT: TAKES" in takes.status("review", view)
+    assert takes.status("review", view) == "TAKE 3 (DRILL)  3 OF 3" and view.playable  # the hints are render's
     assert len(view.detail) == 3 and view.detail[2].startswith("▸ ")
     g.state.op, g.state.point = "take", (0.0, 0.0)  # an L: pointing starts on the take shown
     takes.sync_review(g, view, ov, 0.1)
@@ -157,7 +157,38 @@ def test_review_points_at_take_chips_and_says_when_there_is_nothing_to_choose(tm
     takes.board = b2
     takes.sync_review(g, view, ov, 0.4)
     assert view.takes == () and takes.status("review", view).startswith("NO TAKE SAID THIS SENTENCE")
+    assert not view.playable
 
     view.focus, view.mode = None, "browse"  # browsing: the take table
     takes.sync_review(g, view, ov, 0.5)
     assert view.summary == b2.take_table() and view.summary[0].split() == ["TAKE", "1"]
+
+
+def test_a_focused_paragraph_sums_up_the_newest_full_take_that_said_it():
+    b = Board(parse_text(TEXT))
+    whole = [0, 1, 2]  # TEXT is one paragraph
+    assert b.paragraph_shown(whole) is None and b.paragraph_detail(whole) == ("No take analysed yet.",)
+    b.add(1, analysed("Good evening everyone. <0.1> Thank you for being here. um <0.4> We are so glad you came "
+                      "tonight."))
+    b.add(2, analysed("Good evening everyone. <0.5> Thank you for being here."))
+    b.add(3, analysed("Thank you for being here."), drill=1)
+    assert b.paragraph_shown(whole) == 2  # the drill has one sentence: not the paragraph's take
+    said, took, pace = b.paragraph_detail(whole)
+    assert said == "Take 2: 2 of 3 sentences said"
+    assert took.startswith("0:0") and took.endswith(" from first word to last")
+    assert pace.split(", ")[0].endswith(" wpm") and pace.endswith(", no fillers")
+    b.picked[0] = 1  # a sentence's pick doesn't move the paragraph's take
+    assert b.paragraph_shown(whole) == 2
+    assert b.paragraph_detail([0])[0] == "Take 2: 1 of 1 sentence said"  # a one-sentence paragraph
+    assert b.paragraph_detail([0])[2] == "pace -, no fillers"  # 3 words: too few for a pace
+    b.add(4, analysed("Good evening everyone. um <0.1> Thank you for being here. <0.4> We are so glad you came "
+                      "tonight."))
+    assert b.paragraph_detail(whole)[0] == "Take 4: 3 of 3 sentences said"
+    assert b.paragraph_detail(whole)[2].endswith(", 1 filler")
+
+
+def test_a_paragraph_nobody_said():
+    b = Board(parse_text(TEXT))
+    b.add(1, analysed("Good evening everyone."))
+    assert b.paragraph_shown([1, 2]) is None
+    assert b.paragraph_detail([1, 2]) == ("Not said in any take yet.",)

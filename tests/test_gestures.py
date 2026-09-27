@@ -684,14 +684,79 @@ def sentence_focus(m, t):
     return t
 
 
+def paragraph_focus(m, t):
+    _, t = run(m, hold(flat, 0.3), t)
+    events, t = run(m, lerp_frames(hand, FLAT_TIPS, FLAT_FOLDED, 6), t)
+    assert kinds(events) == ["focus"] and m.state.level == "paragraph"
+    return t
+
+
 def test_no_take_dial_in_prepare_or_at_other_levels():
     m = ModeMachine((W, H))
     t = sentence_focus(m, 0.0)
     run(m, hold(l_hand, 0.3), t)
     assert m.state.op == "tone"
     m, t = reviewing()
-    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(l_hand, 0.5), t)
+    t = paragraph_focus(m, t)
+    _, t = run(m, hold(l_hand, 0.5), t)
     assert m.state.mode == "focus" and m.state.op is None
+
+
+def test_one_finger_in_review_browses_sentences_and_a_pinch_focuses_one():
+    m, t = reviewing()
+    _, t = run(m, hold(one, 0.4), t)
+    assert m.state.mode == "browse" and m.state.level == "sentence"
+    before = m.state.cursor
+    events, t = run(m, curl_into_pinch(), t)
+    assert kinds(events) == ["focus"] and m.state.level == "sentence"
+    assert m.state.cursor == before  # the curl doesn't drag the highlight to the next line
+    # Two fingers are the same level: no new browse entry, and a fold still focuses.
+    m, t = reviewing()
+    _, t = run(m, hold(one, 0.3) + hold(two, 0.3), t)
+    assert [e["level"] for e in m.log.entries if e["kind"] == "browse"] == ["sentence"]
+    events, t = run(m, lerp_frames(hand, TWO_TIPS, TWO_FOLDED, 6), t)
+    assert kinds(events) == ["focus"] and m.state.level == "sentence"
+
+
+def test_one_finger_in_prepare_still_browses_words():
+    m, t = reviewing()
+    _, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    assert m.mode == "prepare"
+    _, t = run(m, [None] * 10 + hold(one, 0.4), t)
+    assert m.state.level == "word"
+    events, t = run(m, hold(pinch, 0.3), t)
+    assert kinds(events) == ["focus"] and m.state.level == "word"
+
+
+def test_a_held_open_palm_on_a_focused_unit_plays_it_once_per_hold():
+    m, t = reviewing()
+    t = sentence_focus(m, t)
+    events, t = run(m, hold(open_palm, OPS.play_hold_s - 0.2), t)
+    assert "palm_hold" not in kinds(events)  # not held long enough yet
+    events, t = run(m, hold(open_palm, 1.5), t)
+    assert [(e.kind, e.level) for e in events] == [("palm_hold", "sentence")]  # once, however long it's held
+    events, t = run(m, hold(two, 0.3) + hold(open_palm, 1.0), t)
+    assert [(e.kind, e.level) for e in events] == [("palm_hold", "sentence")]  # let go and hold again: again
+    _, t = run(m, [None] * 40, t)  # back out
+    t = paragraph_focus(m, t)
+    events, t = run(m, hold(open_palm, 1.0), t)
+    assert [(e.kind, e.level) for e in events] == [("palm_hold", "paragraph")]
+    assert [e["level"] for e in m.log.entries if e["kind"] == "palm_hold"] == ["sentence", "sentence", "paragraph"]
+
+
+def test_in_prepare_a_held_palm_hears_a_sentence_but_not_a_paragraph_or_word():
+    m = ModeMachine((W, H))
+    t = sentence_focus(m, 0.0)
+    events, t = run(m, hold(open_palm, 1.0), t)
+    assert [(e.kind, e.level) for e in events] == [("palm_hold", "sentence")]
+    _, t = run(m, [None] * 40, t)
+    t = paragraph_focus(m, t)
+    events, t = run(m, hold(open_palm, 1.0), t)
+    assert "palm_hold" not in kinds(events)
+    _, t = run(m, [None] * 40 + hold(one, 0.3) + hold(pinch, 0.3), t)
+    assert m.state.level == "word" and m.state.mode == "focus"
+    events, t = run(m, hold(open_palm, 1.0), t)  # the options ring, not a play
+    assert "palm_hold" not in kinds(events) and m.state.op == "ring"
 
 
 def test_pinch_and_lift_on_a_focused_sentence_in_review_drills_it():
@@ -709,11 +774,20 @@ def test_pinch_and_lift_on_a_focused_sentence_in_review_drills_it():
     assert kinds(events) == ["take_stop"] and m.mode == "review" and not m.drill
 
 
-def test_word_commit_in_review_is_not_a_drill():
+def test_paragraph_commit_in_review_is_not_a_drill():
     m, t = reviewing()
-    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.2), t)
+    t = paragraph_focus(m, t)
+    _, t = run(m, hold(flat, 0.2), t)
     events, _ = run(m, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
     assert kinds(events) == ["commit"] and m.mode == "review"
+
+
+def test_one_finger_sentence_in_review_drills_with_pinch_and_lift():
+    m, t = reviewing()
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.2), t)
+    assert m.state.mode == "focus" and m.state.level == "sentence"
+    events, _ = run(m, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
+    assert kinds(events) == ["commit", "drill"] and m.mode == "count_in"
 
 
 # --- the keyboard fallback -------------------------------------------------------

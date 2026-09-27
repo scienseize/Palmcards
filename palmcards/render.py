@@ -98,12 +98,41 @@ FOCUS_HINTS_LLM = {
     "paragraph": "TWO L-HANDS: LENGTH  /  DROP HAND: BACK",
 }
 NEEDS_LLM = "(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)"
+REVIEW_SEP = " · "  # between Review's gesture hints (narrower than HINT_SEP: they share a row)
+FIST_HINT = ("RAISE A FIST: NEW TAKE", "FIST: NEW TAKE")
+
+
+def review_hint(state: "ViewState") -> tuple[str, str]:
+    """Review's gesture hints for the label: what acts now, (long, short).
+    The short form is used when the long one doesn't fit a row of the text
+    column (TextOverlay.label_rows)."""
+    if state.mode == "browse" and state.level == "sentence":
+        return "FOLD: DETAILS · FIST: NEW TAKE", "FOLD: DETAILS · FIST: NEW TAKE"
+    if state.mode == "browse" and state.level == "paragraph":
+        return "FOLD: SUMMARY · FIST: NEW TAKE", "FOLD: SUMMARY · FIST: NEW TAKE"
+    if state.mode == "focus" and state.level == "paragraph":
+        if not state.playable:
+            return "DROP HAND: BACK", "DROP: BACK"
+        return "OPEN PALM: PLAY PARAGRAPH · DROP HAND: BACK", "PALM: PLAY PARAGRAPH · DROP: BACK"
+    if state.mode == "focus":
+        long, short = [], []
+        if state.playable:
+            long.append("OPEN PALM: PLAY")
+            short.append("PALM: PLAY")
+        if len(state.takes) > 1:
+            n, m = state.take_shown + 1, len(state.takes)
+            long.append(f"L, POINT: TAKE {n} OF {m}")
+            short.append(f"L: {n}/{m}")
+        long.append("PINCH + LIFT: DRILL")
+        short.append("PINCH+LIFT: DRILL")
+        return REVIEW_SEP.join(long), REVIEW_SEP.join(short)
+    return FIST_HINT
 KEYS_HELP = (
     "KEYS (WHEN GESTURES WON'T DO)",
     "T  START A TAKE      X  STOP / CANCEL",
     "N B  NEXT / PREVIOUS SECTION     U  UNDO EDIT",
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
-    "A  PLAY SENTENCE     P  BACK TO PREPARE",
+    "A  HEAR / PLAY       P  BACK TO PREPARE",
     "E  CALIBRATE EYES AT THE NEXT TAKE",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
 )
@@ -215,6 +244,7 @@ class ViewState:
     # point at (an L, then the fingertip), and which one it shows.
     takes: tuple[str, ...] = ()
     take_shown: int = 0
+    playable: bool = False  # Review: the focused sentence or paragraph has a take to play
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
 
@@ -530,6 +560,8 @@ class TextOverlay:
             second = "PINCH + LIFT: USE THE PROPOSAL  /  DROP HAND: DISCARD IT"
         elif state.mode == "focus" and state.app == "prepare":  # nothing started yet: say what the next shape does
             second = (FOCUS_HINTS_LLM if state.llm else FOCUS_HINTS).get(state.level, "")
+        elif state.app == "review":  # what the focus shows, then the gestures that act
+            second = f"{state.status}{HINT_SEP}{review_hint(state)[0]}"
         elif state.mode == "focus":
             second = state.status or "DROP HAND: BACK"
         elif state.app == "prepare" and state.mode == "browse" and state.level == "sentence":
@@ -1017,6 +1049,20 @@ class TextOverlay:
         width = self.col_x1 - self.x - self.pad
         rows = [(i, row) for i, text in enumerate((first, operation)) if text
                 for row in self._wrap(text, self._label_size(i), width, LABEL.max_rows[i])]
+        if state.app == "review" and hint == (forms := review_hint(state))[0]:
+            # Review's hints: the short form when the long one needs two rows;
+            # if even that is too wide, its hints packed whole onto the rows.
+            size = self._label_size(2)
+            if len(self._wrap(hint, size, width)) > 1:
+                hint = forms[1]
+            packed: list[str] = []
+            for part in hint.split(REVIEW_SEP):
+                joined = f"{packed[-1]}{REVIEW_SEP}{part}" if packed else part
+                if packed and len(self._wrap(joined, size, width)) == 1:
+                    packed[-1] = joined
+                else:
+                    packed += self._wrap(part, size, width)
+            return rows + [(2, row) for row in packed[:LABEL.max_rows[2]]]
         if hint:  # too long for a row: a row per hint rather than breaking one in two
             hint_rows = self._wrap(hint, self._label_size(2), width)
             if len(hint_rows) > 1:

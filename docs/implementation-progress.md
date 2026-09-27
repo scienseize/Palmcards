@@ -1674,3 +1674,42 @@ Visual:
 Real-provider checks: not performed; no real service called and no credentials accessed.
 Live-gesture checks: not performed; updated docs/hardware-smoke-test.md for the user's camera check.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: Review flow: sentence and paragraph levels only, gesture hints, paragraph summary
+Status: implemented; automated checks passed; exercised live on the camera (the user's trace)
+Decisions (the user): one finger in Review browses sentences (no word level there); the label lists
+  the gestures that act, with a short form; a focused paragraph gets a summary and open-palm playback;
+  pinch + lift stays sentence-only. Asked-for mark counts (hit/missed/unclear) left out: marks were
+  removed 2026-09-26; the summary says sentences said n of m. "TURN L" reads "L, POINT" (the takes
+  are chosen by pointing). Hints joined by " · " as asked (HINT_SEP was too wide for one row).
+Files and behavior changed:
+  palmcards/gestures.py: REVIEW_LEVEL_OF_SHAPE (ONE and TWO = sentence, FLAT = paragraph), set per
+    mode with Grammar.shape_levels; one finger focuses with a pinch, with the pre-curl cursor rewind,
+    at either level. The held open palm moved from main.SentencePalm into the grammar: "palm_hold"
+    (level), once per hold, OPS.play_hold_s; Prepare sentence, Review sentence and paragraph.
+  palmcards/review.py: rows keep start, end and words said; paragraph_shown (newest full take that
+    said any of its sentences) and paragraph_detail (said n of m, time first word to last, pace over
+    the sentences said or "pace -" under METRICS.sentence_min_words, fillers).
+  palmcards/playback.py: span_clip (first said word to last); sentence_clip calls it.
+  main.py: play_focus (hear / play sentence / play paragraph, gesture and `a`), Takes.play_paragraph,
+    Takes.paragraph; Review status is the operation only; view.playable.
+  palmcards/render.py: review_hint (long, short); label_rows takes the short form when the long one
+    needs a second row, packing hints whole onto the rows if even that is too wide.
+  palmcards/replay.py: palm_hold in KINDS. scripts/cut_gesture_samples.py: FROM_REPLAY.
+  samples/gestures/review-one-finger-sentence.json: 20260926-193557, 293.2-298.6 s; live it focused
+    a word (295.23) and backed out (298.07); the replay focuses and backs out of the sentence at the
+    same times. None of the 12 other samples changed (re-cut byte for byte).
+  samples/gestures/review-paragraph-play.json: the user's trace 20260927-162724, 72.5-86.5 s: flat
+    hand, fold, focus paragraph (74.37), palm_hold paragraph (78.98, played take 1), back (85.81).
+  CLAUDE.md, docs/hardware-smoke-test.md, main.py help text.
+Tests run and exact outcome: pytest (full) -> 512 passed; python -m palmcards.replay -> 14 ok.
+Live (the user's session, gesture log 20260927-162724): one finger in Review browsed sentences and
+  a pinch focused the sentence twice (42.79, 58.27; the cursor rewound before the curl both times);
+  a held palm played a sentence (46.43) and a paragraph (78.98); Prepare's one finger still focused
+  a word (118.43). What the label looked like was not reported.
+Visual: Review rendered offline at 1280x720 (focused sentence with chips, focused paragraph with
+  its summary); hints fit one row at 720p and 1080p except "L: 11/12" at 1080p (two rows, whole hints).
+Pending: the user's look at the label hints and the paragraph summary on screen.
+```

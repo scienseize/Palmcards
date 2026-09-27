@@ -5,17 +5,20 @@ measured (palmcards.metrics). While browsing, the take table sets the last
 few full takes side by side (length, pace, fillers, long pauses, restarts,
 pitch range, gaze, face touches, posture). A focused sentence lists every
 take that said it, drills included, with that sentence's pace, fillers,
-pitch range and gaze.
+pitch range and gaze. A focused paragraph sums up the newest full take
+that said any of it: how many of its sentences were said, the time from its
+first word to its last, pace and fillers.
 
 Each sentence also has a take it shows: the latest take in which it was
 said, until another is picked by pointing at the take chips (the choice
 stays after backing out, until a newer take says the sentence again). An
-open palm (or `a`) plays the sentence from that take.
+open palm (or `a`) plays the sentence from that take, or a focused
+paragraph from its take.
 """
 
 from __future__ import annotations
 
-from palmcards.config import REVIEW
+from palmcards.config import METRICS, REVIEW
 from palmcards.metrics import sentence_speech, value
 from palmcards.notes import Notes
 
@@ -41,6 +44,7 @@ class Board:
         shown (a take recorded with an earlier notes revision); sentences
         edited since have no place and are left out."""
         speech = ((metrics or {}).get("speech") or {}).get("sentences") or sentence_speech(alignment)
+        timing = {a["sentence"]: a for a in alignment["sentences"]}
         gaze = {g["sentence"]: g for g in ((metrics or {}).get("gaze") or {}).get("sentences") or []}
         pitch = {v["sentence"]: v.get("pitch_range_st") for v in ((metrics or {}).get("voice") or {}).get("sentences") or []}
         place = (lambda i: sentence_map.get(i)) if sentence_map is not None else (lambda i: i)
@@ -49,7 +53,10 @@ class Board:
             i = place(e["sentence"])
             if i is None or i >= len(self.notes.sentences):
                 continue
-            rows[i] = {**e, "sentence": i, "pitch_range_st": pitch.get(e["sentence"]), "gaze": gaze.get(e["sentence"])}
+            a = timing.get(e["sentence"], {})
+            rows[i] = {**e, "sentence": i, "pitch_range_st": pitch.get(e["sentence"]), "gaze": gaze.get(e["sentence"]),
+                       "start": a.get("start"), "end": a.get("end"),
+                       "said_words": sum(w is not None for w in a.get("words", []))}
         self.rows[number] = rows
         if metrics is not None:
             self.metrics[number] = metrics
@@ -120,6 +127,35 @@ class Board:
         if judged < REVIEW.min_gaze_readings:
             return ""
         return f"on screen {100 * g['screen'] / max(g['screen'] + g['away'] + g['unclear'], 1):.0f}%"
+
+    def paragraph_shown(self, sentences: list[int] | tuple[int, ...]) -> int | None:
+        """The take a paragraph shows (and plays): the newest full take that
+        said any of its sentences (a drill has only one sentence)."""
+        said = [n for i in sentences for n in self.said_in(i) if n not in self.drills]
+        return max(said, default=None)
+
+    def paragraph_detail(self, sentences: list[int] | tuple[int, ...]) -> tuple[str, ...]:
+        """The focus panel's lines for a paragraph, from the take it shows:
+        how much of it was said, how long it took, pace and fillers."""
+        n = self.paragraph_shown(sentences)
+        if n is None:
+            return ("No take analysed yet.",) if not self.rows else ("Not said in any take yet.",)
+        rows = [self.rows[n][i] for i in sentences if i in self.rows[n]]
+        said = [r for r in rows if r["status"] != "skipped"]
+        m = len(sentences)
+        first = f"{self.take_name(n).capitalize()}: {len(said)} of {m} sentence{'s' if m != 1 else ''} said"
+        timed = [r for r in said if r.get("start") is not None and r.get("end") is not None]
+        k = sum(len(r["fillers"]) for r in said)
+        fillers = f"{k} filler{'s' if k != 1 else ''}" if k else "no fillers"
+        if not timed:
+            return first, "time -", f"pace -, {fillers}"
+        took = max(r["end"] for r in timed) - min(r["start"] for r in timed)
+        words = sum(r["said_words"] for r in timed)
+        speaking = sum(r["end"] - r["start"] for r in timed)
+        lost = any("lost" in (r.get("why") or "") for r in said)
+        pace = f"{60 * words / speaking:.0f} wpm" if words >= METRICS.sentence_min_words and speaking > 0 \
+            and not lost else "pace -"
+        return first, "{}:{:02d} from first word to last".format(*divmod(round(took), 60)), f"{pace}, {fillers}"
 
     def latest(self) -> int | None:
         """The newest analysed take."""

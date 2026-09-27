@@ -194,8 +194,46 @@ def test_label_lines_for_takes():
     rehearse.note = "LAST SECTION"
     assert ov.label_lines(rehearse)[1] == "LAST SECTION"
     review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None))
-    assert ov.label_lines(review)[1] == "DROP HAND: BACK"  # no Prepare operations in Review
+    assert ov.label_lines(review)[1] == "  /  PINCH + LIFT: DRILL"  # no Prepare operations in Review
     assert ov.label_lines(ViewState(app="review"))[0] == "REVIEW"
+
+
+def test_review_labels_list_the_gestures_that_act():
+    ov = overlay()
+    browse = ViewState(app="review", mode="browse", level="sentence", status="TAKE 2 SAVED (0:41)")
+    assert ov.label_lines(browse) == ("BROWSE BY SENTENCE", "TAKE 2 SAVED (0:41)  /  FOLD: DETAILS · FIST: NEW TAKE")
+    browse.level = "paragraph"
+    assert ov.label_lines(browse)[1].endswith("FOLD: SUMMARY · FIST: NEW TAKE")
+    focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2  2 OF 3",
+                      takes=("TAKE 1", "TAKE 2", "TAKE 3"), take_shown=1, playable=True)
+    assert ov.label_lines(focus)[1] == \
+        "TAKE 2  2 OF 3  /  OPEN PALM: PLAY · L, POINT: TAKE 2 OF 3 · PINCH + LIFT: DRILL"
+    focus.takes, focus.take_shown = ("TAKE 1",), 0
+    assert ov.label_lines(focus)[1].endswith("  /  OPEN PALM: PLAY · PINCH + LIFT: DRILL")  # nothing to choose
+    paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), status="TAKE 3",
+                          playable=True)
+    assert ov.label_lines(paragraph)[1] == "TAKE 3  /  OPEN PALM: PLAY PARAGRAPH · DROP HAND: BACK"
+    paragraph.playable = False
+    assert ov.label_lines(paragraph)[1] == "TAKE 3  /  DROP HAND: BACK"
+
+
+def hint_rows(ov, view):
+    return [text for line, text in ov.label_rows(view) if line == 2]
+
+
+@pytest.mark.parametrize("size", [(1280, 720), (1920, 1080)])
+def test_review_hints_take_the_short_form_when_the_long_one_does_not_fit_a_row(size):
+    ov = TextOverlay(parse_text(TEXT).sentences, size)
+    focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2  2 OF 3",
+                      takes=("TAKE 1", "TAKE 2", "TAKE 3"), take_shown=1, playable=True)
+    assert hint_rows(ov, focus) == ["PALM: PLAY · L: 2/3 · PINCH+LIFT: DRILL"]  # the long form needs two rows
+    focus.takes, focus.take_shown = tuple(f"TAKE {n}" for n in range(1, 13)), 10
+    rows = hint_rows(ov, focus)  # too wide even short: its hints packed whole, never split
+    assert 1 <= len(rows) <= 2 and " · ".join(rows) == "PALM: PLAY · L: 11/12 · PINCH+LIFT: DRILL"
+    browse = ViewState(app="review", mode="browse", level="sentence")
+    assert hint_rows(ov, browse) == ["FOLD: DETAILS · FIST: NEW TAKE"]  # the long form fits
+    paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), playable=True)
+    assert hint_rows(ov, paragraph) == ["PALM: PLAY PARAGRAPH · DROP: BACK"]
 
 
 def test_draw_count_in_and_rehearse():

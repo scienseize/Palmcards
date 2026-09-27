@@ -38,7 +38,7 @@ import numpy as np
 from palmcards.gestures import GestureLog, Hand, ModeMachine
 
 SAMPLES_DIR = Path(__file__).resolve().parent.parent / "samples" / "gestures"
-KINDS = ("focus", "back", "commit", "op", "zone", "mode")
+KINDS = ("focus", "back", "commit", "op", "zone", "mode", "palm_hold")
 DETAIL = ("level", "op", "command", "mode")  # the field that says which focus, op, ...
 EXTRA = ("dir",)  # kept as well: which way the ring's knob stepped
 TIME_TOL = 0.25  # seconds an entry may drift before it counts as a change
