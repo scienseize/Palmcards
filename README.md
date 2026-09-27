@@ -1,10 +1,14 @@
 # PalmCards
 
-A gesture-controlled rehearsal mirror for words you have to say out loud. Open your notes, and they float beside your mirrored webcam image. Rehearse them aloud: PalmCards follows your voice through the notes, measures each take (pace, fillers, pauses, pitch range, where you looked, posture) and sets your takes side by side, so you can see how this one went against the last. It observes; it doesn't grade.
+A gesture-controlled text editor and rehearsal mirror for words you have to say out loud. Open a `.txt`, `.md` or `.docx` file, and its text floats beside your mirrored webcam image.
+
+Edit with your hands: select words, sentences or paragraphs, explore alternative words, turn a dial to change a sentence's tone, or move two hands together or apart to shorten or expand a paragraph. Word alternatives and tone and length rewrites use an optional language model; you preview the wording and pinch + lift to save it. Edits keep a revision history and leave your imported file untouched. You can export the revised text without recording a take.
+
+Then rehearse aloud: PalmCards follows your voice through the notes, measures each take (pace, fillers, pauses, pitch range, where you looked, posture) and sets your takes side by side, so you can see how this one went against the last. It observes; it doesn't grade.
 
 Tested on macOS with Apple silicon. Windows is not supported yet.
 
-Everything runs on your Mac: no account, no server. The only network use is the one-time model download.
+The desktop app, recording and analysis run on your Mac. After downloading the models, you can use it offline, including text editing with a local language model through Ollama. If you enable the optional Anthropic cloud model, the text you request help with is sent to that service.
 
 ## Install
 
@@ -87,6 +91,7 @@ Nothing is deleted without `--yes`, and a session another PalmCards window has o
 ## What works, what's planned
 
 Working now:
+- gesture-controlled text editing: word alternatives, sentence tone and paragraph length previews with an optional language model, saved revisions and undo;
 - gesture and keyboard control, voice follow, and recording with crash recovery;
 - transcription (mlx-whisper), alignment to the notes, and each take's measurements;
 - Review with the take table and drills; a focused sentence lists every take that said it, and its takes sit beside it as chips: make an L, then point at one to pick the take it plays.
