@@ -33,10 +33,13 @@ frame for the moment the audio has reached, the same clock as the progress bar.
 
 from __future__ import annotations
 
+import json
 from concurrent.futures import Future
 from dataclasses import dataclass
 
 import numpy as np
+
+from palmcards.config import METRICS, REVIEW
 
 from palmcards.session import Session, TakeRecord, read_wav
 
@@ -75,6 +78,82 @@ def span_clip(session: Session, take: TakeRecord, sentences: list[int]) -> tuple
     a = max(0, int((span[0] - take.t_start) * rate))
     b = min(len(audio), int((span[1] - take.t_start) * rate))
     return (audio[a:b], rate) if b > a else None
+
+
+def take_words(session: Session, take: TakeRecord) -> list[dict]:
+    """The take's transcript words (app clock), or none if it has no transcript."""
+    if not take.transcript or not (session.dir / take.transcript).exists():
+        return []
+    return json.loads((session.dir / take.transcript).read_text()).get("words", [])
+
+
+def replay_words(session: Session, take: TakeRecord, span: tuple[float, float]) -> list[tuple[float, float, str, str]]:
+    """The take's words said within `span`, for a replay's captions: (start,
+    end, text, kind), kind as the take player colours them ("word", "filler",
+    "restart", "extra", "unsure")."""
+    from palmcards.player import Timeline
+
+    words = take_words(session, take)
+    if not words or not take.alignment:
+        return []
+    kinds = Timeline(take.alignment, words, take.t_start).kind
+    return [(w["start"], w["end"], w["text"].strip(), kinds.get(i, ("extra", None, None))[0])
+            for i, w in enumerate(words) if span[0] <= w["start"] <= span[1] and w["text"].strip()]
+
+
+def clip_marks(session: Session, take: TakeRecord, span: tuple[float, float]) -> list[tuple[str, float, float]]:
+    """What a replay's progress bar marks, within `span` (app times): (kind,
+    from, to) with kind "filler" or "restart" (a moment: from == to), "pause"
+    (a silence between words over METRICS.long_pause_s) or "away" (looking
+    away from the screen, by the take's eye calibration, REVIEW.away_min_s
+    or more). What the take has too little for is left out, never guessed."""
+    from palmcards import gaze, metrics
+    from palmcards.notes import normalize
+
+    t0, t1 = span
+    marks: list[tuple[str, float, float]] = []
+    alignment = take.alignment or {}
+    words = take_words(session, take)
+    for f in alignment.get("fillers", []):
+        if t0 <= f["t"] <= t1:
+            marks.append(("filler", f["t"], f["t"]))
+    for r in alignment.get("restarts", []):
+        if r["words"] and r["words"][0] < len(words) and t0 <= (t := words[r["words"][0]]["start"]) <= t1:
+            marks.append(("restart", t, t))
+    unsure = set(alignment.get("unsure", []))
+    real = [i for i, w in enumerate(words) if normalize(w["text"]) and i not in unsure]
+    for a, b in zip(real, real[1:]):
+        gap_from, gap_to = words[a]["end"], words[b]["start"]
+        if gap_to - gap_from >= METRICS.long_pause_s and gap_to > t0 and gap_from < t1:
+            marks.append(("pause", max(gap_from, t0), min(gap_to, t1)))
+    marks += _away(take, span, session, gaze, metrics)
+    return sorted(marks, key=lambda m: m[1])
+
+
+def _away(take: TakeRecord, span: tuple[float, float], session: Session, gaze, metrics) -> list[tuple[str, float, float]]:
+    face = session.dir / take.face_name
+    arrays, _ = metrics.take_features(take.vision, face)
+    calibration = next((c for c in session.calibrations
+                        if take.vision and c["id"] == take.vision.get("calibration")), None)
+    if arrays is None or calibration is None or gaze.usable(calibration):
+        return []
+    labels, times = gaze.classify(arrays, calibration), arrays["face_t"]
+    runs, start, last = [], None, None
+    for t, label in zip(times, labels):
+        if not span[0] <= t <= span[1] or label == "unclear":
+            continue
+        if label == "away":
+            if start is None or t - last > REVIEW.away_gap_s:
+                if start is not None:
+                    runs.append((start, last))
+                start = t
+            last = t
+        elif start is not None:  # looking at the screen again ends it (only unclear readings are bridged)
+            runs.append((start, last))
+            start = None
+    if start is not None:
+        runs.append((start, last))
+    return [("away", float(a), float(b)) for a, b in runs if b - a >= REVIEW.away_min_s]
 
 
 class ClipPlayer:
@@ -134,13 +213,20 @@ class Playback:
         player.play(audio, rate)
         self.current = Playing("clip", target, now, len(audio) / rate, player, video=video, video_t0=video_t0)
 
+    def clip_time(self, now: float) -> float | None:
+        """The app time in the take the clip has reached (the progress bar's clock), or None."""
+        cur = self.current
+        if cur is None or cur.kind != "clip":
+            return None
+        return cur.video_t0 + min(max(now - cur.start, 0.0), cur.duration_s)
+
     def video_frame(self, now: float):
         """The video's frame for the moment the clip has reached (the progress
         bar's clock), or None: no video, or none decoded yet."""
         cur = self.current
         if cur is None or cur.video is None:
             return None
-        return cur.video.frame_at(cur.video_t0 + min(max(now - cur.start, 0.0), cur.duration_s))
+        return cur.video.frame_at(self.clip_time(now))
 
     def start_rendered(self, player, speaker, words: list[str], target: tuple, now: float) -> None:
         """Play the speaker's audio of the words (speaker.render_async): at once

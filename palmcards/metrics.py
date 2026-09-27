@@ -297,7 +297,7 @@ def posture(a: dict | None, calibration: dict | None, why: str = "") -> dict:
     }
 
 
-def _features(vision: dict | None, face: Path | None) -> tuple[dict | None, str]:
+def take_features(vision: dict | None, face: Path | None) -> tuple[dict | None, str]:
     """The take's features, or None and why not."""
     if vision is None:
         return None, "no face features for this take (recorded before milestone 7)"
@@ -311,7 +311,7 @@ def _features(vision: dict | None, face: Path | None) -> tuple[dict | None, str]
 def gaze(alignment: dict, vision: dict | None, face: Path | None, calibration: dict | None) -> dict:
     """`vision`: the take's record of its face features; `face`: their file;
     `calibration`: the one the take was recorded with."""
-    arrays, why = _features(vision, face)
+    arrays, why = take_features(vision, face)
     if arrays is None:
         return _none(why)
     return gaze_mod.take_gaze(arrays, calibration, alignment, vision.get("calibration"))
@@ -322,7 +322,7 @@ def take_metrics(alignment: dict, words: list[dict], t_start: float, duration_s:
                  vision: dict | None = None, face: Path | None = None,
                  calibration: dict | None = None, prosody: Prosody | None = None, prosody_why: str = "",
                  gaps=()) -> dict:
-    arrays, why = _features(vision, face)
+    arrays, why = take_features(vision, face)
     return {
         "version": VERSION,
         "speech": speech(alignment, words, duration_s, gaps),

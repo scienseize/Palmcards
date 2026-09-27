@@ -84,7 +84,8 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   Rehearse within the section; in a focused panel they scroll it),
   a hear the sentence (Prepare) / play the sentence or paragraph (Review), again to stop, u undo the last edit (Prepare), r retry failed analysis,
   e calibrate the eyes again at the next take,
-  g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit.
+  g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit,
+  m a take's video replayed mirrored or as others see you, w captions on the replay.
 Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
 Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
 """
@@ -119,14 +120,14 @@ from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_req
     meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
     FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
-    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_stats,
+    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_stats,
 )
 from palmcards.motion import Spring
 from palmcards.review import Board
 from palmcards.sounds import Cues
 from palmcards.metrics import summary as metrics_summary
 from palmcards.pick import Picker
-from palmcards.playback import ClipPlayer, Playback, clip_span, span_clip
+from palmcards.playback import ClipPlayer, Playback, clip_marks, clip_span, replay_words, span_clip
 from palmcards.video import VideoReader, VideoWriter
 from palmcards.video import unavailable as video_unavailable
 from palmcards.recording import TakeWriter
@@ -146,6 +147,7 @@ WINDOW = "PalmCards"
 NOTE_S = 1.5  # how long a commit message stays in the label
 LLM_NOTE_S = 3.0  # an LLM answer or failure arrives while you're doing something else: it stays longer
 HINT_EVERY_S = 6.0  # a hint about a gesture that didn't act is shown at most this often
+CAPTION_LINGER_S = 0.15  # a replay's caption still marks a word as being said this long after it ends
 ENTER = 13
 
 
@@ -368,6 +370,13 @@ class Takes:
         self.video_off = ""  # why video was asked for and isn't recorded
         self.frame_size: tuple[int, int] | None = None  # the camera's, for the video
         self.video: VideoWriter | None = None  # the take's video being recorded
+        # Review's replay of a take's video: the clip's span (app times), its bar's marks,
+        # its words for the captions; how it is shown (preferences, keys m and w).
+        self.replay_span: tuple[float, float] | None = None
+        self.replay_marks: list = []
+        self.replay_words: list = []
+        self.replay_mirrored = False
+        self.replay_captions = False
 
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown. In Review
@@ -691,9 +700,19 @@ class Takes:
         clip = span_clip(self.session, take, mine) if mine else None
         if clip is None:
             return False
+        span = clip_span(take, mine)
+        reader = self._video_reader(take)
+        # What the replay shows besides the video: marks on its bar, and (if asked for) captions.
+        self.replay_span, self.replay_marks, self.replay_words = span, [], []
+        if reader is not None:
+            try:
+                self.replay_marks = clip_marks(self.session, take, span)
+                self.replay_words = replay_words(self.session, take, span)
+            except Exception as exc:  # the replay plays on without them
+                print(f"take {n}: replay marks not shown: {exc}", file=sys.stderr)
         try:
             self.playback.start_clip(self.clip_player(), clip, ("review", tuple(sentences), n), time.perf_counter(),
-                                     video=self._video_reader(take), video_t0=clip_span(take, mine)[0])
+                                     video=reader, video_t0=span[0])
         except Exception as exc:  # no output device
             print(f"could not play: {exc}", file=sys.stderr)
             self._play_error = "COULD NOT PLAY (SEE TERMINAL)"
@@ -716,10 +735,19 @@ class Takes:
 
     def replay_frame(self):
         """While a take's clip plays with its video: that moment's frame flipped
-        back, as others see you (it is recorded mirrored), a new array to draw
-        on; else None (the live mirror)."""
+        back, as others see you (it is recorded mirrored), or as recorded with
+        `replay_mirrored` (key m); a new array to draw on. Else None (the live mirror)."""
         frame = self.playback.video_frame(time.perf_counter())
-        return None if frame is None else cv2.flip(frame, 1)
+        if frame is None:
+            return None
+        return frame.copy() if self.replay_mirrored else cv2.flip(frame, 1)
+
+    def draw_replay(self, frame, progress: float) -> None:
+        """On a replayed frame: its bar with the clip's marks, and the captions if on (key w)."""
+        draw_replay_bar(frame, progress, self.replay_marks, self.replay_span)
+        if self.replay_captions and (t := self.playback.clip_time(time.perf_counter())) is not None:
+            draw_replay_caption(frame, [(text, kind, a <= t <= b + CAPTION_LINGER_S)
+                                        for a, b, text, kind in self.replay_words if a <= t])
 
     def clip_player(self):
         """The player for clips (Review's, "hear it"), made at the first play."""
@@ -1335,6 +1363,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     prefs = preferences.load(prefs_file)
     preferences.apply(prefs)  # before the overlay and the machines are built: box, holds, contrast
     takes.frame_size = (w, h)
+    takes.replay_mirrored, takes.replay_captions = prefs.replay_mirrored, prefs.replay_captions
     takes.video_on = takes.video_on or prefs.video
     if takes.video_on:
         if devices.video is VideoWriter and (why := video_unavailable()):
@@ -1502,7 +1531,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             # it but how far it has got. Hands are still tracked live, so a fresh
             # open palm stops it; the mirror and the notes come back after.
             frame = replay
-            draw_replay_bar(frame, view.play_progress or 0.0)
+            takes.draw_replay(frame, view.play_progress or 0.0)
         else:
             overlay.draw(frame, view)
             if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
@@ -1562,6 +1591,16 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             tutorial.active = not tutorial.active if not tutorial.done else True
             if tutorial.done:
                 tutorial.restart()
+        elif key == ord("m"):  # a replay: mirrored, or as others see you (the default)
+            prefs.replay_mirrored = takes.replay_mirrored = not prefs.replay_mirrored
+            preferences.save(prefs, prefs_file)
+            view.note = "REPLAYS MIRRORED" if prefs.replay_mirrored else "REPLAYS AS OTHERS SEE YOU"
+            note_until = time.perf_counter() + NOTE_S
+        elif key == ord("w"):  # captions on a replay
+            prefs.replay_captions = takes.replay_captions = not prefs.replay_captions
+            preferences.save(prefs, prefs_file)
+            view.note = "REPLAY CAPTIONS ON" if prefs.replay_captions else "REPLAY CAPTIONS OFF"
+            note_until = time.perf_counter() + NOTE_S
         elif key == ord("c"):
             prefs.high_contrast = not prefs.high_contrast
             preferences.save(prefs, prefs_file)

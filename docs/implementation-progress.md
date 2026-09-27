@@ -2066,3 +2066,31 @@ Tests: pytest (full) -> 595 passed; python -m palmcards.replay -> all ok (20 sam
   count-in cancel, Review back to Prepare, a thumbs-up never starts a take, rehearse ignores everything
   else (flicks, a palm top right); label hints in takes.
 ```
+
+```text
+Date: 2026-09-28
+Phase / issue IDs: Review's replay of a take's video: marks on its bar, a mirror key, captions (the user
+  picked these from a list of suggestions; comparing two takes, whole-take replay and a Bluetooth sync
+  offset were not chosen)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes:
+  palmcards/playback.py: clip_marks(session, take, span): fillers and restarts (a moment), long pauses
+    (silences between words over METRICS.long_pause_s, clipped to the clip) and looking away (runs of
+    "away" readings by gaze.classify against the take's calibration, REVIEW.away_min_s 0.5 or more,
+    unclear readings bridged up to REVIEW.away_gap_s 0.3, a screen reading ends a run; nothing without
+    features or a usable calibration). replay_words: the clip's words with the take player's kinds
+    (player.Timeline). take_words. Playback.clip_time. metrics._features is public as take_features.
+  palmcards/render.py: draw_replay_bar(frame, progress, marks, span): a filler or restart as a tick
+    above the bar, a pause as a pale line above it, a look away as a blue line below it
+    (PLAYBAR.replay_marks, the take player's colours); draw_replay_caption: one line above the bar on a
+    faint band, older words scrolling off the left, the word being said on a lighter ground. The keys
+    help explains the bar's colours.
+  main.py: Takes works out the marks and words when a clip with video starts (a failure only leaves them
+    out); draw_replay; keys m (replay mirrored or as others see you) and w (captions), both saved as
+    preferences (replay_mirrored, replay_captions; off by default).
+Tests: pytest (full) -> 600 passed. New: marks from a synthetic take (filler, restart, pause, only what
+  falls in the clip, nothing guessed without features), looking away with a bridged blink and a run too
+  short to mark, the captions' kinds, the bar's marks and the caption line drawn where they belong, the
+  frame loop replaying mirrored with captions appearing after the first word, m and w saved.
+Visual: the bar with each kind of mark and a caption line over the white-wall and dark-room plates.
+```

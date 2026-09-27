@@ -158,7 +158,9 @@ def test_a_toggles_playback_and_x_stops_it(tmp_path, monkeypatch):
     assert [e["acted"] for e in log if e["kind"] == "key" and e["command"] == "stop"] == [False]  # nothing left: x as before
 
 
-def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_path, monkeypatch):
+def replayed_frames(tmp_path, monkeypatch, prefs: str | None = None) -> list:
+    """Reopen a session whose take 1 has a video (recorded mirrored: bright on
+    its left half) and a transcript, press `a` in Review: every frame shown."""
     pytest.importorskip("av")
     from palmcards.video import VideoWriter
 
@@ -174,9 +176,13 @@ def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_
     session = Session.load(saved.dir)
     session.take(1).video = w.summary()
     session.save()
+    (saved.dir / session.take(1).transcript).write_text(json.dumps({"words": [
+        {"text": "Hello", "start": 5.5, "end": 5.8}, {"text": "um", "start": 5.9, "end": 6.4}]}))
     session.release()
 
     rig = Rig(tmp_path, monkeypatch, script={}, keys={3: ord("a"), 260: ord("q")})
+    if prefs:
+        rig.prefs_file.write_text(prefs)
     rig.devices.player = FakePlayer
     frames = []
     rig.devices.show = lambda name, frame: frames.append(frame.copy())
@@ -184,6 +190,11 @@ def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_
     session.acquire()
     notes = notes_from_bytes(NOTES, rig.notes_path)
     assert main.run(session.notes, notes, b"", devices=rig.devices, session=session, prefs_file=rig.prefs_file) == 0
+    return frames
+
+
+def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_path, monkeypatch):
+    frames = replayed_frames(tmp_path, monkeypatch)
     # The face zone (0.36-0.55 of the width) has nothing drawn on it: either side of the video's middle.
     left = [int(f[50:300, 240:310].mean()) for f in frames]
     right = [int(f[50:300, 330:350].mean()) for f in frames]
@@ -197,3 +208,14 @@ def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_
     differs = np.argwhere((np.abs(shown.astype(int) - expected) > 8).any(axis=2))
     assert len(differs) and differs[:, 0].min() > 360 - 40  # nothing but the bar along the bottom
     assert right[-1] == 0 and notes[-1] > 0  # the clip (1.5 s) over: the live mirror again, with the notes
+
+
+def test_the_replay_can_be_mirrored_and_captioned(tmp_path, monkeypatch):
+    frames = replayed_frames(tmp_path, monkeypatch, '{"replay_mirrored": true, "replay_captions": true}\n')
+    left = [int(f[50:300, 240:310].mean()) for f in frames]
+    right = [int(f[50:300, 330:350].mean()) for f in frames]
+    replayed = [i for i, (a, b) in enumerate(zip(left, right)) if abs(a - 200) <= 6 and b <= 6]
+    assert replayed and replayed[0] <= 10  # as recorded, mirrored: the bright half on the left
+    # Captions once a word has been said (0.25 s into the clip): a line above the bar, across the middle.
+    captioned = [i for i in replayed if (frames[i][285:318, 330:350] != 0).any()]  # above the bar and its ticks
+    assert captioned and captioned[0] > replayed[0]

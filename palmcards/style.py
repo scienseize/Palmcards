@@ -322,6 +322,22 @@ class Playbar:
     while a take's video replays, the only thing drawn: a bar along the bottom."""
     replay_inset: float = 0.06  # x the frame width, from each side
     replay_bottom: int = 24  # px from the frame's bottom edge to the bar's centre
+    # What the replay's bar marks (playback.clip_marks), in the take player's
+    # colours: a filler or a restart as a tick above the bar, a long pause as
+    # a line above it for its length, looking away as a line below it.
+    replay_marks: dict[str, RGBA] = field(default_factory=lambda: {
+        "filler": (255, 215, 0, 255),
+        "restart": (255, 90, 90, 255),
+        "pause": (255, 255, 255, 170),
+        "away": (60, 150, 255, 235),
+    })
+    replay_tick: int = 9  # px: a filler's or a restart's tick
+    replay_mark_gap: int = 4  # px between the bar and a mark
+    # Captions (optional, key w): one line of what was said, above the bar.
+    caption_scale: float = 0.72  # x the UI size
+    caption_above: int = 26  # px from the bar's centre up to the line's bottom
+    caption_band: RGBA = (0, 0, 0, 140)  # behind the line, for any video
+    caption_max: float = 0.8  # x the frame width: older words scroll off the left
     gap: float = 0.5  # its centre below the unit's last enlarged row, x the padding (Review's take lines start a padding below)
 
 

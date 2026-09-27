@@ -416,6 +416,12 @@ class Gaze:
 @dataclass(frozen=True)
 class Review:
     min_gaze_readings: int = 3  # a sentence needs this many judged face readings for its gaze line
+    # A replay's progress bar marks where a filler, a restart, a long pause
+    # (METRICS.long_pause_s) or a look away from the screen happened
+    # (playback.clip_marks). A look away counts from this long, with gaps of
+    # up to away_gap_s (a blink, a missed reading) bridged.
+    away_min_s: float = 0.5
+    away_gap_s: float = 0.3
 
 
 @dataclass(frozen=True)

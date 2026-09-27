@@ -155,6 +155,9 @@ KEYS_HELP = (
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
     "A  PLAY / STOP       P  BACK TO PREPARE",
     "E  CALIBRATE EYES AT THE NEXT TAKE",
+    "M  REPLAY MIRRORED   W  REPLAY CAPTIONS",
+    "REPLAY BAR: YELLOW FILLER, RED RESTART,",
+    "  WHITE LONG PAUSE, BLUE LOOKED AWAY",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
 )
 
@@ -2112,13 +2115,69 @@ def draw_bar(frame: np.ndarray, x0: float, x1: float, y: float, progress: float,
     _line_blend(frame, (a, y), (b, y), C.bar_fill[:3], thickness, C.bar_fill[3] / 255)
 
 
-def draw_replay_bar(frame: np.ndarray, progress: float) -> None:
-    """Review's replay of a take's video: the only thing drawn on it, how far
-    it has got, a bar along the bottom (PLAYBAR.replay_*)."""
+def _replay_ui(h: int) -> int:
+    return max(TEXT.ui_min_size, h // TEXT.ui_rows_per_frame)
+
+
+def draw_replay_bar(frame: np.ndarray, progress: float, marks=(), span: tuple[float, float] | None = None) -> None:
+    """Review's replay of a take's video: how far it has got, a bar along the
+    bottom (PLAYBAR.replay_*), and where in the clip (`span`, app times) a
+    filler or restart (a tick above), a long pause (a line above) or a look
+    away (a line below) happened: `marks`, from playback.clip_marks."""
     h, w = frame.shape[:2]
     inset = PLAYBAR.replay_inset * w
-    draw_bar(frame, inset, w - inset, h - PLAYBAR.replay_bottom, progress,
-             bar_thickness(max(TEXT.ui_min_size, h // TEXT.ui_rows_per_frame)))
+    x0, x1, y = inset, w - inset, h - PLAYBAR.replay_bottom
+    t = bar_thickness(_replay_ui(h))
+    draw_bar(frame, x0, x1, y, progress, t)
+    if not marks or span is None or span[1] <= span[0]:
+        return
+    at = lambda tt: int(round(x0 + (min(max(tt, span[0]), span[1]) - span[0]) / (span[1] - span[0]) * (x1 - x0)))
+    above, below = int(y - t / 2 - PLAYBAR.replay_mark_gap), int(y + t / 2 + PLAYBAR.replay_mark_gap)
+    for kind, a, b in marks:
+        color = PLAYBAR.replay_marks[kind]
+        rgb, alpha = color[:3], color[3] / 255
+        if kind in ("filler", "restart"):
+            _line_blend(frame, (at(a), above - PLAYBAR.replay_tick), (at(a), above), rgb, 2, alpha)
+        elif kind == "pause":
+            _line_blend(frame, (at(a), above - 1), (max(at(b), at(a) + 1), above - 1), rgb, 2, alpha)
+        else:  # away
+            _line_blend(frame, (at(a), below + 1), (max(at(b), at(a) + 1), below + 1), rgb, 3, alpha)
+
+
+def draw_replay_caption(frame: np.ndarray, words: list[tuple[str, str, bool]]) -> None:
+    """Captions (optional): what has been said so far in the replay, one line
+    above its bar on a faint band, coloured as in the take player (a filler
+    yellow, a restart red, an ad-lib cyan), the word being said on a lighter
+    ground; older words scroll off the left. `words`: (text, kind, being said now)."""
+    if not words:
+        return
+    h, w = frame.shape[:2]
+    st = TYPE.operation
+    f = face(round(_replay_ui(h) * PLAYBAR.caption_scale), "medium", st.tracking, st.leading)
+    gap = f.advance
+    widths = [_text_w(f.font, text, f.tracking) for text, _, _ in words]
+    limit = PLAYBAR.caption_max * w
+    first, total = len(words), 0.0  # the newest words that fit
+    while first > 0:
+        more = widths[first - 1] + (gap if total else 0.0)
+        if total + more > limit:
+            break
+        first, total = first - 1, total + more
+    words, widths = words[first:], widths[first:]
+    pad = max(4, f.size // 3)
+    band_w, band_h = int(total) + 2 * pad, f.line_h + pad
+    img = Image.new("RGBA", (band_w, band_h), CLEAR)
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 0, band_w - 1, band_h - 1), radius=pad, fill=PLAYBAR.caption_band)
+    x = pad
+    for (text, kind, current), width in zip(words, widths):
+        if current:
+            draw.rounded_rectangle((x - 2, 2, x + width + 1, band_h - 3), radius=3, fill=PLAYER.caption_current)
+        _text(draw, (x, pad // 2 + f.dy), text, f.font, f.tracking,
+              fill=PLAYER.caption.get(kind, PLAYER.caption["word"]))
+        x += width + gap
+    y = h - PLAYBAR.replay_bottom - PLAYBAR.caption_above - band_h
+    _blend(frame, int((w - band_w) / 2), int(y), *_premultiply(img))
 
 
 def draw_fingertips(frame: np.ndarray, state: GestureState) -> None:

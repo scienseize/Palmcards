@@ -99,11 +99,13 @@ def test_contrast_tutorial_card_and_hand_area_are_drawn(restore):
 
 
 def test_keys_in_the_app_save_preferences_to_its_file(tmp_path, monkeypatch, restore):
-    keys = {2: ord("c"), **{3 + k: main.ENTER for k in range(len(STEPS))}, 20: ord("q")}
+    keys = {2: ord("c"), **{3 + k: main.ENTER for k in range(len(STEPS))}, 16: ord("m"), 17: ord("w"),
+            18: ord("w"), 20: ord("q")}
     rig = Rig(tmp_path, monkeypatch, script={}, keys=keys)
     assert rig.run() == 0
     saved = json.loads(rig.prefs_file.read_text())
     assert saved["high_contrast"] is True and saved["tutorial_done"] is True
+    assert saved["replay_mirrored"] is True and saved["replay_captions"] is False  # w twice: back off
 
 
 def test_reduced_motion_and_sounds_are_preferences(tmp_path, monkeypatch, capsys):

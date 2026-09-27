@@ -908,3 +908,20 @@ def test_a_replay_has_nothing_on_it_but_a_bar_along_the_bottom():
     orange = np.array(render.bgr(render.C.bar_fill[:3]))
     filled = np.where((middle == orange).all(axis=1))[0]
     assert filled.max() < 1280 * 0.55  # half of it filled
+
+
+def test_a_replays_bar_carries_its_marks_and_captions_sit_above_it():
+    frame = np.full((720, 1280, 3), 128, np.uint8)
+    render.draw_replay_bar(frame, 0.2, [("filler", 12.5, 12.5), ("away", 15.0, 17.5)], (10.0, 20.0))
+    bar_y = 720 - render.PLAYBAR.replay_bottom
+    yellow = np.array(render.bgr(render.PLAYBAR.replay_marks["filler"][:3]))
+    ys, xs = np.where((np.abs(frame.astype(int) - yellow) < 30).all(axis=2))
+    assert len(xs) and ys.max() < bar_y and abs(xs.mean() - (0.06 * 1280 + 0.25 * 0.88 * 1280)) < 4  # above, at 25%
+    changed_below = np.argwhere((frame[bar_y + 4:] != 128).any(axis=2))
+    assert len(changed_below) and changed_below[:, 1].min() >= 1280 * 0.5 - 4  # the look away, under the bar's second half
+    words = [("Hello", "word", False), ("um", "filler", False), ("there", "word", True)]
+    before = frame.copy()
+    render.draw_replay_caption(frame, words)
+    changed = np.argwhere((frame != before).any(axis=2))
+    assert len(changed) and changed[:, 0].max() < bar_y - 10  # one line above the bar
+    assert abs((changed[:, 1].min() + changed[:, 1].max()) / 2 - 640) < 3  # centred

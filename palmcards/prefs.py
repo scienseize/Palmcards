@@ -15,6 +15,9 @@ sessions (which are evidence and never change with your settings).
   video          record video of each take, replayed in Review (off by default; main.py --video
                  for one run). Video is far more personal than the audio: it stays in the session
                  folder; python -m palmcards.data drop-video deletes it
+  replay_mirrored  Review replays a take's video mirrored, as in the app (key m); by default
+                 flipped back, as others see you
+  replay_captions  what was said, one line on a replay (key w)
   tutorial_done  the first-run gesture tutorial has been seen (key g shows it again)
 """
 
@@ -37,6 +40,8 @@ class Prefs:
     reduced_motion: bool | None = None  # None: as macOS's setting
     sounds: bool = False
     video: bool = False  # record video of each take (palmcards.video); main.py --video for one run
+    replay_mirrored: bool = False  # Review replays a take's video mirrored (key m); else as others see you
+    replay_captions: bool = False  # captions on a replay (key w)
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
     stop_hold_s: float = REHEARSE.done_hold_s
