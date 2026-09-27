@@ -24,7 +24,10 @@ A recording made before a behaviour existed shows the old result in its log
 (one finger in Review browsed words until 2026-09-27). Such a segment is
 named in FROM_REPLAY with the reason: its grammar entries (focus, back,
 commit, op, palm_hold) are taken from the replay and printed, to be checked
-by eye against the log; its mode and zone entries stay the live ones.
+by eye against the log; its mode entries stay the live ones. A recording of
+a behaviour that no longer exists (the command zone and its flick, removed
+2026-09-27) is named in REPLAYED_WHOLE: all its entries come from the replay,
+so the sample pins down that those movements now do nothing.
 
 Before writing, each sample is replayed through the current gesture code.
 It must reproduce the live result, or, for a known issue, must still show
@@ -55,14 +58,24 @@ SEGMENTS = [
      "Flat hand browses paragraphs, fold focuses, two L-hands stretch the length, drop backs out.", None),
     ("fist-starts-take", "20260925-101345", (44.6, 49.3), "prepare",
      "A fist held 1 s starts the 3-2-1 count-in, then Rehearse.", None),
-    ("rehearse-one-flick", "20260925-101345", (65.0, 83.3), "rehearse",
-     "18 s of rehearsing with hands moving; exactly one flick in the command zone.", None),
-    ("rehearse-stop-then-review", "20260925-101345", (98.1, 104.1), "rehearse",
-     "Open palm held in the zone stops the take into Review; a flick right after is only logged.", None),
-    ("review-back-to-prepare", "20260925-101345", (106.8, 120.1), "review",
-     "Open palm held in the zone goes from Review back to Prepare.", None),
-    ("rehearse-three-flicks", "20260925-101345", (129.0, 142.1), "rehearse",
-     "Three flicks in a row, each one next section.", None),
+    # Recorded when Rehearse had a command zone (top right): a flick there was the next section and
+    # an open palm held there stopped the take or left Review. Neither does anything now.
+    ("rehearse-hands-moving-do-nothing", "20260925-101345", (65.0, 83.3), "rehearse",
+     "18 s of rehearsing with hands moving, one of them a sideways flick: nothing happens.", None),
+    ("rehearse-open-palm-does-not-stop", "20260925-101345", (98.1, 104.1), "rehearse",
+     "An open palm held top right (it stopped takes until 2026-09-27) and a flick: the take goes on.", None),
+    ("review-open-palm-stays", "20260925-101345", (106.8, 120.1), "review",
+     "An open palm held top right in Review (it went back to Prepare until 2026-09-27): Review stays.", None),
+    ("rehearse-swipes-do-nothing", "20260925-101345", (129.0, 142.1), "rehearse",
+     "Three sideways flicks (each was the next section until 2026-09-27): nothing happens.", None),
+    # The thumbs-up ("done"), from the calibration trace of 2026-09-27.
+    ("thumbs-up-is-not-a-take", "20260927-234235", (53.5, 60.0), "prepare",
+     "Thumbs-ups held in Prepare: a thumb up is never a fist, so no take starts (live, before the "
+     "thumbs-up pose, the first one started a count-in at 56.7 s).", None),
+    ("thumbs-up-stops-take", "20260927-234235", (62.2, 68.0), "rehearse",
+     "A thumbs-up held 1.5 s during a take stops it, into Review.", None),
+    ("thumbs-up-back-to-prepare", "20260927-234235", (62.2, 68.0), "review",
+     "The same thumbs-up held in Review goes back to Prepare.", None),
     # Recorded before a held fist started takes (milestone 4). Fists formed
     # mid-gesture here used to start takes by mistake; only a fist raised
     # into view as a fist counts now.
@@ -99,8 +112,26 @@ SEGMENTS = [
 FROM_REPLAY = {
     "review-one-finger-sentence": "recorded when one finger browsed words in Review: the log has focus word at "
                                   "295.23 and back word at 298.07; the replay has the sentence at the same times",
+    # The relaxed open palm (2026-09-27: spread 0.30, thumb 0.47 palms; it was 0.45 and 0.9) reads the
+    # palm as the hand opens, before it is spread wide:
+    "word-ring-commit": "relaxed open palm: the ring opens at 5.75 s, live 6.18 s",
+    "play-fresh-palm-stops": "relaxed open palm: the sentence plays from 4.94 s, live 5.21 s",
+    "review-paragraph-play": "relaxed open palm: the paragraph plays from 6.01 s, live 6.47 s",
+    "play-drop-hand-keeps-focus": "relaxed open palm: the hand comes back at 9.88 s already open (spread "
+                                  "0.44, thumb 0.73 palms), a fresh palm, so it stops the sentence 0.7 s "
+                                  "before its end; live, it read as open only at 10.95 s, after the end",
 }
-GRAMMAR_KINDS = ("focus", "back", "commit", "op", "palm_hold")
+# Segments of behaviour removed since: every entry from the replay (see the docstring): name -> why.
+REPLAYED_WHOLE = {
+    "rehearse-hands-moving-do-nothing": "the command zone and its flick were removed on 2026-09-27",
+    "rehearse-open-palm-does-not-stop": "a thumbs-up stops a take since 2026-09-27; the open palm doesn't",
+    "review-open-palm-stays": "a thumbs-up goes back to Prepare since 2026-09-27; the open palm doesn't",
+    "rehearse-swipes-do-nothing": "the command zone and its flick were removed on 2026-09-27",
+    "thumbs-up-is-not-a-take": "recorded before the thumbs-up pose, which is never a fist",
+    "thumbs-up-stops-take": "recorded before the thumbs-up was a command (live, a take had just started)",
+    "thumbs-up-back-to-prepare": "recorded in a take, before the thumbs-up was a command",
+}
+GRAMMAR_KINDS = ("focus", "back", "commit", "op", "palm_hold", "palm_stop")
 
 # Segments whose points keep the trace's 0.1 px (the others are rounded to whole pixels): name -> why.
 PRECISE = {
@@ -151,7 +182,11 @@ def main() -> int:
             **({"inputs": inputs} if inputs else {}),
             "frames": frames,
         }
-        if name in FROM_REPLAY:
+        if name in REPLAYED_WHOLE:
+            sample["expected"] = replay(sample)
+            sample["description"] += f" Expected entries from the replay: {REPLAYED_WHOLE[name]}."
+            print(f"      {name}: from the replay {sample['expected']}")
+        elif name in FROM_REPLAY:
             kept = [e for e in sample["expected"] if e["kind"] not in GRAMMAR_KINDS]
             replayed = [e for e in replay(sample) if e["kind"] in GRAMMAR_KINDS]
             sample["expected"] = sorted(kept + replayed, key=lambda e: e["t"])

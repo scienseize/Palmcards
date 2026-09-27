@@ -63,18 +63,18 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from palmcards.config import CURSOR, KNOB, OPS, REHEARSE
+from palmcards.config import CURSOR, KNOB, OPS
 from palmcards.gestures import FINGER_TIPS, HAND_CONNECTIONS, INDEX_TIP, THUMB_TIP, TIPS
 from palmcards.motion import Spring, rubberband
 from palmcards.notes import Sentence, parse_sentence
 from palmcards.preview import PreviewView
 from palmcards.style import (
     BAR, CHIPS, COLORS, COUNT_IN, SMALL_ON_FILL, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT,
-    MOTION, OUTLINE, PLAYBAR, PLAYER, RING, SCRIM, SHADOW, TEXT, TYPE, ZONE, TypeStep, bgr,
+    MOTION, OUTLINE, PLAYBAR, PLAYER, REC, RING, SCRIM, SHADOW, TEXT, TYPE, TypeStep, bgr,
 )
 
 if TYPE_CHECKING:
-    from palmcards.gestures import CommandZone, GestureState, Hand, RelativeCursor
+    from palmcards.gestures import GestureState, Hand, RelativeCursor
 
 C = COLORS
 CLEAR = (0, 0, 0, 0)
@@ -117,7 +117,8 @@ FOCUS_HINTS_LLM = {
 NEEDS_LLM = "(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)"
 GROWN = 0.99  # a focus this far grown is drawn as focused (the last step is under 2 px)
 REVIEW_SEP = " · "  # between Review's gesture hints (narrower than HINT_SEP: they share a row)
-FIST_HINT = ("RAISE A FIST: NEW TAKE", "FIST: NEW TAKE")
+DONE_HINT = "THUMB UP: PREPARE"  # Review: a thumbs-up held goes back to Prepare
+FIST_HINT = (f"RAISE A FIST: NEW TAKE · {DONE_HINT}", f"FIST: NEW TAKE · {DONE_HINT}")
 
 
 def review_hint(state: "ViewState") -> tuple[str, str]:
@@ -127,9 +128,9 @@ def review_hint(state: "ViewState") -> tuple[str, str]:
     if state.playing:  # an open palm stops it on a focus; a key while browsing
         return ("OPEN PALM: STOP", "PALM: STOP") if state.mode == "focus" else ("A: STOP", "A: STOP")
     if state.mode == "browse" and state.level == "sentence":
-        return "FOLD: DETAILS · FIST: NEW TAKE", "FOLD: DETAILS · FIST: NEW TAKE"
+        return (f"FOLD: DETAILS · FIST: NEW TAKE · {DONE_HINT}",) * 2
     if state.mode == "browse" and state.level == "paragraph":
-        return "FOLD: SUMMARY · FIST: NEW TAKE", "FOLD: SUMMARY · FIST: NEW TAKE"
+        return (f"FOLD: SUMMARY · FIST: NEW TAKE · {DONE_HINT}",) * 2
     if state.mode == "focus" and state.level == "paragraph":
         if not state.playable:
             return "DROP HAND: BACK", "DROP: BACK"
@@ -369,9 +370,7 @@ class ViewState:
     rec_s: float = 0.0  # length of the take so far
     recording_video: bool = False  # the take's video is being recorded too (the REC chip says so)
     mic: float = 0.0  # microphone level, 0..1
-    zone_active: bool = False  # a hand is in the command zone
-    hold_progress: float = 0.0  # open palm held in the zone, 0..1
-    flick_progress: float = 0.0  # sideways swing toward a flick, 0..1
+    hold_progress: float = 0.0  # a thumbs-up held toward "done" (stop, cancel, back to Prepare), 0..1
     drill: int | None = None  # count_in, rehearse: the one sentence a drill rehearses
     detail: tuple[str, ...] = ()  # Review focus: the lines under the sentence (a take each)
     summary: tuple[str, ...] = ()  # Review, browsing: the take table (palmcards.review), a line each
@@ -695,6 +694,8 @@ class TextOverlay:
                 second = f"STARTING IN {state.count_in}"
             else:
                 second = state.status
+            if progress is None:  # the only command in a take: a thumbs-up, anywhere
+                second += HINT_SEP + ("THUMB UP: CANCEL" if state.app == "count_in" else "THUMB UP: STOP")
             return state.title or ("DRILL" if state.drill is not None else "REHEARSE"), second, progress
 
         level = (state.level or "").upper()
@@ -1754,43 +1755,17 @@ class TextOverlay:
         cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_outline),
                    GAUGE.closing_knob_outline if closing else GAUGE.knob_outline, cv2.LINE_AA)
 
-    def _draw_zone(self, frame: np.ndarray, state: ViewState) -> None:
-        """Command zone: corner marks, recording clock and mic level, hints, flick and hold progress."""
-        zx0, zy0, zx1, zy1 = REHEARSE.zone
-        x0, y0 = int(zx0 * self.frame_w), int(zy0 * self.frame_h)
-        x1, y1 = int(zx1 * self.frame_w) - ZONE.inset_right, int(zy1 * self.frame_h)
-        active = state.zone_active
-        _corners(frame, (x0, y0 + ZONE.inset_top, x1, y1), int((x1 - x0) * ZONE.corner), C.yellow if active else C.zone,
-                 ZONE.active_stroke if active else ZONE.stroke, 1.0 if active else ZONE.alpha)
-
-        f = self._face(TYPE.small)
-        cx, y = (x0 + x1) / 2, y0 + self.pad
-        if state.app == "rehearse":
-            m, s = divmod(int(state.rec_s), 60)
-            rec = f"REC {m}:{s:02d}" + (" · VIDEO" if state.recording_video else "")
-            chip = self._chip(rec, self._face(TYPE.operation), C.node_text, C.dark_fill)
-            bx0, by0, _, by1 = self._blend_centered(frame, chip, cx + ZONE.rec_dx, y + chip[0].shape[0] / 2)
-            # The dot swells with the microphone level: a flat dot means no sound is arriving.
-            r0, grow = ZONE.mic_r
-            cv2.circle(frame, (bx0 - ZONE.mic_dx, (by0 + by1) // 2), r0 + round(grow * state.mic), bgr(C.rec), -1,
-                       cv2.LINE_AA)
-            y = by1 + self.pad // 2
-            hints = ("HOLD OPEN PALM: STOP",) if state.drill is not None else \
-                ("FLICK SIDEWAYS: NEXT SECTION", "HOLD OPEN PALM: STOP")
-        elif state.app == "count_in":
-            hints = ("HOLD OPEN PALM: CANCEL",)
-        else:
-            hints = ("HOLD OPEN PALM: BACK TO PREPARE",)
-        for text in hints:  # one plain line each
-            ink = self._ink(text, f, C.node_text if active else C.dim)
-            y = self._blend_centered(frame, ink, cx, y + ink[0].shape[0] / 2 - ink[2])[3] + ZONE.hint_gap
-
-        if state.app == "rehearse" and (active or state.flick_progress > 0):
-            # Flick meter, while a hand is in the zone: fills as the hand swings sideways, so a near miss shows.
-            half = (x1 - x0) / 2 - ZONE.flick_inset
-            self._draw_bar(frame, cx - half, cx + half, y1 - ZONE.flick_dy, state.flick_progress, from_centre=True)
-        if state.hold_progress > 0:
-            self._draw_bar(frame, x0 + ZONE.hold_inset, x1 - ZONE.hold_inset, y1 - ZONE.hold_dy, state.hold_progress)
+    def _draw_rec(self, frame: np.ndarray, state: ViewState) -> None:
+        """Rehearse: the recording clock and the microphone level, top right (REC)."""
+        m, sec = divmod(int(state.rec_s), 60)
+        rec = f"REC {m}:{sec:02d}" + (" · VIDEO" if state.recording_video else "")
+        chip = self._chip(rec, self._face(TYPE.operation), C.node_text, C.dark_fill)
+        top = REC.top * self.line_h
+        bx0, by0, _, by1 = self._blend_centered(frame, chip, REC.x * self.frame_w, top + chip[0].shape[0] / 2)
+        # The dot swells with the microphone level: a flat dot means no sound is arriving.
+        r0, grow = REC.mic_r
+        cv2.circle(frame, (bx0 - REC.mic_dx, (by0 + by1) // 2), r0 + round(grow * state.mic), bgr(C.rec), -1,
+                   cv2.LINE_AA)
 
     def _scrim_level(self, frame: np.ndarray) -> float:
         """How dark the scrim should be for this frame: the brightness of the
@@ -1931,8 +1906,8 @@ class TextOverlay:
             if panel is not None and state.focus is not None and state.focus.sentence in panel.rows:
                 bounds = tuple(top - scroll + y for y in panel.rows[state.focus.sentence])
             self._draw_gauge(frame, self.shown_tone(state), top, bottom, state.ops.closing, bounds)
-        if state.app in ("count_in", "rehearse", "review"):
-            self._draw_zone(frame, state)
+        if state.app == "rehearse":
+            self._draw_rec(frame, state)
         if state.app == "review" and state.mode == "focus" and state.takes and g is None:
             self._draw_takes(frame, state)
         if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
@@ -2195,13 +2170,6 @@ def draw_hand_area(frame: np.ndarray, cursor: RelativeCursor) -> None:
     x0, y0, x1, y1 = (int(v) for v in cursor.box)
     arm = max(HANDS.area_min_arm, int((x1 - x0) * HANDS.area_arm))
     _corners(frame, (x0, y0, x1, y1), arm, C.hand_area, HANDS.area_stroke, HANDS.area_alpha)
-
-
-def draw_zone_outline(frame: np.ndarray, zone: CommandZone) -> None:
-    """Debug: the command zone as the gesture code sees it."""
-    x0, y0, x1, y1 = (int(v) for v in zone.box)
-    cv2.rectangle(frame, (x0, y0), (x1 - 1, y1), bgr(C.yellow if zone.active else C.debug_box), HANDS.box_stroke,
-                  cv2.LINE_AA)
 
 
 def draw_stats(frame: np.ndarray, text: str) -> None:

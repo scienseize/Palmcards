@@ -1,6 +1,6 @@
 {
  "name": "word-ring-commit",
- "description": "One finger browses words, pinch focuses, open palm spreads the options ring, an L turns it (steps from the replay: recorded before the knob), pinch + lift commits.",
+ "description": "One finger browses words, pinch focuses, open palm spreads the options ring, an L turns it (steps from the replay: recorded before the knob), pinch + lift commits. Expected grammar entries from the replay: relaxed open palm: the ring opens at 5.75 s, live 6.18 s.",
  "source": "20260925-024808.trace.jsonl",
  "window": [116.0, 130.1],
  "frame_size": [1280, 720],
@@ -8,7 +8,7 @@
  "known_issue": null,
  "expected": [
   {"t": 3.846, "kind": "focus", "level": "word"},
-  {"t": 6.177, "kind": "op", "op": "ring"},
+  {"t": 5.747, "kind": "op", "op": "ring"},
   {"t": 7.845, "kind": "op", "op": "ring_step", "dir": -1},
   {"t": 7.885, "kind": "op", "op": "ring_step", "dir": -1},
   {"t": 7.885, "kind": "op", "op": "ring_step", "dir": -1},

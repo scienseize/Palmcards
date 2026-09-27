@@ -69,7 +69,22 @@ class Pose:
     pinch_min_reach: float = 1.1  # index tip this far from the wrist, so a fist isn't a pinch
     together: float = 0.30  # index and middle tips closer than this
     flat_spread_max: float = 0.30  # mean adjacent fingertip distance
-    open_spread_min: float = 0.45
+    # An open palm, relaxed: from the user's calibration trace (2026-09-27), a
+    # relaxed palm's spread is 0.34-0.39 with the thumb resting 0.55-0.58 palms
+    # from the index knuckle; a flat hand's 0.20-0.24 and 0.31-0.40. The old
+    # rule (spread > 0.45, thumb > 0.9) made people stretch their hand.
+    open_spread_min: float = 0.30
+    open_thumb_min: float = 0.47  # dist(thumb tip, index MCP): clear of the palm, not stuck out
+    open_spread_off: float = 0.27  # once open, it stays open down to these (hysteresis)
+    open_thumb_off: float = 0.42
+    # A thumbs-up ("done": stop the take, cancel the count-in, back to
+    # Prepare): no finger out, the thumb up. The user's thumbs-ups: thumb
+    # 0.79-1.0 palms from the index knuckle, within 17 deg of vertical, its
+    # tip 0.52-0.75 palms above the knuckle. Near misses in older traces
+    # (an L collapsing, tracking glitches) had the thumb much further out.
+    thumb_up_dist: tuple[float, float] = (0.65, 1.35)
+    thumb_up_deg: float = 30.0
+    thumb_up_height: tuple[float, float] = (0.3, 1.1)
     l_angle_min: float = 50.0  # degrees between thumb and index
     l_angle_max: float = 130.0
 
@@ -181,19 +196,11 @@ class Knob:
 class Rehearse:
     start_hold_s: float = 1.0  # closed fist held this long (Prepare, Review) starts a take
     count_in_s: float = 3.0  # 3-2-1 before recording
-    # Command zone (x0, y0, x1, y1), top right of the mirrored frame. In
-    # Rehearse, hands only act while their palm centre is inside it. Close to
-    # a laptop camera a palm is ~270 px, so the zone must hold a whole hand.
-    zone: tuple[float, float, float, float] = (0.66, 0.0, 1.0, 0.55)
-    hold_s: float = 1.5  # open palm held in the zone: stop, cancel, or back to Prepare
-    hold_grace_s: float = 0.3  # misread frames the hold forgives
-    settle_s: float = 0.15  # a hand must be in the zone this long before it can flick
-    flick_window_s: float = 0.3  # sideways travel must happen within this
-    flick_dist: float = 0.8  # fingertip travel, palm units
-    flick_straightness: float = 1.5  # sideways travel at least this times the vertical
-    flick_cooldown_s: float = 1.0  # no zone command right after a flick
-    follow_palms: float = 2.5  # frame-to-frame jump still counted as the same hand
-    dropout_s: float = 0.3  # tracking gaps shorter than this don't lose the hand
+    # A thumbs-up held this long, anywhere in the frame ("done"): stops a take
+    # or drill, cancels the count-in, goes back to Prepare from Review. In
+    # Rehearse nothing else a hand does is a command.
+    done_hold_s: float = 1.5
+    done_grace_s: float = 0.3  # misread frames the hold forgives
 
 
 @dataclass(frozen=True)

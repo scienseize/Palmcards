@@ -54,10 +54,11 @@ from palmcards import features, gaze  # noqa: E402
 from palmcards.paths import data_dir  # noqa: E402
 from palmcards.session import Session  # noqa: E402
 
-# Gesture-log entries that are the app acting on a gesture: a zone command
-# (flick, hold), a focus or commit, a mode change (a take started or
-# stopped...). Keys are logged as "key" and are never false triggers.
-ACTIONS = ("zone", "focus", "commit", "mode")
+# Gesture-log entries that are the app acting on a gesture: a thumbs-up
+# held ("done"; before 2026-09-27 a command-zone "zone" flick or hold), a
+# focus or commit, a mode change (a take started or stopped...). Keys are
+# logged as "key" and are never false triggers.
+ACTIONS = ("done", "zone", "focus", "commit", "mode")
 
 
 def evaluate(labels: dict, root: Path | None = None) -> dict:

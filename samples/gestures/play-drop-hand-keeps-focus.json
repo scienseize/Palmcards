@@ -1,6 +1,6 @@
 {
  "name": "play-drop-hand-keeps-focus",
- "description": "A sentence plays; the hand is out of frame for 4.7 s of it and comes back: the focus is kept (no back).",
+ "description": "A sentence plays; the hand is out of frame for 4.7 s of it and comes back: the focus is kept (no back). Expected grammar entries from the replay: relaxed open palm: the hand comes back at 9.88 s already open (spread 0.44, thumb 0.73 palms), a fresh palm, so it stops the sentence 0.7 s before its end; live, it read as open only at 10.95 s, after the end.",
  "source": "20260927-165358.trace.jsonl",
  "window": [48.0, 60.0],
  "frame_size": [1280, 720],
@@ -9,7 +9,8 @@
  "inputs": [{"t": 4.311, "focus_hold": "play"}, {"t": 10.881, "focus_hold": null}],
  "expected": [
   {"t": 2.216, "kind": "focus", "level": "sentence"},
-  {"t": 4.278, "kind": "palm_hold", "level": "sentence"}
+  {"t": 4.051, "kind": "palm_hold", "level": "sentence"},
+  {"t": 10.353, "kind": "palm_stop", "level": "sentence"}
  ],
  "frames": [
   {"t":0.015,"hands":[]},

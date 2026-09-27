@@ -6,7 +6,7 @@ sessions (which are evidence and never change with your settings).
 
   reach          the hand box's size (0.6 .. 1.4): smaller, less movement to cross the notes
   start_hold_s   how long a fist is held to start a take
-  stop_hold_s    how long an open palm is held in the zone (stop, cancel, back to Prepare)
+  stop_hold_s    how long a thumbs-up is held for "done" (stop, cancel, back to Prepare)
   high_contrast  brighter dimmed text and a darker backing (key c in the app)
   show_hand_box  the hand box drawn faintly while a hand is up
   reduced_motion nothing moves or scales, things fade (true / false; auto: as macOS's
@@ -39,7 +39,7 @@ class Prefs:
     video: bool = False  # record video of each take (palmcards.video); main.py --video for one run
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
-    stop_hold_s: float = REHEARSE.hold_s
+    stop_hold_s: float = REHEARSE.done_hold_s
 
     def checked(self) -> "Prefs":
         """Values clamped to what the app can use."""
@@ -87,8 +87,7 @@ def apply(prefs: Prefs) -> None:
     prefs = prefs.checked()
     # Only the fields preferences own; the rest of each setting stays as it is.
     gestures.CURSOR = replace(gestures.CURSOR, hand_box=hand_box(prefs.reach))
-    gestures.REHEARSE = replace(gestures.REHEARSE, start_hold_s=prefs.start_hold_s, hold_s=prefs.stop_hold_s)
-    render.REHEARSE = replace(render.REHEARSE, start_hold_s=prefs.start_hold_s, hold_s=prefs.stop_hold_s)
+    gestures.REHEARSE = replace(gestures.REHEARSE, start_hold_s=prefs.start_hold_s, done_hold_s=prefs.stop_hold_s)
     render.set_contrast(prefs.high_contrast)
     render.set_reduced_motion(system_reduce_motion() if prefs.reduced_motion is None else prefs.reduced_motion)
 

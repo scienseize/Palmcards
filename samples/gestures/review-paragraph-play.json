@@ -1,6 +1,6 @@
 {
  "name": "review-paragraph-play",
- "description": "In Review a flat hand folds to focus a paragraph; an open palm held on it plays the paragraph (palm_hold), once; dropping the hand backs out.",
+ "description": "In Review a flat hand folds to focus a paragraph; an open palm held on it plays the paragraph (palm_hold), once; dropping the hand backs out. Expected grammar entries from the replay: relaxed open palm: the paragraph plays from 6.01 s, live 6.47 s.",
  "source": "20260927-162724.trace.jsonl",
  "window": [72.5, 86.5],
  "frame_size": [1280, 720],
@@ -8,7 +8,7 @@
  "known_issue": null,
  "expected": [
   {"t": 1.871, "kind": "focus", "level": "paragraph"},
-  {"t": 6.475, "kind": "palm_hold", "level": "paragraph"},
+  {"t": 6.008, "kind": "palm_hold", "level": "paragraph"},
   {"t": 13.313, "kind": "back", "level": "paragraph"}
  ],
  "frames": [

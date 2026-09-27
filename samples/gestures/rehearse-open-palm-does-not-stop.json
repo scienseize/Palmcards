@@ -1,16 +1,12 @@
 {
- "name": "rehearse-stop-then-review",
- "description": "Open palm held in the zone stops the take into Review; a flick right after is only logged.",
+ "name": "rehearse-open-palm-does-not-stop",
+ "description": "An open palm held top right (it stopped takes until 2026-09-27) and a flick: the take goes on. Expected entries from the replay: a thumbs-up stops a take since 2026-09-27; the open palm doesn't.",
  "source": "20260925-101345.trace.jsonl",
  "window": [98.1, 104.1],
  "frame_size": [1280, 720],
  "start_mode": "rehearse",
  "known_issue": null,
- "expected": [
-  {"t": 3.974, "kind": "zone", "command": "hold"},
-  {"t": 3.974, "kind": "mode", "mode": "review"},
-  {"t": 4.614, "kind": "zone", "command": "flick"}
- ],
+ "expected": [],
  "frames": [
   {"t":0.006,"hands":[{"label":"Left","points":[1117,755,1029,747,946,702,874,657,818,616,996,612,958,506,944,446,940,400,1051,597,1049,486,1051,423,1059,376,1101,599,1098,495,1094,429,1095,380,1146,606,1145,522,1142,461,1140,411]}]},
   {"t":0.045,"hands":[{"label":"Right","points":[1063,761,990,728,920,674,859,622,808,577,975,574,961,466,956,397,959,342,1044,568,1043,444,1045,364,1048,304,1110,584,1111,467,1112,389,1111,326,1173,615,1194,548,1210,510,1218,478]}]},

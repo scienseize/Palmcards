@@ -20,7 +20,7 @@ from tests.test_app_lifecycle import Rig
 @pytest.fixture
 def restore(monkeypatch):
     """Whatever apply() and set_contrast() change is put back after the test."""
-    for module, name in ((gestures, "CURSOR"), (gestures, "REHEARSE"), (render, "REHEARSE"), (render, "C")):
+    for module, name in ((gestures, "CURSOR"), (gestures, "REHEARSE"), (render, "C")):
         monkeypatch.setattr(module, name, getattr(module, name))
 
 
@@ -47,7 +47,7 @@ def test_apply_changes_only_what_preferences_own(restore):
     prefs.apply(prefs.Prefs(reach=0.7, start_hold_s=0.5, stop_hold_s=2.0, high_contrast=True))
     assert gestures.CURSOR.hand_box == pytest.approx(prefs.hand_box(0.7))
     assert gestures.CURSOR.edge_band == CURSOR.edge_band
-    assert (gestures.REHEARSE.start_hold_s, gestures.REHEARSE.hold_s) == (0.5, 2.0)
+    assert (gestures.REHEARSE.start_hold_s, gestures.REHEARSE.done_hold_s) == (0.5, 2.0)
     assert gestures.REHEARSE.count_in_s == REHEARSE.count_in_s and render.C.dim != render.COLORS.dim
 
 
@@ -74,11 +74,12 @@ def test_the_tutorial_moves_on_as_each_gesture_is_done():
 
 def test_hints_say_why_a_gesture_did_nothing():
     formed = state(FIST, first=PINCH, mode="browse")
-    assert "RAISED CLOSED" in main.nonactivation_hint("prepare", formed, False, 0.0)
-    assert main.nonactivation_hint("prepare", state(FIST, first=FIST), False, 0.0) == ""  # a real start
-    assert main.nonactivation_hint("rehearse", state(OPEN, first=OPEN), False, 0.5) == ""  # not held long yet
-    assert "TOP RIGHT" in main.nonactivation_hint("rehearse", state(OPEN, first=OPEN), False, 1.0)
-    assert main.nonactivation_hint("rehearse", state(OPEN, first=OPEN), True, 1.0) == ""  # in the zone: it acts
+    assert "RAISED CLOSED" in main.nonactivation_hint("prepare", formed, 0.0)
+    assert main.nonactivation_hint("prepare", state(FIST, first=FIST), 0.0) == ""  # a real start
+    assert main.nonactivation_hint("rehearse", state(OPEN, first=OPEN), 0.5) == ""  # not held long yet
+    # An open palm stopped takes before the thumbs-up did: held on, it says what does.
+    assert main.nonactivation_hint("rehearse", state(OPEN, first=OPEN), 1.0) == "TO STOP: THUMB UP, HELD"
+    assert main.nonactivation_hint("count_in", state(OPEN, first=OPEN), 1.0) == "TO CANCEL: THUMB UP, HELD"
 
 
 def test_contrast_tutorial_card_and_hand_area_are_drawn(restore):

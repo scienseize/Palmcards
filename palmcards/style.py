@@ -10,8 +10,8 @@ they say px.
 The frame is split into three vertical zones (`LAYOUT`): the text column on
 the left holds everything the user reads, nothing is drawn over the face in
 the middle, and the hand zone on the right holds only what belongs to the
-hand. Where the hand box and the command zone sit is behaviour, not style:
-the gesture code hit-tests against them, so they stay in palmcards/config.py.
+hand. Where the hand box sits is behaviour, not style: the gesture code
+hit-tests against it, so it stays in palmcards/config.py.
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ class Layout:
     only documents where the hand box is (CURSOR.hand_box in config.py)."""
     text: tuple[float, float] = (0.06, 0.36)  # labels, notes, ring, gauge, Review's take chips
     face: tuple[float, float] = (0.36, 0.55)  # nothing drawn here but fingertip dots
-    hand: tuple[float, float] = (0.55, 0.95)  # hand box, command zone, their hints, Review's take table, the tutorial
+    hand: tuple[float, float] = (0.55, 0.95)  # hand box, REC (Rehearse), Review's take table, the tutorial
 
 
 @dataclass(frozen=True)
@@ -305,7 +305,7 @@ class Ring:
 
 @dataclass(frozen=True)
 class Bar:
-    """Every progress bar (a hold, what plays, the flick meter, the count-in):
+    """Every progress bar (a hold, what plays, the count-in):
     a thin line with round ends, a faint track (Colors.bar_track) filled in
     orange (Colors.bar_fill)."""
     thickness: float = 0.12  # x the UI size (3 px at 720p)
@@ -397,31 +397,21 @@ class Sound:
 
 
 @dataclass(frozen=True)
-class Zone:
-    """Command zone contents (the zone's place is REHEARSE.zone in config.py):
-    corner marks like the hand box, hints as plain lines (TYPE.small), the
-    recording clock (TYPE.operation), the flick meter and hold bar (BAR)."""
-    stroke: int = 1
-    active_stroke: int = 2
-    corner: float = 0.1  # the corner marks' arms, x the zone's width
-    alpha: float = 0.45  # the corner marks' opacity; full while a hand is in the zone
-    inset_right: int = 2  # px, so the outline's right edge stays on screen
-    inset_top: int = 1
-    hint_gap: int = 4  # px between hints
-    rec_dx: int = 10  # px right of the zone's centre
+class Rec:
+    """Rehearse: the recording clock (TYPE.operation) and microphone level,
+    top right of the frame, in the hand zone. Nothing else is drawn there
+    during a take: its only command, a thumbs-up, works anywhere."""
+    x: float = 0.83  # the chip's centre, x the frame width
+    top: float = 0.5  # its top, x the notes' line height below the frame's top edge
     mic_dx: int = 14  # px left of the REC chip
     mic_r: tuple[int, int] = (4, 8)  # (radius when silent, growth at full level)
-    flick_dy: int = 30  # px above the zone's bottom
-    flick_inset: int = 12
-    hold_inset: int = 6  # hold bar: inset from the zone's sides, px
-    hold_dy: int = 9  # px above the zone's bottom
 
 
 @dataclass(frozen=True)
 class CountIn:
     """The 3-2-1 (TYPE.display), with a bar under it emptying each second."""
     bar_em: float = 1.6  # the bar's length, x the digit's width
-    y: float = 0.65  # centred in the hand zone (LAYOUT.hand), below the command zone, at this height
+    y: float = 0.65  # centred in the hand zone (LAYOUT.hand), at this height
 
 
 @dataclass(frozen=True)
@@ -532,7 +522,7 @@ BAR = Bar()
 TYPE = TypeScale()
 MOTION = Motion()
 SOUND = Sound()
-ZONE = Zone()
+REC = Rec()
 COUNT_IN = CountIn()
 SUMMARY = Summary()
 HANDS = Hands()

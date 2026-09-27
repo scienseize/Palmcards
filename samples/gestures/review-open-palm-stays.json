@@ -1,15 +1,12 @@
 {
- "name": "review-back-to-prepare",
- "description": "Open palm held in the zone goes from Review back to Prepare.",
+ "name": "review-open-palm-stays",
+ "description": "An open palm held top right in Review (it went back to Prepare until 2026-09-27): Review stays. Expected entries from the replay: a thumbs-up goes back to Prepare since 2026-09-27; the open palm doesn't.",
  "source": "20260925-101345.trace.jsonl",
  "window": [106.8, 120.1],
  "frame_size": [1280, 720],
  "start_mode": "review",
  "known_issue": null,
- "expected": [
-  {"t": 10.818, "kind": "zone", "command": "hold"},
-  {"t": 10.818, "kind": "mode", "mode": "prepare"}
- ],
+ "expected": [],
  "frames": [
   {"t":0.013,"hands":[]},
   {"t":0.05,"hands":[{"label":"Right","points":[958,778,896,729,862,662,843,603,831,555,904,640,872,630,862,658,865,679,939,660,897,658,891,678,897,693,961,681,922,677,914,694,918,710,976,701,947,685,937,690,937,701]}]},

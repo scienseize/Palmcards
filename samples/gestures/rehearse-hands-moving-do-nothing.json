@@ -1,14 +1,12 @@
 {
- "name": "rehearse-one-flick",
- "description": "18 s of rehearsing with hands moving; exactly one flick in the command zone.",
+ "name": "rehearse-hands-moving-do-nothing",
+ "description": "18 s of rehearsing with hands moving, one of them a sideways flick: nothing happens. Expected entries from the replay: the command zone and its flick were removed on 2026-09-27.",
  "source": "20260925-101345.trace.jsonl",
  "window": [65.0, 83.3],
  "frame_size": [1280, 720],
  "start_mode": "rehearse",
  "known_issue": null,
- "expected": [
-  {"t": 14.73, "kind": "zone", "command": "flick"}
- ],
+ "expected": [],
  "frames": [
   {"t":0.029,"hands":[{"label":"Left","points":[1094,760,1040,738,989,678,1000,629,1060,621,1034,575,1016,490,1008,433,1002,386,1096,583,1075,562,1055,638,1046,682,1150,609,1122,604,1096,676,1085,710,1199,646,1171,634,1145,680,1137,704]}]},
   {"t":0.056,"hands":[{"label":"Left","points":[1093,771,1034,742,989,672,1009,620,1070,622,1040,569,1022,480,1015,425,1014,378,1106,578,1084,555,1063,635,1058,680,1162,608,1135,603,1105,674,1096,707,1211,648,1181,638,1151,684,1143,707]}]},

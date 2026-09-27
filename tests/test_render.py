@@ -191,12 +191,16 @@ def test_label_lines_for_takes():
     assert ov.label_lines(ViewState(start_progress=0.5))[1] == "START A TAKE: HOLD FIST"
     assert ov.label_progress(ViewState(start_progress=0.5)) == 0.5  # drawn as a bar after the text
     assert ov.label_progress(ViewState(status="HOLD FIST: START A TAKE")) is None
-    assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2")
-    assert ov.label_lines(ViewState(app="count_in", hold_progress=0.3))[1].startswith("CANCEL: HOLD")
+    # In a take the only command is a thumbs-up: the hint line says so.
+    assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2  /  THUMB UP: CANCEL")
+    assert ov.label_lines(ViewState(app="count_in", hold_progress=0.3))[1] == "CANCEL: HOLD"
     rehearse = ViewState(app="rehearse", status="SECTION 1/2: ONE")
-    assert ov.label_lines(rehearse) == ("REHEARSE", "SECTION 1/2: ONE")
+    assert ov.label_lines(rehearse) == ("REHEARSE", "SECTION 1/2: ONE  /  THUMB UP: STOP")
+    assert [text for line, text in ov.label_rows(rehearse) if line == 2] == ["THUMB UP: STOP"]
     rehearse.note = "LAST SECTION"
-    assert ov.label_lines(rehearse)[1] == "LAST SECTION"
+    assert ov.label_lines(rehearse)[1] == "LAST SECTION  /  THUMB UP: STOP"
+    rehearse.note, rehearse.hold_progress = "", 0.5
+    assert ov.label_lines(rehearse)[1] == "STOP: HOLD" and ov.label_progress(rehearse) == 0.5
     review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None))
     assert ov.label_lines(review)[1] == "  /  PINCH + LIFT: DRILL"  # no Prepare operations in Review
     assert ov.label_lines(ViewState(app="review"))[0] == "REVIEW"
@@ -205,9 +209,10 @@ def test_label_lines_for_takes():
 def test_review_labels_list_the_gestures_that_act():
     ov = overlay()
     browse = ViewState(app="review", mode="browse", level="sentence", status="TAKE 2 SAVED (0:41)")
-    assert ov.label_lines(browse) == ("BROWSE BY SENTENCE", "TAKE 2 SAVED (0:41)  /  FOLD: DETAILS · FIST: NEW TAKE")
+    assert ov.label_lines(browse) == ("BROWSE BY SENTENCE",
+                                      "TAKE 2 SAVED (0:41)  /  FOLD: DETAILS · FIST: NEW TAKE · THUMB UP: PREPARE")
     browse.level = "paragraph"
-    assert ov.label_lines(browse)[1].endswith("FOLD: SUMMARY · FIST: NEW TAKE")
+    assert ov.label_lines(browse)[1].endswith("FOLD: SUMMARY · FIST: NEW TAKE · THUMB UP: PREPARE")
     focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2  2 OF 3",
                       takes=("TAKE 1", "TAKE 2", "TAKE 3"), take_shown=1, playable=True)
     assert ov.label_lines(focus)[1] == \
@@ -235,7 +240,7 @@ def test_review_hints_take_the_short_form_when_the_long_one_does_not_fit_a_row(s
     rows = hint_rows(ov, focus)  # too wide even short: its hints packed whole, never split
     assert 1 <= len(rows) <= 2 and " · ".join(rows) == "PALM: PLAY · L: 11/12 · PINCH+LIFT: DRILL"
     browse = ViewState(app="review", mode="browse", level="sentence")
-    assert hint_rows(ov, browse) == ["FOLD: DETAILS · FIST: NEW TAKE"]  # the long form fits
+    assert hint_rows(ov, browse) == ["FOLD: DETAILS · FIST: NEW TAKE", "THUMB UP: PREPARE"]  # packed whole
     paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), playable=True)
     assert hint_rows(ov, paragraph) == ["PALM: PLAY PARAGRAPH · DROP: BACK"]
 
@@ -273,13 +278,13 @@ def test_a_thin_progress_bar_under_the_focused_unit_while_it_plays():
 def test_draw_count_in_and_rehearse():
     ov = TextOverlay(parse_text(SECTIONS, "md").sentences, (1280, 720))
     for view in (
-        ViewState(app="count_in", count_in=3, zone_active=True, hold_progress=0.4),
+        ViewState(app="count_in", count_in=3, hold_progress=0.4),
         ViewState(app="rehearse", section=1, rec_s=75.2, mic=0.7, hold_progress=0.5, status="SECTION 2/2: TWO"),
     ):
         frame = np.full((720, 1280, 3), 128, np.uint8)
         ov.draw(frame, view)
-        zone = frame[:int(0.42 * 720), int(0.72 * 1280):]
-        assert (zone != 128).any()
+        top_right = frame[:int(0.42 * 720), int(0.72 * 1280):]
+        assert (top_right != 128).any() == (view.app == "rehearse")  # REC and the mic; no box, no hints
 
 def test_review_draws_the_take_table_and_the_focused_sentences_takes():
     from palmcards.review import Board
@@ -313,7 +318,7 @@ def test_a_drill_shows_only_its_sentence():
     ov = TextOverlay(parse_text(SECTIONS, "md").sentences, (1280, 720))
     view = ViewState(app="rehearse", section=0, drill=1, status="SENTENCE 2")
     assert ov._panel_unit(view) == (1,)
-    assert ov.label_lines(view) == ("DRILL", "SENTENCE 2")
+    assert ov.label_lines(view) == ("DRILL", "SENTENCE 2  /  THUMB UP: STOP")
 
 
 # --- everything reachable (review finding F2) -------------------------------------
@@ -390,9 +395,9 @@ def test_the_alert_line_and_keys_help_are_drawn():
 def test_the_calibration_steps_in_the_count_in():
     ov = overlay()
     view = ViewState(app="count_in", count_in=5, calibration="camera", current=0)
-    assert ov.label_lines(view) == ("REHEARSE", "LOOK INTO THE CAMERA ABOVE THE SCREEN")
+    assert ov.label_lines(view) == ("REHEARSE", "LOOK INTO THE CAMERA ABOVE THE SCREEN  /  THUMB UP: CANCEL")
     view = ViewState(app="count_in", count_in=2, calibration="notes", current=0)
-    assert ov.label_lines(view)[1] == "NOW READ THE ORANGE SENTENCE  2"
+    assert ov.label_lines(view)[1] == "NOW READ THE ORANGE SENTENCE  2  /  THUMB UP: CANCEL"
     # No big count digit while calibrating: it would pull the eyes away.
     calibrating, counting = (np.full((720, 1280, 3), 128, np.uint8) for _ in range(2))
     ov.draw(calibrating, view)
@@ -635,7 +640,7 @@ def test_nothing_is_drawn_over_the_face():
         # The stretch line runs between the two hands, like the fingertip dots: left out here.
         ViewState(mode="focus", level="paragraph", focus=Hit(4, None), ops=OpsView(kind="stretch", stretch=0.8)),
         ViewState(app="count_in", count_in=2),
-        ViewState(app="rehearse", current=1, rec_s=4.0, status="SECTION 1/1: THE ONLY ONE", zone_active=True),
+        ViewState(app="rehearse", current=1, rec_s=4.0, status="SECTION 1/1: THE ONLY ONE", hold_progress=0.5),
         ViewState(app="review", mode="browse", level="sentence", hover=Hit(2, None), summary=table,
                   status="TAKE 1: 9/9 SPOKEN, 216 WPM, 0 FILLERS/MIN  /  RAISE A FIST: NEW TAKE"),
         ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), takes=("TAKE 1", "TAKE 2 (DRILL)"),

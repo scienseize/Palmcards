@@ -1,6 +1,6 @@
 {
  "name": "play-fresh-palm-stops",
- "description": "A palm plays the sentence; the hand closes to a fist, then a new palm held 0.3 s stops it (palm_stop); the focus stays.",
+ "description": "A palm plays the sentence; the hand closes to a fist, then a new palm held 0.3 s stops it (palm_stop); the focus stays. Expected grammar entries from the replay: relaxed open palm: the sentence plays from 4.94 s, live 5.21 s.",
  "source": "20260927-165358.trace.jsonl",
  "window": [107.3, 116.5],
  "frame_size": [1280, 720],
@@ -9,8 +9,8 @@
  "inputs": [{"t": 5.241, "focus_hold": "play"}],
  "expected": [
   {"t": 1.48, "kind": "focus", "level": "sentence"},
-  {"t": 5.215, "kind": "palm_hold", "level": "sentence"},
-  {"t": 7.815, "kind": "palm_stop", "level": "sentence"}
+  {"t": 4.944, "kind": "palm_hold", "level": "sentence"},
+  {"t": 7.749, "kind": "palm_stop", "level": "sentence"}
  ],
  "frames": [
   {"t":0.012,"hands":[]},

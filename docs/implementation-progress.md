@@ -2014,3 +2014,55 @@ Tests: pytest (full) -> 588 passed. The reopen frame-loop test now records a lef
   video: the shown frame is it flipped, with nothing but the bottom bar on it, and the mirror with the
   notes before and after; the chip's render test became the bar's.
 ```
+
+```text
+Date: 2026-09-28
+Phase / issue IDs: user testing round, stage 1 of 2: a relaxed open palm, and a thumbs-up instead of the
+  command zone (stage 2, the clean replay, is 972f86f)
+Status: implemented; tuned on the user's calibration trace; automated checks passed; the user's camera
+  check pending
+Calibration trace (sessions/gesture-logs/20260927-234235.trace.jsonl, parts marked with `s`):
+  relaxed open palms: spread 0.34-0.39 (p5-p95), thumb 0.55-0.58 palms from the index MCP: the old
+    rule (spread > 0.45 and thumb > 0.9) read every one as NONE.
+  flat hands: spread 0.20-0.24, thumb 0.31-0.40.
+  thumbs-ups: no finger out, thumb 0.79-1.0 palms from the index MCP, within 17 deg of vertical, its tip
+    0.52-0.75 palms above the knuckle; the first one, read as a fist, started a count-in at 56.7 s.
+  The talking part had 8 hand frames (hands below the camera): the false-trigger check used the 12
+    older traces instead. The rule chosen matches 130 of 132 thumbs-up frames there and 18 isolated
+    frames in the older traces (longest run 0.07 s). A looser rule (thumb > 0.7 palms, <= 30 deg) had
+    a 1.37 s run in 20260925-024808 (an L collapsing, the thumb 1.5-3.5 palms out: tracking glitches),
+    hence the upper bounds.
+Changes:
+  palmcards/config.py POSE: open_spread_min 0.30, open_thumb_min 0.47 (off: 0.27, 0.42), thumb_up_dist
+    (0.65, 1.35), thumb_up_deg 30, thumb_up_height (0.3, 1.1). REHEARSE: zone, hold_s, hold_grace_s,
+    settle_s, flick_*, follow_palms, dropout_s removed; done_hold_s 1.5, done_grace_s 0.3.
+  palmcards/gestures.py: Features thumb_dist, thumb_up_deg, thumb_height; is_open (hysteresis on the
+    previous raw pose, as the pinch has) and is_thumb_up; classify(f, was_pinching, was_open) gives
+    THUMB_UP before FIST. CommandZone (and palm_center) replaced by DoneHold (either hand, anywhere,
+    raw pose, grace); ModeMachine: done -> take_stop / count_in_cancel / to_prepare, logged "done"; no
+    flick, no next_section gesture (keys n b j k remain).
+  main.py: view.hold_progress from modes.done; the hint for an open palm held in a take or count-in
+    says "TO STOP: THUMB UP, HELD" / "TO CANCEL: ..."; usage text; the debug zone outline gone.
+  palmcards/render.py: _draw_zone -> _draw_rec (REC and the mic level, top right, Rehearse only; style
+    REC replaces ZONE); the label's hint line in a take "THUMB UP: STOP" / count-in "THUMB UP: CANCEL";
+    Review browsing adds "THUMB UP: PREPARE" (packed onto a second row); ViewState zone_active and
+    flick_progress gone; render no longer reads REHEARSE (prefs.apply sets it in gestures only).
+  prefs: stop_hold_s is the thumbs-up's hold.
+  scripts/evaluate.py: "done" counts as a gesture action (old logs' "zone" too).
+  samples/gestures: the four zone samples re-cut as negatives from the same frames (REPLAYED_WHOLE in
+    scripts/cut_gesture_samples.py): rehearse-hands-moving-do-nothing, rehearse-open-palm-does-not-stop,
+    review-open-palm-stays, rehearse-swipes-do-nothing. New from the calibration trace:
+    thumbs-up-is-not-a-take, thumbs-up-stops-take, thumbs-up-back-to-prepare. The relaxed palm reads
+    the palm as the hand opens: word-ring-commit (ring at 5.75 s, live 6.18), play-fresh-palm-stops
+    (4.94, live 5.21), review-paragraph-play (6.01, live 6.47) re-expected from the replay; and in
+    play-drop-hand-keeps-focus the hand comes back into view already open (spread 0.44, thumb 0.73) 0.9 s
+    before the sentence ends: a fresh palm, so it now stops it (live, it read as open only at 10.95 s,
+    after the end). FROM_REPLAY names each with the reason.
+  samples/poses/calibration-20260927.json (new): 264 labelled held-pose frames from the trace (landmarks
+    only), which tests/test_gestures.py checks classify reads as labelled (>= 95% each).
+Tests: pytest (full) -> 595 passed; python -m palmcards.replay -> all ok (20 samples). New: relaxed palm,
+  hysteresis, flat with the thumb out, thumbs-up vs fists (sideways thumb, glitch, tilted), leaning
+  thumbs-ups, the calibration poses, done anywhere, misreads and label flips, let go starts over,
+  count-in cancel, Review back to Prepare, a thumbs-up never starts a take, rehearse ignores everything
+  else (flicks, a palm top right); label hints in takes.
+```

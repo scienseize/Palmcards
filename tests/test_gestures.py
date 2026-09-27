@@ -5,7 +5,7 @@ import pytest
 
 from palmcards.config import CURSOR, OPS, REHEARSE, TIMING
 from palmcards.gestures import (
-    FIST, FLAT, L, NONE, ONE, OPEN, PINCH, TWO,
+    FIST, FLAT, L, NONE, ONE, OPEN, PINCH, THUMB_UP, TWO,
     Grammar, Hand, HandTrack, ModeMachine, RelativeCursor, classify, features,
 )
 
@@ -62,6 +62,16 @@ def fist(**kw):
     return hand(thumb=(-20, -85), **kw)  # thumb wrapped over the curled fingers
 
 
+def thumbs_up(**kw):
+    return hand(thumb=(-60, -170), **kw)  # fingers curled, the thumb straight up above the knuckles
+
+
+def relaxed_palm(**kw):
+    """Four fingers out, a little apart, the thumb resting clear of the palm: as the
+    user's calibration trace had it (spread ~0.36, thumb ~0.57 palms from the index knuckle)."""
+    return hand({8: (-50, -200), 12: (-15, -210), 16: (20, -205), 20: (55, -190)}, thumb=(-85, -60), **kw)
+
+
 def run(target, frames, t0=0.0):
     """Feed frames (a hand, a list of hands, or None) at 30 fps; returns (events, end time)."""
     events, t = [], t0
@@ -92,10 +102,53 @@ def lerp_frames(make_tips, a, b, n, **kw):
 # --- classifier ------------------------------------------------------------------
 
 @pytest.mark.parametrize("make, pose", [
-    (one, ONE), (two, TWO), (flat, FLAT), (open_palm, OPEN), (l_hand, L), (pinch, PINCH), (fist, FIST),
+    (one, ONE), (two, TWO), (flat, FLAT), (open_palm, OPEN), (relaxed_palm, OPEN), (l_hand, L), (pinch, PINCH),
+    (fist, FIST), (thumbs_up, THUMB_UP),
 ])
 def test_classify_each_pose(make, pose):
     assert classify(features(make())) == pose
+
+
+def test_a_relaxed_palm_is_open_without_stretching():
+    f = features(relaxed_palm())
+    assert 0.3 < f.spread < 0.45 and 0.47 < f.thumb_dist < 0.9  # what the old rule (0.45, 0.9) refused
+    assert classify(f) == OPEN
+
+
+def test_the_open_palm_has_hysteresis_and_a_flat_hand_stays_flat():
+    # Fingers drifting a little together: still open once open, not open from nothing.
+    drifting = hand({8: (-40, -200), 12: (-12, -210), 16: (16, -205), 20: (44, -190)}, thumb=(-85, -60))
+    assert 0.27 < features(drifting).spread < 0.30
+    assert classify(features(drifting), was_open=True) == OPEN
+    assert classify(features(drifting), was_open=False) == FLAT
+    # Fingers together with the thumb clear of the palm: flat, not open.
+    assert classify(features(flat(thumb=(-85, -60)))) == FLAT
+
+
+def test_a_thumbs_up_is_never_a_fist_and_a_fist_is_never_a_thumbs_up():
+    assert classify(features(fist())) == FIST
+    side = hand(thumb=(-110, -90))  # a fist with the thumb stuck out sideways
+    assert classify(features(side)) == FIST
+    too_far = hand(thumb=(-60, -290))  # thumb far above: a tracking glitch, not a thumbs-up
+    assert classify(features(too_far)) == FIST
+    tilted = hand(thumb=(-150, -130))  # thumb out at ~60 deg from vertical
+    assert classify(features(tilted)) == FIST
+    for rotate in (-20, 20):  # a thumbs-up leaning a little
+        assert classify(features(thumbs_up(rotate=rotate))) == THUMB_UP
+
+
+def test_the_users_calibration_poses_read_as_labelled():
+    """Held poses from the user's calibration trace (samples/poses): the relaxed
+    open palms, the flat hands and the thumbs-ups are read as such."""
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(__file__).resolve().parent.parent / "samples/poses/calibration-20260927.json").read_text())
+    for label in (OPEN, FLAT, THUMB_UP):
+        frames = [f for f in data["frames"] if f["label"] == label]
+        read = [classify(features(Hand(np.array(f["points"], float)))) for f in frames]
+        share = sum(r == label for r in read) / len(read)
+        assert len(frames) >= 50 and share >= 0.95, (label, share)
 
 
 def test_spread_v_sign_and_three_fingers_are_none():
@@ -496,9 +549,7 @@ def test_level_follows_hand_shape():
     assert g.state.level == "sentence"
 
 
-# --- modes: fist to start, count-in, command zone ---------------------------------
-
-ZONE = (1100, 250)  # palm centre well inside the command zone (top right)
+# --- modes: fist to start, count-in, a thumbs-up for "done" -----------------------
 
 
 def kinds(events):
@@ -566,98 +617,61 @@ def rehearsing(m=None, t=0.0):
     return m, t
 
 
-def test_rehearse_ignores_the_grammar_outside_the_zone():
+def test_rehearse_ignores_everything_but_a_thumbs_up():
     m, t = rehearsing()
-    events, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(fist, 1.5) + hold(open_palm, 2.0), t)
+    swipe = [one(origin=(1100 - 150 * i / 6, 250)) for i in range(1, 7)]  # what was a flick
+    events, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(fist, 1.5) + hold(open_palm, 2.0)
+                    + hold(open_palm, 2.0, origin=(1100, 250)) + hold(one, 0.4, origin=(1100, 250)) + swipe, t)
     assert events == [] and m.mode == "rehearse" and m.state.mode == "idle"
 
 
-def test_open_palm_held_in_zone_stops_the_take_into_review():
-    m, t = rehearsing()
-    events, t = run(m, hold(open_palm, 1.2, origin=ZONE), t)
-    assert events == [] and m.zone.active and 0.5 < m.zone.hold_progress < 1.0
-    events, t = run(m, hold(open_palm, 0.6, origin=ZONE), t)
-    assert kinds(events) == ["take_stop"] and m.mode == "review"
-    assert not m.grammar.operations
-
+def test_a_thumbs_up_held_anywhere_stops_the_take_into_review():
+    for origin in ((960, 600), (300, 500), (1100, 250)):
+        m, t = rehearsing()
+        events, t = run(m, hold(thumbs_up, 1.2, origin=origin), t)
+        assert events == [] and 0.7 < m.done.progress < 1.0
+        events, t = run(m, hold(thumbs_up, 0.4, origin=origin), t)
+        assert kinds(events) == ["take_stop"] and m.mode == "review" and m.done.progress == 0.0
+        assert not m.grammar.operations
     # Review browses and focuses like Prepare, without the operations.
-    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.5), t)
+    _, t = run(m, [None] * 10 + hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.5), t)
     assert m.state.mode == "focus" and m.state.op is None
 
 
-def flick(dx, n=6, start=ZONE, make=one):
-    return [make(origin=(start[0] + dx * i / n, start[1])) for i in range(1, n + 1)]
-
-
-def test_flick_in_zone_is_next_section_once():
+def test_a_thumbs_up_rides_out_misread_frames_and_label_flips():
     m, t = rehearsing()
-    events, t = run(m, hold(one, 0.4, origin=ZONE) + flick(-150) + hold(one, 0.3, origin=(ZONE[0] - 150, ZONE[1])), t)
-    assert kinds(events) == ["next_section"]
-    # Flicking straight back inside the cooldown does nothing.
-    events, t = run(m, flick(150, start=(ZONE[0] - 150, ZONE[1])), t)
-    assert events == []
-
-
-def test_slow_moves_and_hands_arriving_in_the_zone_are_not_flicks():
-    m, t = rehearsing()
-    events, t = run(m, hold(one, 0.4, origin=ZONE) + flick(-150, n=30), t)  # 1 s
-    assert events == []
-    # Swept in from outside the zone: never settled there before moving.
-    m, t = rehearsing()
-    events, _ = run(m, flick(300, start=(760, 250)) + hold(one, 0.3, origin=(1060, 250)), t)
-    assert events == []
-
-
-def test_open_palm_in_zone_during_count_in_cancels():
-    for back_to in ("prepare", "review"):
-        m, t = ModeMachine((W, H)), 0.0
-        if back_to == "review":
-            m, t = rehearsing(m)
-            _, t = run(m, hold(open_palm, 1.8, origin=ZONE), t)
-            assert m.mode == "review"
-        events, t = run(m, hold(fist, 1.3), t)
-        assert m.mode == "count_in"
-        events, t = run(m, hold(open_palm, 1.8, origin=ZONE), t)
-        assert kinds(events) == ["count_in_cancel"] and m.mode == back_to
-        assert m.tick(t + REHEARSE.count_in_s) == []
-
-
-# Close to a laptop camera: palm ~270 px, as measured in the session traces.
-BIG = 2.7
-BIG_ZONE = (1100, 560)  # wrist; the palm centre sits ~200 px higher, inside the zone
-
-
-def test_wrist_flick_of_a_big_close_hand_is_next_section():
-    m, t = rehearsing()
-    # Swing from the wrist: the palm centre barely moves, the fingertips travel.
-    swing = [one(origin=BIG_ZONE, scale=BIG, rotate=-35 * i / 6) for i in range(1, 7)]  # 0.2 s
-    events, t = run(m, hold(one, 0.3, origin=BIG_ZONE, scale=BIG) + swing, t)
-    assert kinds(events) == ["next_section"]
-
-
-def test_flick_survives_a_tracking_dropout_and_a_label_flip():
-    m, t = rehearsing()
-    frames = hold(one, 0.3, origin=ZONE, label="Left") + [
-        one(origin=(ZONE[0] - 40, ZONE[1]), label="Left"), None, None,
-        one(origin=(ZONE[0] - 120, ZONE[1]), label="Right"), one(origin=(ZONE[0] - 150, ZONE[1]), label="Right"),
-    ]
-    events, _ = run(m, frames, t)
-    assert kinds(events) == ["next_section"]
-
-
-def test_open_palm_hold_rides_out_label_flips():
-    m, t = rehearsing()
-    frames = [open_palm(origin=ZONE, label="Left" if (i // 5) % 2 else "Right") for i in range(round(1.7 / DT))]
+    frames = [thumbs_up(label="Left" if (i // 5) % 2 else "Right") if i % 9 else fist() for i in range(round(1.7 / DT))]
     events, _ = run(m, frames, t)
     assert kinds(events) == ["take_stop"]
 
 
-def test_open_palm_in_zone_goes_from_review_back_to_prepare():
+def test_a_thumbs_up_let_go_starts_over():
     m, t = rehearsing()
-    _, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    events, t = run(m, hold(thumbs_up, 1.0) + [None] * 15 + hold(thumbs_up, 1.0), t)  # 0.5 s down between
+    assert events == [] and m.mode == "rehearse"
+
+
+def test_a_thumbs_up_during_the_count_in_cancels():
+    for back_to in ("prepare", "review"):
+        m, t = ModeMachine((W, H)), 0.0
+        if back_to == "review":
+            m, t = rehearsing(m)
+            _, t = run(m, hold(thumbs_up, 1.7), t)
+            assert m.mode == "review"
+            _, t = run(m, [None] * 10, t)
+        events, t = run(m, hold(fist, 1.3), t)
+        assert m.mode == "count_in"
+        events, t = run(m, hold(thumbs_up, 1.7), t)
+        assert kinds(events) == ["count_in_cancel"] and m.mode == back_to
+        assert m.tick(t + REHEARSE.count_in_s) == []
+
+
+def test_a_thumbs_up_goes_from_review_back_to_prepare():
+    m, t = rehearsing()
+    _, t = run(m, hold(thumbs_up, 1.7), t)
     assert m.mode == "review"
     _, t = run(m, [None] * 10, t)  # hand down between the two holds
-    events, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    events, t = run(m, hold(thumbs_up, 1.7), t)
     assert kinds(events) == ["to_prepare"] and m.mode == "prepare" and m.grammar.operations
     # Prepare's operations are back, and a fist starts the next take.
     _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.3), t)
@@ -667,11 +681,19 @@ def test_open_palm_in_zone_goes_from_review_back_to_prepare():
     assert kinds(events) == ["count_in"]
 
 
+def test_a_thumbs_up_never_starts_a_take():
+    m = ModeMachine((W, H))
+    events, t = run(m, hold(thumbs_up, 3.0))
+    assert events == [] and m.mode == "prepare"
+    # Nor does it in Prepare do anything else: it isn't one of the grammar's shapes.
+    assert m.state.mode == "idle"
+
+
 # --- review: take dial and drills --------------------------------------------------
 
 def reviewing():
     m, t = rehearsing()
-    _, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    _, t = run(m, hold(thumbs_up, 1.7), t)
     assert m.mode == "review" and m.grammar.take_dial
     _, t = run(m, [None] * 10, t)
     return m, t
@@ -720,7 +742,7 @@ def test_one_finger_in_review_browses_sentences_and_a_pinch_focuses_one():
 
 def test_one_finger_in_prepare_still_browses_words():
     m, t = reviewing()
-    _, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    _, t = run(m, hold(thumbs_up, 1.7), t)
     assert m.mode == "prepare"
     _, t = run(m, [None] * 10 + hold(one, 0.4), t)
     assert m.state.level == "word"
@@ -839,11 +861,9 @@ def test_pinch_and_lift_on_a_focused_sentence_in_review_drills_it():
     assert kinds(events) == ["commit", "drill"] and m.mode == "count_in" and m.drill
     assert kinds(m.tick(t + REHEARSE.count_in_s)) == ["take_start"] and m.drill
     t += REHEARSE.count_in_s
-    # No section flicks in a drill; the open palm stops it as usual.
-    events, t = run(m, hold(one, 0.4, origin=ZONE) + flick(-150), t)
-    assert "next_section" not in kinds(events)
+    # A thumbs-up stops it as it does a take.
     _, t = run(m, [None] * 40, t)
-    events, t = run(m, hold(open_palm, 1.7, origin=ZONE), t)
+    events, t = run(m, hold(thumbs_up, 1.7), t)
     assert kinds(events) == ["take_stop"] and m.mode == "review" and not m.drill
 
 

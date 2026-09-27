@@ -37,12 +37,12 @@ the right of the frame; it steers the highlight in the text on the left.
                            count-in also calibrates the eyes: look into the camera
                            for 2.5 s, then read the orange sentence during the 3-2-1
 
-Rehearse listens only to the command zone, top right:
-  flick sideways           next section
-  open palm held 1.5 s     stop the take (or cancel the count-in), on to Review
-The notes follow your voice (the current sentence in orange, the next
-section shown faint as you start the last sentence of one); a flick, n or b
-moves by hand and the voice carries on from there. Off with --no-follow.
+Rehearse listens for one gesture only, anywhere in the frame:
+  thumbs-up held 1.5 s     stop the take (or cancel the count-in), on to Review
+Everything else your hands do while you speak is only measured. The notes
+follow your voice (the current sentence in orange, the next section shown
+faint as you start the last sentence of one); n, b, j and k move by hand
+and the voice carries on from there. Off with --no-follow.
 
 Review browses and focuses like Prepare, without Prepare's operations and
 without the word level: one finger browses sentences too. The label's last
@@ -63,13 +63,14 @@ side by side.
   L-hand, then point (focused)
                            the takes that said this sentence, as chips beside it: point at one
   pinch + lift (focused)   drill the sentence: count-in, then just that
-                           sentence; open palm in the zone to stop
+                           sentence; a thumbs-up held to stop
   open palm on a focused sentence or paragraph, held ~0.6 s
-                           play it from the take it shows (key: a); while it plays the focus
-                           is held (drop the hand freely) and a new open palm, ~0.3 s, stops it
+                           play it from the take it shows (key: a); a take recorded with
+                           video (--video) replays it full frame, as others see you; while it
+                           plays the focus is held (drop the hand freely) and a new open palm,
+                           ~0.3 s, stops it
   fist raised, held 1 s    new full take
-  open palm held 1.5 s in the command zone
-                           back to Prepare, to edit before the next take
+  thumbs-up held 1.5 s     back to Prepare, to edit before the next take
 
 Without --llm, tone and length preview their controls and say they need the
 optional LLM; nothing is ever sent unless you ask. Poses and events are
@@ -118,7 +119,7 @@ from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_req
     meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
     FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
-    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_stats, draw_zone_outline,
+    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_stats,
 )
 from palmcards.motion import Spring
 from palmcards.review import Board
@@ -206,16 +207,17 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
     return "review", (sentence,), board.shown(sentence)
 
 
-def nonactivation_hint(mode: str, gs, zone_active: bool, open_s: float) -> str:
+def nonactivation_hint(mode: str, gs, open_s: float) -> str:
     """Why a gesture the camera sees is not doing anything, when that's likely
-    to puzzle: a fist formed from another pose, an open palm outside the zone."""
+    to puzzle: a fist formed from another pose, an open palm held during a take
+    (it stopped takes before the thumbs-up did)."""
     p = gs.primary
     if p is None:
         return ""
     if mode in ("prepare", "review") and p.stable == FIST and p.first_pose != FIST and gs.mode != "focus":
         return "A FIST STARTS A TAKE ONLY WHEN RAISED CLOSED: DROP THE HAND, THEN RAISE A FIST"
-    if mode == "rehearse" and p.stable == OPEN and not zone_active and open_s > 0.8:
-        return "AN OPEN PALM ONLY COUNTS IN THE BOX AT THE TOP RIGHT"
+    if mode in ("count_in", "rehearse") and p.stable == OPEN and open_s > 0.8:
+        return "TO STOP: THUMB UP, HELD" if mode == "rehearse" else "TO CANCEL: THUMB UP, HELD"
     return ""
 KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("b"): "previous",
                 ord("p"): "prepare"}  # ModeMachine.command
@@ -871,7 +873,7 @@ class Takes:
             except (OSError, SessionError) as exc:
                 print(f"cannot record: {exc}", file=sys.stderr)
                 self.log(ev.t, "record_error", error=str(exc))
-                self.alert = "CANNOT RECORD (SEE TERMINAL): HOLD OPEN PALM TO STOP"
+                self.alert = "CANNOT RECORD (SEE TERMINAL): THUMB UP TO STOP"
                 return ""
             self.writer.mark_section(ev.t, self.section, "start")
             self.recorder.start(self.writer)
@@ -1427,8 +1429,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             and takes.drill is None else ""
         view.calibration = takes.vision.phase(start - t0) \
             if takes.vision is not None and modes.mode == "count_in" else None
-        zone = modes.zone
-        view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
+        view.hold_progress = modes.done.progress
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
         if modes.mode in ("prepare", "review") and result is not None:
             sync_view(grammar, view, overlay)
@@ -1460,10 +1461,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             preferences.save(prefs, prefs_file)
         view.tutorial = tutorial.card if modes.mode == "prepare" else None
         p = grammar.state.primary
-        opened = modes.mode == "rehearse" and p is not None and p.stable == OPEN and not modes.zone.active
+        opened = modes.mode in ("count_in", "rehearse") and p is not None and p.stable == OPEN
         rehearse_open_since = (rehearse_open_since or start) if opened else None
-        hint = nonactivation_hint(modes.mode, grammar.state, modes.zone.active,
-                                  start - rehearse_open_since if rehearse_open_since else 0.0)
+        hint = nonactivation_hint(modes.mode, grammar.state, start - rehearse_open_since if rehearse_open_since else 0.0)
         if hint and start >= hint_after and not view.note:
             view.note, note_until, hint_after = hint, start + 2 * NOTE_S, start + HINT_EVERY_S
         if takes.notes_version != notes_seen:  # an edit or undo: lay the new notes out
@@ -1508,9 +1508,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
                 draw_hand_area(frame, grammar.cursor)
             if show_debug:
-                if view.app != "prepare":
-                    draw_zone_outline(frame, modes.zone)
-                else:
+                if view.app in ("prepare", "review"):
                     draw_hand_box(frame, grammar.cursor)
                 for track in (grammar.state.primary, grammar.state.secondary):
                     if track is not None:

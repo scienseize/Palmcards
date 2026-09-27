@@ -26,9 +26,10 @@ The cursor is relative: a hand box on the right of the frame maps onto the
 text box on the left; its top and bottom bands scroll.
 
 Around the grammar, ModeMachine runs the app's modes: a fist held 1 s starts
-a take after a 3-2-1 count-in; in Rehearse only the command zone (top right)
-listens, for a flick (next section) and an open palm held 1.5 s (stop, on to
-Review). In Review the same open palm in the zone goes back to Prepare.
+a take after a 3-2-1 count-in; in Rehearse the only command is a thumbs-up
+held 1.5 s anywhere (stop, on to Review), which also cancels a count-in and,
+in Review, goes back to Prepare (DoneHold). Everything else a hand does in
+Rehearse is only logged; the notes follow the voice, keys move them by hand.
 
 Run `python -m palmcards.gestures` for a debug view with landmarks, poses,
 feature values, the grammar state and the event log.
@@ -64,7 +65,6 @@ RING_PIP, RING_TIP = 14, 16
 PINKY_PIP, PINKY_TIP = 18, 20
 FINGERS = ((INDEX_PIP, INDEX_TIP), (MIDDLE_PIP, MIDDLE_TIP), (RING_PIP, RING_TIP), (PINKY_PIP, PINKY_TIP))
 TIPS = (THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
-PALM = (WRIST, INDEX_MCP, MIDDLE_MCP, 13, 17)  # wrist and the four finger MCPs
 FINGER_TIPS = (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
 
 HAND_CONNECTIONS = [
@@ -77,6 +77,7 @@ HAND_CONNECTIONS = [
 
 # Pose classes.
 ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", "PINCH", "FIST", "NONE"
+THUMB_UP = "THUMB_UP"  # "done": no finger out, the thumb up (never a fist, so it never starts a take)
 LEVEL_OF_SHAPE = {ONE: "word", TWO: "sentence", FLAT: "paragraph"}
 # Review has nothing to do with a word: one finger browses sentences there, so
 # no hand shape leads to a dead end.
@@ -240,6 +241,9 @@ class Features:
     spread: float  # mean adjacent fingertip distance
     tilt: float  # index MCP -> tip from vertical, degrees, + = screen right
     thumb_index_angle: float  # degrees between thumb and index directions
+    thumb_dist: float = 0.0  # thumb tip to index MCP
+    thumb_up_deg: float = 180.0  # thumb MCP -> tip from straight up, degrees
+    thumb_height: float = 0.0  # thumb tip above the index MCP (+ = above)
 
 
 def _angle_deg(a: np.ndarray, b: np.ndarray) -> float:
@@ -256,6 +260,7 @@ def features(hand: Hand) -> Features:
     spread = (hand.dist(INDEX_TIP, MIDDLE_TIP) + hand.dist(MIDDLE_TIP, RING_TIP)
               + hand.dist(RING_TIP, PINKY_TIP)) / (3 * palm)
     index_dir = p[INDEX_TIP] - p[INDEX_MCP]
+    thumb_dir = p[THUMB_TIP] - p[THUMB_MCP]
     return Features(
         extended=extended,
         thumb_out=hand.dist(THUMB_TIP, INDEX_MCP) > POSE.thumb_out * palm,
@@ -264,7 +269,10 @@ def features(hand: Hand) -> Features:
         together=hand.dist(INDEX_TIP, MIDDLE_TIP) / palm < POSE.together,
         spread=spread,
         tilt=math.degrees(math.atan2(float(index_dir[0]), float(-index_dir[1]))),
-        thumb_index_angle=_angle_deg(p[THUMB_TIP] - p[THUMB_MCP], index_dir),
+        thumb_index_angle=_angle_deg(thumb_dir, index_dir),
+        thumb_dist=hand.dist(THUMB_TIP, INDEX_MCP) / palm,
+        thumb_up_deg=math.degrees(math.atan2(abs(float(thumb_dir[0])), float(-thumb_dir[1]))),
+        thumb_height=float(p[INDEX_MCP][1] - p[THUMB_TIP][1]) / palm,
     )
 
 
@@ -272,12 +280,27 @@ def is_pinch(f: Features, was_pinching: bool) -> bool:
     return f.reach > POSE.pinch_min_reach and f.pinch_dist < (POSE.pinch_off if was_pinching else POSE.pinch_on)
 
 
-def classify(f: Features, was_pinching: bool = False) -> str:
+def is_open(f: Features, was_open: bool = False) -> bool:
+    """Four fingers out, a little apart, the thumb clear of the palm: a relaxed
+    open palm (hysteresis: once open, it stays open down to the *_off values)."""
+    spread, thumb = (POSE.open_spread_off, POSE.open_thumb_off) if was_open else \
+        (POSE.open_spread_min, POSE.open_thumb_min)
+    return all(f.extended) and f.spread >= spread and f.thumb_dist >= thumb
+
+
+def is_thumb_up(f: Features) -> bool:
+    lo, hi = POSE.thumb_up_dist
+    low, high = POSE.thumb_up_height
+    return (not any(f.extended) and lo <= f.thumb_dist <= hi and f.thumb_up_deg <= POSE.thumb_up_deg
+            and low <= f.thumb_height <= high)
+
+
+def classify(f: Features, was_pinching: bool = False, was_open: bool = False) -> str:
     if is_pinch(f, was_pinching):
         return PINCH
     index, middle, ring, pinky = f.extended
     if index and middle and ring and pinky:
-        if f.thumb_out and f.spread > POSE.open_spread_min:
+        if is_open(f, was_open):
             return OPEN
         return FLAT if f.spread < POSE.flat_spread_max else NONE
     if index and not (middle or ring or pinky):
@@ -287,7 +310,7 @@ def classify(f: Features, was_pinching: bool = False) -> str:
     if index and middle and not (ring or pinky):
         return TWO if f.together else NONE  # a spread V sign is ignored
     if not any(f.extended):
-        return FIST
+        return THUMB_UP if is_thumb_up(f) else FIST
     return NONE
 
 
@@ -323,7 +346,7 @@ class HandTrack:
         events: list[str] = []
         self.hand, self.last_seen = hand, t
         self.feat = f = features(hand)
-        self.raw = classify(f, self.pinching)
+        self.raw = classify(f, self.pinching, self.raw == OPEN)
         self.pinching = is_pinch(f, self.pinching)
 
         if self.raw != self._cand:
@@ -1062,115 +1085,38 @@ class Grammar:
                 self._d0, s.stretch_raw = None, s.stretch  # held while a hand closes; the line stays
 
 
-# --- rehearse: command zone and modes ------------------------------------------
+# --- rehearse: the done hold and modes ------------------------------------------
 
-def palm_center(hand: Hand) -> tuple[float, float]:
-    x, y = hand.points[list(PALM)].mean(axis=0)
-    return float(x), float(y)
+class DoneHold:
+    """A thumbs-up held REHEARSE.done_hold_s, by either hand, anywhere in the
+    frame: "done" (stop the take, cancel the count-in, back to Prepare). It
+    counts the raw pose frame by frame, forgiving short misreads
+    (REHEARSE.done_grace_s), so a blurry frame doesn't restart it."""
 
-
-class CommandZone:
-    """Commands made by a hand whose palm is inside the zone (top right).
-
-      "flick"  the hand, settled in the zone, swings sideways fast
-      "hold"   open palm held in the zone (stop a take, cancel the count-in,
-               leave Review for Prepare)
-
-    The flick is measured at the fingertips, which travel furthest when the
-    hand swings from the wrist, and may carry the hand out of the zone: it
-    counts if it started inside. The zone follows one hand by position, not
-    by MediaPipe's handedness label (which flips during fast moves), and
-    rides out brief tracking dropouts.
-    """
-
-    def __init__(self, frame_size: tuple[int, int]):
-        w, h = frame_size
-        x0, y0, x1, y1 = REHEARSE.zone
-        self.box = (x0 * w, y0 * h, x1 * w, y1 * h)
+    def __init__(self):
         self.reset()
 
     def reset(self) -> None:
-        self.active = False  # the followed hand is inside the zone now
-        self.hold_progress = 0.0  # open palm, 0..1
-        self.flick_progress = 0.0  # sideways travel toward a flick, 0..1
-        self._pos: tuple[float, float] | None = None  # followed hand's palm centre
-        self._seen = self._entered = self._last_inside = 0.0
-        self._path: deque[tuple[float, np.ndarray, float, bool]] = deque()  # (t, fingertips, palm, inside)
-        self._open_since: float | None = None
-        self._last_open = -math.inf
-        self._cooldown_until = -math.inf
+        self.progress = 0.0  # 0..1
+        self._since: float | None = None
+        self._last = -math.inf
 
-    def contains(self, x: float, y: float) -> bool:
-        x0, y0, x1, y1 = self.box
-        return x0 <= x <= x1 and y0 <= y <= y1
-
-    def _pick(self, hands: list[Hand]) -> Hand | None:
-        if self._pos is not None and hands:
-            near = min(hands, key=lambda h: math.dist(palm_center(h), self._pos))
-            if math.dist(palm_center(near), self._pos) < REHEARSE.follow_palms * near.size:
-                return near
-        return next((h for h in hands if self.contains(*palm_center(h))), None)
-
-    def update(self, tracks: dict[str, HandTrack], t: float) -> list[str]:
-        followed = self._pos is not None
-        hand = self._pick([tr.hand for tr in tracks.values()])
-        if followed and hand is not None and math.dist(palm_center(hand), self._pos) >= REHEARSE.follow_palms * hand.size:
-            self.reset()  # a different hand in the zone: start over with it
-            followed = False
-        if hand is None:
-            self.active = False
-            if followed and t - self._seen > REHEARSE.dropout_s:
-                self.reset()
-            return []
-        track = next(tr for tr in tracks.values() if tr.hand is hand)
-        pc = palm_center(hand)
-        inside = self.contains(*pc)
-        if not followed:
-            self._entered = self._last_inside = t
-        if inside:
-            self._last_inside = t
-        elif t - self._last_inside > REHEARSE.flick_window_s:  # wandered off: let it go
-            self.reset()
-            return []
-        self._pos, self._seen, self.active = pc, t, inside
-
-        events: list[str] = []
-        # Samples from before the hand settled are left out, so sweeping a
-        # hand into the zone isn't a flick.
-        if t - self._entered >= REHEARSE.settle_s - 1e-9:
-            self._path.append((t, hand.points[list(FINGER_TIPS)].copy(), hand.size, inside))
-        while self._path and self._path[0][0] < t - REHEARSE.flick_window_s:
-            self._path.popleft()
-        self.flick_progress = 0.0
-        if self._path and self._path[0][3] and t >= self._cooldown_until:
-            _, tips0, palm0, _ = self._path[0]
-            # The fingertip that travelled furthest sideways: an extended
-            # finger swinging from the wrist moves most.
-            moved = (hand.points[list(FINGER_TIPS)] - tips0) / palm0
-            dx, dy = moved[int(np.argmax(np.abs(moved[:, 0])))]
-            self.flick_progress = min(1.0, abs(dx) / REHEARSE.flick_dist)
-            if abs(dx) > REHEARSE.flick_dist and abs(dx) > REHEARSE.flick_straightness * abs(dy):
-                events.append("flick")
-                self._cooldown_until = t + REHEARSE.flick_cooldown_s
-                self._path.clear()
-                self.flick_progress = 0.0
-
-        # The open palm counts frame by frame (raw pose), forgiving short
-        # misreads, so a label flip or a blurry frame doesn't restart it.
-        if inside and track.raw == OPEN and t >= self._cooldown_until:
-            self._last_open = t
-            if self._open_since is None:
-                self._open_since = t
-        elif t - self._last_open > REHEARSE.hold_grace_s:
-            self._open_since = None
-        if self._open_since is None:
-            self.hold_progress = 0.0
-        else:
-            self.hold_progress = min(1.0, (t - self._open_since) / REHEARSE.hold_s)
-            if self.hold_progress >= 1.0:
-                events.append("hold")
-                self._open_since, self.hold_progress = None, 0.0
-        return events
+    def update(self, tracks: dict[str, HandTrack], t: float) -> bool:
+        """True once, when the hold completes."""
+        if any(tr.raw == THUMB_UP for tr in tracks.values()):
+            self._last = t
+            if self._since is None:
+                self._since = t
+        elif t - self._last > REHEARSE.done_grace_s:
+            self._since = None
+        if self._since is None:
+            self.progress = 0.0
+            return False
+        self.progress = min(1.0, (t - self._since) / REHEARSE.done_hold_s)
+        if self.progress >= 1.0:
+            self._since, self.progress = None, 0.0
+            return True
+        return False
 
 
 class ModeMachine:
@@ -1178,21 +1124,20 @@ class ModeMachine:
 
       prepare, review  --fist held 1 s-->  count_in  --3 s-->  rehearse
       review    --pinch + lift on a focused sentence-->  count_in (a drill)
-      rehearse  --open palm held in the zone-->  review
-      count_in  --open palm held in the zone-->  back where it came from
-      review    --open palm held in the zone-->  prepare
+      rehearse  --thumbs-up held-->  review
+      count_in  --thumbs-up held-->  back where it came from
+      review    --thumbs-up held-->  prepare
 
     Prepare and Review run the grammar (Review without Prepare's operations,
     with the take dial instead). A drill rehearses one sentence: the same
-    count-in and recording, but no flick to the next section.
-    In count_in and rehearse the hands only act inside the command zone; they
-    are still tracked, so every pose is logged.
+    count-in and recording. In count_in and rehearse a thumbs-up is the only
+    command; the hands are still tracked, so every pose is logged.
     """
 
     def __init__(self, frame_size: tuple[int, int], log: GestureLog | None = None):
         self.grammar = Grammar(frame_size, log)
         self.log = self.grammar.log
-        self.zone = CommandZone(frame_size)
+        self.done = DoneHold()
         self.mode = "prepare"  # prepare | count_in | rehearse | review
         self.start_progress = 0.0  # fist hold, 0..1
         self.count_in_end = 0.0
@@ -1222,17 +1167,15 @@ class ModeMachine:
         if self.mode == "prepare":
             return events
 
-        for command in self.zone.update({k: self.grammar.tracks[k] for k in track_events}, t):
-            self.log(t, "zone", command=command)
-            if command == "flick" and self.mode == "rehearse" and not self.drill:
-                events.append(GestureEvent("next_section", t))
-            elif command == "hold" and self.mode == "rehearse":
+        if self.done.update({k: self.grammar.tracks[k] for k in track_events}, t):
+            self.log(t, "done", mode=self.mode)
+            if self.mode == "rehearse":
                 events.append(GestureEvent("take_stop", t))
                 self._enter("review", t)
-            elif command == "hold" and self.mode == "count_in":
+            elif self.mode == "count_in":
                 events.append(GestureEvent("count_in_cancel", t))
                 self._enter(self._back_to, t)
-            elif command == "hold" and self.mode == "review":
+            elif self.mode == "review":
                 events.append(GestureEvent("to_prepare", t))
                 self._enter("prepare", t)
         return events
@@ -1303,7 +1246,7 @@ class ModeMachine:
         self.grammar.take_dial = mode == "review"
         self.grammar.shape_levels = REVIEW_LEVEL_OF_SHAPE if mode == "review" else LEVEL_OF_SHAPE
         self.grammar.palm_levels = ("sentence", "paragraph") if mode == "review" else ("sentence",)
-        self.zone.reset()
+        self.done.reset()
         self._fist_since, self.start_progress = None, 0.0
         self.log(t, "mode", mode=mode)
 
@@ -1312,7 +1255,7 @@ class ModeMachine:
 
 def _debug_view() -> None:
     from palmcards.capture import Camera
-    from palmcards.render import draw_debug_text, draw_fingertips, draw_hand_box, draw_landmarks, draw_zone_outline
+    from palmcards.render import draw_debug_text, draw_fingertips, draw_hand_box, draw_landmarks
 
     tracker = HandTracker()
     log = GestureLog.to_session_dir()
@@ -1328,9 +1271,7 @@ def _debug_view() -> None:
                 modes.update(*result)
             modes.tick(time.perf_counter() - t0)
             s = modes.state
-            if modes.mode != "prepare":
-                draw_zone_outline(frame, modes.zone)
-            else:
+            if modes.mode in ("prepare", "review"):
                 draw_hand_box(frame, modes.grammar.cursor)
             for track in (s.primary, s.secondary):
                 if track is not None:
@@ -1338,8 +1279,7 @@ def _debug_view() -> None:
             draw_fingertips(frame, s)
 
             op = f"  op {s.op}" if s.op else ""
-            lines = [f"{modes.mode.upper()}  start {modes.start_progress:.0%}  hold {modes.zone.hold_progress:.0%}"
-                     f"  flick {modes.zone.flick_progress:.0%}",
+            lines = [f"{modes.mode.upper()}  start {modes.start_progress:.0%}  done {modes.done.progress:.0%}",
                      f"{s.mode.upper()} {s.level or ''}{op}  tone {s.tone:+.2f}  stretch {s.stretch:.2f}"
                      f"  drop {s.drop_progress:.0%}",
                      f"camera {cam.fps:4.1f} fps  hands {tracker.latency_ms:4.1f} ms"]

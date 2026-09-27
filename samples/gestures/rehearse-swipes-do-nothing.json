@@ -1,16 +1,12 @@
 {
- "name": "rehearse-three-flicks",
- "description": "Three flicks in a row, each one next section.",
+ "name": "rehearse-swipes-do-nothing",
+ "description": "Three sideways flicks (each was the next section until 2026-09-27): nothing happens. Expected entries from the replay: the command zone and its flick were removed on 2026-09-27.",
  "source": "20260925-101345.trace.jsonl",
  "window": [129.0, 142.1],
  "frame_size": [1280, 720],
  "start_mode": "rehearse",
  "known_issue": null,
- "expected": [
-  {"t": 1.028, "kind": "zone", "command": "flick"},
-  {"t": 2.355, "kind": "zone", "command": "flick"},
-  {"t": 7.192, "kind": "zone", "command": "flick"}
- ],
+ "expected": [],
  "frames": [
   {"t":0.021,"hands":[{"label":"Left","points":[1052,672,996,660,945,617,941,571,964,538,955,508,936,444,922,394,910,354,1007,490,987,538,984,602,984,646,1058,499,1034,553,1030,605,1029,641,1106,522,1085,553,1072,594,1070,621]}]},
   {"t":0.06,"hands":[{"label":"Left","points":[1062,634,1001,610,948,554,948,496,981,459,966,464,940,398,928,351,917,314,1018,453,1003,460,1002,524,1000,574,1067,462,1049,475,1041,534,1037,576,1116,483,1096,485,1082,529,1076,560]}]},

@@ -11,7 +11,7 @@ The study (design note, Evaluation tab): each participant rehearses two passages
 | H1 | Delivery gets more fluent from the first to the last take with PalmCards, because each take is set beside the ones before it | Fillers per minute and long pauses per minute, first against last full take of each passage: `fillers_per_min` and `long_pauses_per_min` in the take table |
 | H2 | Blind listeners rate final takes made with PalmCards higher on expressiveness than final takes made the usual way, because the speaker can compare takes side by side and replay any sentence from any take | Listener rating, 1 to 5 |
 | H3 | While speaking, people look at the screen more and away less with PalmCards, because the notes sit next to the camera instead of on a desk | Share of speaking time looking at the screen (camera or notes) against away: `gaze_screen_share` and `gaze_away_share` in the take table |
-| H4 | False triggers during takes stay rare enough that participants don't report them as a problem, which tests the command zone directly | `gestures.per_minute` |
+| H4 | False triggers during takes stay rare enough that participants don't report them as a problem, which tests the thumbs-up "done" gesture (and, in takes recorded before 2026-09-27, the command zone) directly | `gestures.per_minute` |
 
 H1 was changed on 2026-09-26, when delivery marks were removed: it had measured cue adherence, the share of planned marks (pauses, stress, pace, endings) hit per take. With no marks, H1 measures fluency from the take metrics instead. Fillers depend on Whisper writing them down, which it does not always do even with the filler prompt, so H1 needs the filler counts checked against labels (below) before its result is reported.
 
@@ -35,7 +35,7 @@ Label each take as its own JSON file, without looking at PalmCards' measurements
   "consent": true,
   "split": "holdout",
   "words": [{"sentence": 0, "word": 3, "start": 1.84}],
-  "gestures": {"from": 0.0, "to": 312.0, "intended": [[41.2, 43.0, "start"], [120.5, 121.4, "flick"]]}
+  "gestures": {"from": 0.0, "to": 312.0, "intended": [[41.2, 43.0, "start"], [120.5, 122.1, "done"]]}
 }
 ```
 
