@@ -67,8 +67,8 @@ from palmcards.config import CURSOR, KNOB, REHEARSE
 from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
 from palmcards.notes import Sentence
 from palmcards.style import (
-    CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT, PLAYER, RING,
-    SCRIM, SHADOW, TEXT, ZONE, bgr,
+    CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT, OUTLINE, PLAYER,
+    RING, SCRIM, SHADOW, TEXT, ZONE, bgr,
 )
 
 if TYPE_CHECKING:
@@ -370,7 +370,9 @@ class TextOverlay:
             self.y = max(0, (h - self.box_h) // 2)
 
         self._fades: dict[int, np.ndarray] = {}
-        self._scrim: np.ndarray | None = None
+        self._scrim: np.ndarray | None = None  # its shape across the columns, 1 at full strength
+        self._scrim_alpha: float | None = None  # its strength, following the room's brightness
+        self._scrim_frames = 0
         # Text is rendered into a band of rows taller than the window, so
         # scrolling only moves a crop through it (see _band_crop).
         self.band_rows = visible_rows + 2 * BAND_SLACK_ROWS
@@ -618,8 +620,11 @@ class TextOverlay:
             return ("browse", (unit, tuple(i for i in paragraph if i not in unit), paragraph))
         return ("idle", state.current)
 
-    def _draw_span(self, draw: ImageDraw.ImageDraw, xy: tuple[float, float], sp: Span, font, color) -> None:
-        """A word or punctuation."""
+    def _draw_span(self, draw: ImageDraw.ImageDraw, xy: tuple[float, float], sp: Span, font, color,
+                   under: ImageDraw.ImageDraw | None = None) -> None:
+        """A word or punctuation; its outline on `under` (text on a fill has none)."""
+        if under is not None:
+            _outline(under, xy, sp.text, font)
         draw.text(xy, sp.text, font=font, fill=color)
 
     def _fill_box(self, c0: int, c1: int, y: int) -> tuple[float, float, float, float]:
@@ -631,15 +636,15 @@ class TextOverlay:
     def _span_color(self, kind: str, which, sp: Span):
         if kind == "browse":
             return C.unit_text if sp.sentence in which[0] else C.text
-        return C.orange if sp.sentence == which else C.text  # idle: the current sentence
+        return C.orange_text if sp.sentence == which else C.text  # idle: the current sentence
 
     def _render_band(self, style: tuple, start: int) -> tuple[np.ndarray, np.ndarray]:
         """Rows start..start+band_rows, with row `start` at y = pad: the
-        fills, the text on its halo, then the text on the orange fill (no
-        halo: dark on orange)."""
+        fills, the text on its halo and outline, then the text on the orange
+        fill (neither: dark on orange)."""
         band_h = self.band_rows * self.line_h + 2 * self.pad
-        fills, text, on_fill = (Image.new("RGBA", (self.box_w, band_h), CLEAR) for _ in range(3))
-        fd, td, od = ImageDraw.Draw(fills), ImageDraw.Draw(text), ImageDraw.Draw(on_fill)
+        fills, text, under, on_fill = (Image.new("RGBA", (self.box_w, band_h), CLEAR) for _ in range(4))
+        fd, td, ud, od = (ImageDraw.Draw(img) for img in (fills, text, under, on_fill))
         kind, which = style
         for ri in range(start, min(len(self.rows), start + self.band_rows)):
             row = self.rows[ri]
@@ -656,8 +661,8 @@ class TextOverlay:
             for col, sp in row.spans:
                 on_unit = kind == "browse" and sp.sentence in which[0]
                 self._draw_span(od if on_unit else td, (self.pad + col * self.char_w, y), sp, self.font,
-                                self._span_color(kind, which, sp))
-        img = Image.alpha_composite(Image.alpha_composite(fills, _halo(text, self.halo_r)), on_fill)
+                                self._span_color(kind, which, sp), None if on_unit else ud)
+        img = Image.alpha_composite(Image.alpha_composite(fills, _halo(text, self.halo_r, under)), on_fill)
         return _premultiply(img)
 
     def _word_zoom(self, state: ViewState) -> tuple[np.ndarray, np.ndarray, tuple[float, float, float, float], int]:
@@ -685,8 +690,8 @@ class TextOverlay:
         # The text where it wraps; the word's row in the middle of the box.
         x0, shift = self.col_x0 + self.pad, shown - word_len
         word_x, word_y = x0 + word_col * cw, (self.box_h - lh) / 2
-        img = Image.new("RGBA", (self.col_x1, self.box_h), CLEAR)
-        draw = ImageDraw.Draw(img)
+        img, under = (Image.new("RGBA", (self.col_x1, self.box_h), CLEAR) for _ in range(2))
+        draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
         above, below = int(word_y // lh) + 1, int((self.box_h - word_y) // lh) + 1
         for ri in range(max(0, word_row - above), min(len(rows), word_row + below)):
             y, after = word_y + (ri - word_row) * lh, False
@@ -698,8 +703,8 @@ class TextOverlay:
                 if x + len(sp.text) * cw > 0 and x < self.col_x1:
                     color = (C.ring_sentence if ring else C.dim) if sp.sentence == focus.sentence else \
                         (C.ring_context if ring else C.faint)
-                    draw.text((x, y), sp.text, font=font, fill=color)
-        color, inv = self._faded(*_premultiply(_halo(img, self.halo_r)))
+                    self._draw_span(draw, (x, y), sp, font, color, ud)
+        color, inv = self._faded(*_premultiply(_halo(img, self.halo_r, under)))
         top = self.y + self.margin + word_y
         self._zoom_key = key
         self._zoom = (color, inv, (word_x, top, word_x + shown * cw, top + lh * TEXT.word_box_h), size)
@@ -797,14 +802,14 @@ class TextOverlay:
         content = (len(above) + len(below)) * self.line_h + big_h + detail_h
         y = self.pad + max(0, (panel_h - 2 * self.pad - content) // 2)
 
-        img = Image.new("RGBA", (width, panel_h), CLEAR)
-        draw = ImageDraw.Draw(img)
+        img, under = (Image.new("RGBA", (width, panel_h), CLEAR) for _ in range(2))
+        draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
         where: dict[int, tuple[int, int]] = {}
 
         def draw_rows(rows_, font_, lh_, cw_, colors, y_):
             for row in rows_:
                 for col, sp in row.spans:
-                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, colors(sp.sentence))
+                    self._draw_span(draw, (self.pad + col * cw_, y_), sp, font_, colors(sp.sentence), ud)
                     top, bottom = where.get(sp.sentence, (y_, y_))
                     where[sp.sentence] = (min(top, y_), max(bottom, y_ + lh_))
                 y_ += lh_
@@ -812,12 +817,12 @@ class TextOverlay:
 
         def unit_colors(si):
             if current is not None and si == current:  # orange, even in the previewed section
-                return C.orange
+                return C.orange_text
             if preview_from is not None and si >= preview_from:
                 return C.faint
             if current is None:
                 return C.focus_text
-            return C.orange if si == current else C.dim
+            return C.orange_text if si == current else C.dim
 
         y = draw_rows(above, self.font, self.line_h, self.char_w, lambda si: C.faint, y)
         where.clear()  # context rows are not the unit
@@ -826,10 +831,11 @@ class TextOverlay:
         if dlines:
             y += self.pad // 2
             for piece in dlines:
+                _outline(ud, (self.pad, y), piece, dfont)
                 draw.text((self.pad, y), piece, font=dfont, fill=C.detail_text)
                 y += dlh
         draw_rows(below, self.font, self.line_h, self.char_w, lambda si: C.faint, y)
-        color, inv = _premultiply(_halo(img, self.halo_r))
+        color, inv = _premultiply(_halo(img, self.halo_r, under))
         self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y)
         return self._panel
 
@@ -926,18 +932,20 @@ class TextOverlay:
         return self._chips[key]
 
     def _ink(self, text: str, size: int, fg) -> tuple[np.ndarray, np.ndarray, int]:
-        """Text on a soft dark halo, no box, cached: (colour, inverse alpha,
-        margin), the text's top left `margin` px in from the patch's."""
-        key = ("ink", text, size, fg, C.shadow)
+        """Text on a soft dark halo and outline, no box, cached: (colour,
+        inverse alpha, margin), the text's top left `margin` px in from the patch's."""
+        key = ("ink", text, size, fg, C.shadow, C.outline)
         if key not in self._chips:
             if len(self._chips) >= CHIP_CACHE_MAX:
                 self._chips.clear()
             font = self._get_font(size)
             r = max(1.0, size * SHADOW.blur)
-            m = math.ceil(3 * r)
-            img = Image.new("RGBA", (int(font.getlength(text)) + 2 * m + 1, sum(font.getmetrics()) + 2 * m), CLEAR)
+            m = math.ceil(3 * r) + OUTLINE.width
+            img, under = (Image.new("RGBA", (int(font.getlength(text)) + 2 * m + 1, sum(font.getmetrics()) + 2 * m),
+                                    CLEAR) for _ in range(2))
+            _outline(ImageDraw.Draw(under), (m, m), text, font)
             ImageDraw.Draw(img).text((m, m), text, font=font, fill=fg)
-            self._chips[key] = (*_premultiply(_halo(img, r)), m)
+            self._chips[key] = (*_premultiply(_halo(img, r, under)), m)
         return self._chips[key]
 
     def _blend_ink(self, frame: np.ndarray, ink, x: float, y: float) -> tuple[int, int, int, int]:
@@ -1208,18 +1216,35 @@ class TextOverlay:
             cv2.rectangle(frame, (x0 + inset, y1 - ZONE.hold_top), (x0 + inset + width, y1 - ZONE.hold_bottom),
                           bgr(C.yellow), -1, cv2.LINE_AA)
 
+    def _scrim_level(self, frame: np.ndarray) -> float:
+        """How dark the scrim should be for this frame: the brightness of the
+        camera image under the text column (before anything is drawn on it)
+        mapped onto SCRIM.alpha_min..alpha_max."""
+        step = SCRIM.sample_step
+        patch = frame[::step, self.col_x0 : self.col_x1 : step].astype(np.float32)
+        luma = patch @ np.array([0.114, 0.587, 0.299], np.float32)  # BGR
+        level = float(np.percentile(luma, SCRIM.percentile)) / 255.0 if luma.size else 0.0
+        k = min(max((level - SCRIM.dark) / max(1e-6, SCRIM.bright - SCRIM.dark), 0.0), 1.0)
+        return SCRIM.alpha_min + (SCRIM.alpha_max - SCRIM.alpha_min) * k
+
     def _draw_scrim(self, frame: np.ndarray) -> None:
-        """Kat's dark left side: the video darkened under the text column, fading out by its right edge."""
-        if SCRIM.alpha <= 0:
+        """Kat's dark left side: the video darkened from the frame's left
+        edge, fading out by the text column's right edge, as dark as the room
+        is bright (sampled every few frames, eased)."""
+        if SCRIM.alpha_max <= 0:
             return
         if self._scrim is None:
             x = np.arange(self.col_x1, dtype=np.float32)
             full = SCRIM.full * self.frame_w
             ramp = np.clip((self.col_x1 - x) / max(1.0, self.col_x1 - full), 0.0, 1.0)
-            ramp = ramp * ramp * (3 - 2 * ramp)  # smoothstep: no visible edge
-            self._scrim = (1.0 - SCRIM.alpha * ramp)[None, :, None]
+            self._scrim = ramp * ramp * (3 - 2 * ramp)  # smoothstep: no visible edge
+        if self._scrim_frames % SCRIM.sample_every == 0:
+            target = self._scrim_level(frame)
+            prev = self._scrim_alpha
+            self._scrim_alpha = target if prev is None else prev + SCRIM.smooth * (target - prev)
+        self._scrim_frames += 1
         region = frame[:, : self.col_x1]
-        region[:] = (region * self._scrim).astype(np.uint8)
+        region[:] = (region * (1.0 - self._scrim_alpha * self._scrim)[None, :, None]).astype(np.uint8)
 
     def draw(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
         """Composite the overlay onto `frame` in place and return it."""
@@ -1265,7 +1290,7 @@ class TextOverlay:
                 text = "".join(SCRAMBLE[(ord(c) + int(time.time() * 12)) % len(SCRAMBLE)] if c.isalpha() else c
                                for c in text)
             # Inline, in the gap the zoomed text left for it: orange, at the zoomed size.
-            self._blend_ink(frame, self._ink(text, self._word_zoom(state)[3], C.orange), zoom[0], zoom[1])
+            self._blend_ink(frame, self._ink(text, self._word_zoom(state)[3], C.orange_text), zoom[0], zoom[1])
 
         if state.mode == "focus" and state.ops.kind == "tone":
             self._draw_gauge(frame, state.ops.tone, top, bottom, state.ops.closing)
@@ -1477,16 +1502,27 @@ def _bar(progress: float, width: int = 10) -> str:
     return "[" + "=" * filled + " " * (width - filled) + "]"
 
 
-def _halo(img: Image.Image, radius: float) -> Image.Image:
-    """`img` (text on a clear RGBA image) over a soft dark halo: its own alpha
-    blurred and strengthened (SHADOW.gain), in Colors.shadow. Fainter text
-    casts a fainter halo."""
+def _outline(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font) -> None:
+    """The dark outline of `text`, on its own layer under the text (so a
+    neighbouring word's outline never covers a glyph): OUTLINE.width px of
+    Pillow's stroke in Colors.outline."""
+    if OUTLINE.width > 0:
+        draw.text(xy, text, font=font, fill=C.outline, stroke_width=OUTLINE.width, stroke_fill=C.outline)
+
+
+def _halo(img: Image.Image, radius: float, under: Image.Image | None = None) -> Image.Image:
+    """`img` (text on a clear RGBA image) over its outline (`under`, from
+    _outline) over a soft dark halo: the text's alpha blurred and
+    strengthened (SHADOW.gain), in Colors.shadow. Fainter text casts a
+    fainter halo."""
     shade = C.shadow
     alpha = img.getchannel("A").point(lambda v: int(255 * (v / 255) ** SHADOW.gamma))
     alpha = alpha.filter(ImageFilter.GaussianBlur(radius))
     alpha = alpha.point(lambda v: min(255, int(v * SHADOW.gain)) * shade[3] // 255)
     halo = Image.new("RGBA", img.size, (*shade[:3], 0))
     halo.putalpha(alpha)
+    if under is not None:
+        halo = Image.alpha_composite(halo, under)
     return Image.alpha_composite(halo, img)
 
 

@@ -48,10 +48,10 @@ def test_layout_flows_sentences_and_leaves_a_blank_row_between_paragraphs():
 def test_hit_test_finds_words_and_respects_scroll():
     ov = overlay()
     assert ov.hit_test(*span_center(ov, 0, 3), scroll=0) == Hit(0, 3)  # "being"
-    # Scrolled by 2 rows, row 2 sits where row 0 was.
-    ri = 2
+    # Scrolled by ri rows, row ri sits where row 0 was.
+    ri = next(i for i, r in enumerate(ov.rows) if i >= 2 and any(s.role == "word" for _, s in r.spans))
     sp = next(s for _, s in ov.rows[ri].spans if s.role == "word")
-    assert ov.hit_test(*span_center(ov, ri, sp.word, scroll=2), scroll=2) == Hit(sp.sentence, sp.word)
+    assert ov.hit_test(*span_center(ov, ri, sp.word, scroll=ri), scroll=ri) == Hit(sp.sentence, sp.word)
 
 
 def test_hit_test_outside_box_and_on_punctuation():

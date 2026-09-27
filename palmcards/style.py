@@ -41,16 +41,22 @@ class Colors:
     unit_text: RGBA = (20, 20, 20, 255)
     context_fill: RGBA = (62, 74, 122, 165)
     orange: RGBA = (255, 140, 0, 255)
+    # Highlighted text (the current sentence, the focused word): a little
+    # deeper than the fills' orange, so it holds up on a bright wall.
+    orange_text: RGBA = (240, 112, 0, 255)
     orange_soft: RGBA = (255, 140, 0, 200)  # the label's second line: the operation
-    dim: RGBA = (225, 225, 225, 165)  # Rehearse: the section's other sentences; a focused word's sentence
-    faint: RGBA = (220, 220, 220, 60)  # context around a focused unit
+    # Dimmed text is white made see-through, not grey: grey vanishes on a pale wall.
+    dim: RGBA = (255, 255, 255, 179)  # Rehearse: the section's other sentences; a focused word's sentence
+    faint: RGBA = (255, 255, 255, 60)  # context around a focused unit
     focus_text: RGBA = (245, 245, 245, 255)  # enlarged unit in the focus panel
     # While the options ring is open the text stays readable, dimmed, under the bubble map.
-    ring_sentence: RGBA = (220, 220, 220, 120)
-    ring_context: RGBA = (220, 220, 220, 95)
+    ring_sentence: RGBA = (255, 255, 255, 179)
+    ring_context: RGBA = (255, 255, 255, 95)
     # A soft dark halo around every glyph instead of a box behind the text:
     # the video stays visible between the lines. Its alpha is the halo's strength.
     shadow: RGBA = (0, 0, 0, 110)
+    # A dark outline round every glyph drawn straight on the video (its width: OUTLINE).
+    outline: RGBA = (0, 0, 0, 150)
     hint: RGBA = (255, 140, 0, 150)  # the label's third line: the gesture hint
     # Chips and nodes.
     chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node
@@ -93,18 +99,32 @@ class Colors:
 class Layout:
     """The frame's three vertical zones, as fractions of its width. `hand`
     only documents where the hand box is (CURSOR.hand_box in config.py)."""
-    text: tuple[float, float] = (0.06, 0.43)  # labels, notes, ring, gauge, Review's take chips
-    face: tuple[float, float] = (0.43, 0.55)  # nothing drawn here but fingertip dots
+    text: tuple[float, float] = (0.06, 0.36)  # labels, notes, ring, gauge, Review's take chips
+    face: tuple[float, float] = (0.36, 0.55)  # nothing drawn here but fingertip dots
     hand: tuple[float, float] = (0.55, 0.95)  # hand box, command zone, their hints, Review's take table, the tutorial
 
 
 @dataclass(frozen=True)
 class Scrim:
-    """Kat's dark left side: the video is darkened under the text column,
-    fully up to `full`, then fading out by the column's right edge
-    (LAYOUT.text), so nothing darkens the face. 0 alpha turns it off."""
-    alpha: float = 0.5
-    full: float = 0.28  # x frame width
+    """Kat's dark left side: the video is darkened from the frame's left
+    edge, fully up to `full`, then fading out to nothing by the text
+    column's right edge (LAYOUT.text), so nothing darkens the face.
+
+    How dark follows the room: every `sample_every` frames the camera image
+    under the text column is measured (the `percentile` of its brightness,
+    every `sample_step` px), mapped from `dark`..`bright` onto
+    `alpha_min`..`alpha_max`, and the scrim moves `smooth` of the way there,
+    so it settles in about a second without flickering. Strong on a white
+    wall, faint in a dark room. alpha_max 0 turns it off."""
+    alpha_min: float = 0.15  # darkest room: a faint scrim
+    alpha_max: float = 0.72  # white wall
+    dark: float = 0.20  # brightness 0..1 at or below which the scrim is alpha_min
+    bright: float = 0.80  # ... at or above which it is alpha_max
+    percentile: float = 75  # of the pixels' brightness: bright patches under the text count
+    sample_every: int = 5  # frames
+    sample_step: int = 8  # px between sampled pixels
+    smooth: float = 0.15  # share of the way to the new level per sample
+    full: float = 0.12  # x frame width
 
 
 @dataclass(frozen=True)
@@ -113,6 +133,13 @@ class Fill:
     pad_x: int = 2  # px beyond the row's text
     bar_w: int = 2  # px
     bar_x: int = 1  # px from the text box's left edge
+
+
+@dataclass(frozen=True)
+class Outline:
+    """The dark outline round text drawn straight on the video (Pillow's
+    stroke; colour and opacity: Colors.outline). Text on a fill has none."""
+    width: int = 2  # px; 0 turns it off
 
 
 @dataclass(frozen=True)
@@ -127,15 +154,16 @@ class Shadow:
 class Text:
     # Shipped with the app (Menlo, the old default, is derived from it); licence beside it.
     font: Path = FONTS_DIR / "DejaVuSansMono.ttf"
-    # The notes: frame height / rows_per_frame, made smaller (not below
-    # min_size) until a row holds min_columns characters in the text column.
-    rows_per_frame: int = 40
-    min_columns: int = 40
+    # The notes: frame height / rows_per_frame (20 px at 720p, as big as in
+    # Kat's frames: 12 px a character), made smaller (not below min_size)
+    # only if a row of the text column would hold fewer than min_columns.
+    rows_per_frame: int = 36
+    min_columns: int = 28
     min_size: int = 12  # px
     # Everything else the user reads (labels, pills, hints, the take table): frame height / this.
     ui_rows_per_frame: int = 28
     ui_min_size: int = 16  # px
-    line_spacing: float = 1.25  # line height, x the font's own
+    line_spacing: float = 1.0  # line height, x the font's own: Kat's rows are packed (24 px at 720p)
     # The text box fills the text column (LAYOUT.text): as many columns as
     # fit, and from under the label down to the pills as many rows as fit
     # (None), like Kat's block down the whole left side.
@@ -339,12 +367,13 @@ LAYOUT = Layout()
 SCRIM = Scrim()
 FILL = Fill()
 SHADOW = Shadow()
+OUTLINE = Outline()
 # Preferences > high contrast (key c): dimmed text much brighter, context
 # readable, a stronger halo; the highlight stays orange.
 HIGH_CONTRAST = replace(COLORS, text=(255, 255, 255, 255), context_fill=(50, 62, 115, 215),
-                        dim=(245, 245, 245, 215), faint=(235, 235, 235, 130),
-                        ring_sentence=(245, 245, 245, 110), ring_context=(235, 235, 235, 55),
-                        shadow=(0, 0, 0, 240), hint=(255, 140, 0, 200), orange_soft=(255, 140, 0, 220),
+                        dim=(255, 255, 255, 215), faint=(255, 255, 255, 130),
+                        ring_sentence=(255, 255, 255, 215), ring_context=(255, 255, 255, 55),
+                        shadow=(0, 0, 0, 240), outline=(0, 0, 0, 220), hint=(255, 140, 0, 200), orange_soft=(255, 140, 0, 220),
                         label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255),
                         node_outline_dim=(245, 245, 245, 160))
 TEXT = Text()
