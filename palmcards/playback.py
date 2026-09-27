@@ -6,6 +6,7 @@
 
     playback = Playback()                            # one per app: a take's clip or Prepare's "hear it"
     playback.start_clip(player, clip, target, now)
+    playback.start_rendered(player, speaker, words, target, now)  # "hear it": the speaker's audio
     playback.start_say(speaker, words, target, now)
     playback.poll(now); playback.progress(now); playback.stop()
 
@@ -16,13 +17,17 @@ first sentence said to the last of the last one, pauses and all.
 
 Playback keeps what plays, one thing at a time, with the target it plays
 for (the app decides what a target is and stops it when the screen no
-longer shows it). A clip's length is known; `say` reports no position, so
-its progress is an estimate from the word count, held short of the end
-until it has finished.
+longer shows it). A clip's length is known. "Hear it" plays the speaker's
+audio of the sentence as a clip (rendered in the background from when the
+sentence was focused; if it isn't ready yet, it starts as soon as it is),
+so its progress is exact too. Only a speaker that can't render speaks
+live, and `say` reports no position: that progress is an estimate from the
+word count, held short of the end until it has finished.
 """
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 from dataclasses import dataclass
 
 import numpy as np
@@ -74,11 +79,14 @@ class ClipPlayer:
 
 @dataclass
 class Playing:
-    kind: str  # "clip" | "say"
+    kind: str  # "clip" | "say" | "rendering" (a clip still being made)
     target: tuple
     start: float
     duration_s: float
     device: object  # the player or the speaker, to stop it
+    render: Future | None = None  # rendering: the clip to come
+    speaker: object = None  # rendering: says the words instead if making the clip failed
+    words: list[str] | None = None
 
 
 class Playback:
@@ -102,6 +110,15 @@ class Playback:
         player.play(audio, rate)
         self.current = Playing("clip", target, now, len(audio) / rate, player)
 
+    def start_rendered(self, player, speaker, words: list[str], target: tuple, now: float) -> None:
+        """Play the speaker's audio of the words (speaker.render_async): at once
+        if it is ready, else as soon as it is (poll); it counts as playing from
+        now. If making it failed, the speaker says them live instead."""
+        self.stop()
+        self.current = Playing("rendering", target, now, 0.0, player, speaker.render_async(words), speaker,
+                               list(words))
+        self.poll(now)
+
     def start_say(self, speaker, words: list[str], target: tuple, now: float) -> None:
         self.stop()
         speaker.say_words(words)
@@ -121,6 +138,16 @@ class Playback:
         cur = self.current
         if cur is None:
             return False
+        if cur.kind == "rendering":
+            if not cur.render.done():
+                return True
+            try:
+                clip = cur.render.result()
+            except Exception:  # noqa: BLE001 - `say` failed to render: say it live
+                self.start_say(cur.speaker, cur.words, cur.target, now)
+                return True
+            self.start_clip(cur.device, clip, cur.target, now)
+            return True
         if cur.kind == "clip":
             done = now - cur.start >= cur.duration_s + END_SLACK_S
         elif hasattr(cur.device, "speaking"):
@@ -136,5 +163,7 @@ class Playback:
         cur = self.current
         if cur is None:
             return None
+        if cur.kind == "rendering":
+            return 0.0
         p = (now - cur.start) / cur.duration_s
         return min(p, SAY_HELD_AT) if cur.kind == "say" else min(max(p, 0.0), 1.0)

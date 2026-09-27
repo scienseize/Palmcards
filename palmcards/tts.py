@@ -5,16 +5,28 @@
                                     a new say() cuts off the last one
     Speaker.stop()                  silences it at once, without waiting
     Speaker.estimate_s(words)       about how long saying them takes (say reports no position)
+    Speaker.render_async(words)     a Future of the words as audio, (float32 samples, rate):
+                                    made in the background, kept for the next time (optional)
 
-Used by "hear it" on a selected sentence in Prepare. macOS `say` is the
-only engine so far.
+Used by "hear it" on a selected sentence in Prepare. Spoken live, `say`
+reports no position, so how far it has got can only be estimated; rendered
+to audio first (started when the sentence is focused, ready by the time the
+open palm has been held), it plays as a clip of known length, and its
+progress bar is exact. macOS `say` is the only engine so far.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 import time
+import wave
+from collections import OrderedDict
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Protocol
+
+import numpy as np
 
 from palmcards.config import VOICE
 
@@ -34,7 +46,12 @@ class Speaker(Protocol):
 
 
 DEFAULT_WPM = 175  # macOS `say` without -r
+# Spoken live, `say` runs about this much longer than its speech (starting up
+# before it, finishing after it): measured 1.0-1.1 s on sentences of 13-14 words.
+SAY_OVERHEAD_S = 1.0
 KILL_AFTER_S = 0.5  # a stopped `say` still running this long is killed
+RENDER_RATE = 22050  # Hz: `say`'s own voices' rate
+RENDERED_MAX = 16  # rendered utterances kept (about 0.4 MB for a sentence)
 
 
 class MacSay:
@@ -44,6 +61,8 @@ class MacSay:
         self.voice, self.rate_wpm = voice, rate_wpm
         self._proc: subprocess.Popen | None = None
         self._stopping: list[tuple[subprocess.Popen, float]] = []  # terminated, not yet reaped
+        self._rendered: OrderedDict[str, Future] = OrderedDict()  # text -> its audio, newest last
+        self._pool: ThreadPoolExecutor | None = None
 
     def argv(self, text: str, voice: str | None = None, rate_wpm: int | None = None) -> list[str]:
         args = ["say"]
@@ -81,7 +100,44 @@ class MacSay:
         self._stopping = still
 
     def estimate_s(self, words: list[str]) -> float:
-        return 60.0 * len(words) / (self.rate_wpm or DEFAULT_WPM)
+        """How long `say` runs for them, spoken live: the speech at its rate, and its start-up and finish."""
+        return SAY_OVERHEAD_S + 60.0 * len(words) / (self.rate_wpm or DEFAULT_WPM)
+
+    def render(self, text: str) -> tuple[np.ndarray, int]:
+        """`text` as audio, (float32 mono samples, rate), through a temporary WAV."""
+        fd, path = tempfile.mkstemp(suffix=".wav", prefix="palmcards-say-")
+        os.close(fd)
+        try:
+            argv = self.argv(text)
+            subprocess.run([*argv[:-2], f"--data-format=LEI16@{RENDER_RATE}", "-o", path, *argv[-2:]],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with wave.open(path, "rb") as f:
+                rate, channels = f.getframerate(), f.getnchannels()
+                pcm = np.frombuffer(f.readframes(f.getnframes()), dtype="<i2")
+            return pcm[::channels].astype(np.float32) / 32767, rate
+        finally:
+            os.unlink(path)
+
+    def render_async(self, words: list[str]) -> Future:
+        """The words as audio, made in the background (two at a time) and kept
+        for the next time they are asked for (the RENDERED_MAX latest)."""
+        text = " ".join(words)
+        if (kept := self._rendered.get(text)) is not None and not (kept.done() and kept.exception()):
+            self._rendered.move_to_end(text)
+            return kept  # a failed one is made again
+        if self._pool is None:
+            self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="say-render")
+        future = self._rendered[text] = self._pool.submit(self.render, text)
+        while len(self._rendered) > RENDERED_MAX:
+            self._rendered.popitem(last=False)
+        return future
+
+    def close(self) -> None:
+        """Stop speaking; renders still being made finish on their own and are dropped."""
+        self.stop()
+        if self._pool is not None:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+            self._pool = None
 
     @property
     def speaking(self) -> bool:

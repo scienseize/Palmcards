@@ -1902,3 +1902,32 @@ Visual (headless, synthetic white-wall and dark-room plates through TextOverlay.
   working tree): Prepare browse and idle, word ring, tone, Rehearse with zone bars, count-in,
   Review browse (take table) and focus (chips, playbar), tutorial with an alert; notes' edge fades.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: "hear it" progress bar (user: "The bar for playbacks is inaccurate. It ends way
+  before the playback ends.")
+Status: implemented; automated checks passed; live check pending
+Cause: the user's three playbacks in session 20260927-213729 were all Prepare's "hear it". `say`
+  reports no position, so its bar ran on an estimate (175 wpm from the word count) and waited at 95%
+  until `say` exited. Measured: sentence 2 (14 words) estimated 4.8 s, `say` ran 6.3 s (5.2 s of
+  speech plus about 1 s of start-up and finish): the bar reached 95% about 1.7 s before the speech
+  ended. Review's clips were fine (a 3.0 s clip finishes in 3.18 s on the built-in speakers).
+  `say --progress` reports synthesis, not speech (100% after 0.5 s).
+Changes:
+  palmcards/tts.py: MacSay.render (say --data-format=LEI16@22050 -o a temporary WAV, read back as
+    float32) and render_async (two background workers; the 16 latest kept by text; a failed one is
+    made again); close(). estimate_s adds SAY_OVERHEAD_S 1.0 (live fallback only).
+  palmcards/playback.py: Playback.start_rendered: the speaker's audio plays as a clip of known
+    length, at once if ready, else from the frame it is (counts as playing meanwhile, progress 0,
+    so the focus is held); rendering failed: `say` speaks live instead.
+  main.py: focusing a sentence in Prepare starts rendering it (1.5 s for a 14-word sentence, ready by
+    the time the open palm has been held); hear_sentence plays it through Takes.clip_player() (the
+    one clip player, Review's too); a speaker without render_async still speaks live. Takes closes
+    the speaker.
+Tests: pytest (full) -> 567 passed. New: rendered audio plays with exact progress; not ready yet
+  starts when it is; failed rendering falls back to live `say`; stopped while rendering never plays;
+  render writes and reads a WAV; render_async keeps and retries; the live estimate's start-up.
+Checked on this Mac (rendered to a file, not played): sentence 2 -> 5.19 s of speech at 22050 Hz,
+  rendered in 1.53 s; asked again, the kept audio at once.
+```

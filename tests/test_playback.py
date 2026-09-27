@@ -4,6 +4,7 @@ and playing again right after."""
 import subprocess
 import sys
 import types
+from concurrent.futures import Future
 
 import numpy as np
 
@@ -71,6 +72,51 @@ def test_hear_it_progress_is_an_estimate_held_short_of_the_end_until_say_finishe
     assert not pb.poll(5.1) and not pb.playing
 
 
+class RenderingSpeaker(FakeSpeaker):
+    """A speaker that renders: its audio is a Future the test completes."""
+
+    def __init__(self):
+        super().__init__()
+        self.futures = {}
+
+    def render_async(self, words):
+        return self.futures.setdefault(" ".join(words), Future())
+
+
+def test_hear_it_plays_the_rendered_audio_with_exact_progress():
+    player, speaker, pb = FakePlayer(), RenderingSpeaker(), Playback()
+    speaker.render_async(["one", "two"]).set_result(CLIP)  # rendered when the sentence was focused
+    pb.start_rendered(player, speaker, ["one", "two"], ("prepare", (0,), None), now=0.0)
+    assert player.calls == [("stop",), ("play", 32000, 16000)] and speaker.calls == []  # not said live
+    assert pb.progress(1.0) == 0.5 and pb.progress(2.0) == 1.0
+    assert not pb.poll(2.0 + END_SLACK_S)
+
+
+def test_hear_it_not_rendered_yet_starts_when_it_is():
+    player, speaker, pb = FakePlayer(), RenderingSpeaker(), Playback()
+    pb.start_rendered(player, speaker, ["one", "two"], ("prepare", (0,), None), now=0.0)
+    assert pb.playing and pb.progress(0.5) == 0.0 and pb.poll(0.5)  # counts as playing: the focus is held
+    assert ("play", 32000, 16000) not in player.calls
+    speaker.futures["one two"].set_result(CLIP)
+    assert pb.poll(0.8) and player.calls[-1] == ("play", 32000, 16000)
+    assert pb.progress(1.8) == 0.5  # from when it started, not from the palm
+
+
+def test_hear_it_says_the_words_live_if_rendering_failed():
+    player, speaker, pb = FakePlayer(), RenderingSpeaker(), Playback()
+    pb.start_rendered(player, speaker, ["one", "two"], ("prepare", (0,), None), now=0.0)
+    speaker.futures["one two"].set_exception(OSError("say failed"))
+    assert pb.poll(0.5) and speaker.calls == [("say", ["one", "two"])] and pb.current.kind == "say"
+
+
+def test_hear_it_stopped_while_rendering_never_plays():
+    player, speaker, pb = FakePlayer(), RenderingSpeaker(), Playback()
+    pb.start_rendered(player, speaker, ["one", "two"], ("prepare", (0,), None), now=0.0)
+    assert pb.stop() and not pb.playing
+    speaker.futures["one two"].set_result(CLIP)
+    assert not pb.poll(0.5) and ("play", 32000, 16000) not in player.calls
+
+
 def test_one_thing_plays_at_a_time():
     player, speaker, pb = FakePlayer(), FakeSpeaker(), Playback()
     pb.start_say(speaker, ["hello"], ("prepare", (0,), None), now=0.0)
@@ -123,4 +169,4 @@ def test_say_stop_does_not_wait_and_kills_a_straggler(monkeypatch):
     assert proc.terminated and not proc.killed and not speaker.speaking
     clock[0] += tts.KILL_AFTER_S + 0.1
     assert not speaker.speaking and proc.killed  # reaped: killed, since it hadn't gone
-    assert MacSay(rate_wpm=120).estimate_s(["w"] * 60) == 30.0
+    assert MacSay(rate_wpm=120).estimate_s(["w"] * 60) == 30.0 + tts.SAY_OVERHEAD_S

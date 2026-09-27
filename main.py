@@ -146,12 +146,22 @@ HINT_EVERY_S = 6.0  # a hint about a gesture that didn't act is shown at most th
 ENTER = 13
 
 
+def hear_words(overlay: TextOverlay, sentence: int) -> list[str]:
+    return [w.text for w in overlay.sentences[sentence].words]
+
+
 def hear_sentence(sentence: int, overlay: TextOverlay, speaker, log: GestureLog, t: float,
-                  playback: Playback | None = None) -> str:
-    words = [w.text for w in overlay.sentences[sentence].words]
+                  playback: Playback | None = None, player=None) -> str:
+    """Speak a sentence: the speaker's rendered audio played as a clip (its
+    progress exact; rendered from when the sentence was focused), or, with a
+    speaker that can't render, `say` live."""
+    words = hear_words(overlay, sentence)
+    target = ("prepare", (sentence,), None)
     try:
-        if playback is not None:
-            playback.start_say(speaker, words, ("prepare", (sentence,), None), time.perf_counter())
+        if playback is not None and player is not None and hasattr(speaker, "render_async"):
+            playback.start_rendered(player, speaker, words, target, time.perf_counter())
+        elif playback is not None:
+            playback.start_say(speaker, words, target, time.perf_counter())
         else:
             speaker.say_words(words)
     except OSError as exc:
@@ -168,7 +178,9 @@ def play_focus(view: ViewState, overlay: TextOverlay, log: GestureLog, speaker, 
     nothing focused on the current sentence. Returns a label note."""
     sentence = view.focus.sentence if view.focus is not None else view.current
     if view.app == "prepare":
-        return hear_sentence(sentence, overlay, speaker, log, t, takes.playback if takes is not None else None)
+        if takes is None:
+            return hear_sentence(sentence, overlay, speaker, log, t)
+        return hear_sentence(sentence, overlay, speaker, log, t, takes.playback, takes.clip_player())
     if takes is None:
         return ""
     if view.mode == "focus" and view.level == "paragraph":
@@ -241,6 +253,8 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         view.focus = view.hover
         view.ops = OpsView()
         view.panel_scroll = 0.0
+        if view.app == "prepare" and ev.level == "sentence" and hasattr(speaker, "render_async"):
+            speaker.render_async(hear_words(overlay, view.focus.sentence))  # "hear it" ready by the palm hold
         return None
     if ev.kind == "rewind":  # a pinch took the pointer back to before the curl: the pick goes back too
         if takes is not None:
@@ -304,7 +318,8 @@ class Takes:
         self.devices = devices or Devices()
         self.follow_enabled = follow
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
-        self.player = None  # Review playback, made at the first play
+        self.player = None  # clip playback (Review, "hear it"), made at the first play
+        self.speaker = None  # "hear it"'s, closed with the takes
         self.playback = Playback()  # what plays now (a take's clip or "hear it"), for which target
         self._play_error = ""
         self.notes_version = 0  # bumped when an edit or undo changes the notes
@@ -669,14 +684,18 @@ class Takes:
         if clip is None:
             return False
         try:
-            if self.player is None:
-                self.player = self.devices.player()
-            self.playback.start_clip(self.player, clip, ("review", tuple(sentences), n), time.perf_counter())
+            self.playback.start_clip(self.clip_player(), clip, ("review", tuple(sentences), n), time.perf_counter())
         except Exception as exc:  # no output device
             print(f"could not play: {exc}", file=sys.stderr)
             self._play_error = "COULD NOT PLAY (SEE TERMINAL)"
             return False
         return True
+
+    def clip_player(self):
+        """The player for clips (Review's, "hear it"), made at the first play."""
+        if self.player is None:
+            self.player = self.devices.player()
+        return self.player
 
     def stop_playback(self, why: str, t: float) -> bool:
         """Stop what plays (a take's clip or "hear it"). True if something was playing."""
@@ -1085,6 +1104,8 @@ class Takes:
             self.follow.close()
         if self.player is not None:
             self.player.stop()
+        if hasattr(self.speaker, "close"):
+            self.speaker.close()
         left = self.analysis.close(timeout=1.0)
         self.poll_analysis()
         if left or self.deferred:
@@ -1257,7 +1278,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     t0 = prev_start = last
     takes.t0 = t0
     devices.named_window(WINDOW, w, h)
-    speaker = devices.speaker()
+    speaker = takes.speaker = devices.speaker()
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
     hint_after, rehearse_open_since = 0.0, None

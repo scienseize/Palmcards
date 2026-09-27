@@ -52,3 +52,52 @@ def test_say_words_stresses_with_say_markup(monkeypatch):
     speaker = MacSay()
     speaker.say_words(["Thank", "you", "for", "being", "here."], {3})
     assert speaker._proc.argv[-1] == "Thank you for [[emph +]] being here."
+
+
+def fake_say_to_file(calls, seconds=0.5):
+    """subprocess.run standing in for `say -o FILE`: writes that many seconds of 16-bit WAV."""
+    import wave
+
+    import numpy as np
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        rate = int(argv[argv.index("-o") - 1].rpartition("@")[2])
+        with wave.open(argv[argv.index("-o") + 1], "wb") as f:
+            f.setnchannels(1), f.setsampwidth(2), f.setframerate(rate)
+            f.writeframes(np.zeros(int(seconds * rate), "<i2").tobytes())
+    return run
+
+
+def test_render_says_to_a_wav_and_reads_it_back(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "run", fake_say_to_file(calls))
+    audio, rate = MacSay(voice="Samantha").render("-dash first")
+    assert rate == tts.RENDER_RATE and len(audio) == rate // 2 and audio.dtype.name == "float32"
+    argv = calls[0]
+    assert argv[:3] == ["say", "-v", "Samantha"] and argv[-2:] == ["--", "-dash first"]
+    assert f"--data-format=LEI16@{tts.RENDER_RATE}" in argv
+
+
+def test_render_async_keeps_what_it_made_and_makes_a_failed_one_again(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "run", fake_say_to_file(calls))
+    speaker = MacSay()
+    first = speaker.render_async(["Good", "evening."])
+    assert first.result(timeout=5)[1] == tts.RENDER_RATE
+    assert speaker.render_async(["Good", "evening."]) is first and len(calls) == 1  # kept
+
+    def fail(argv, **kwargs):
+        raise subprocess.CalledProcessError(1, argv)
+    monkeypatch.setattr(subprocess, "run", fail)
+    broken = speaker.render_async(["Thank", "you."])
+    with pytest.raises(subprocess.CalledProcessError):
+        broken.result(timeout=5)
+    monkeypatch.setattr(subprocess, "run", fake_say_to_file(calls))
+    again = speaker.render_async(["Thank", "you."])
+    assert again is not broken and again.result(timeout=5)[1] == tts.RENDER_RATE
+    speaker.close()
+
+
+def test_the_live_estimate_counts_says_start_up():
+    assert MacSay(rate_wpm=120).estimate_s(["one", "two"]) == pytest.approx(tts.SAY_OVERHEAD_S + 1.0)
