@@ -117,6 +117,41 @@ def test_hear_it_stopped_while_rendering_never_plays():
     assert not pb.poll(0.5) and ("play", 32000, 16000) not in player.calls
 
 
+class FakeReader:
+    def __init__(self):
+        self.started, self.asked, self.closed = None, [], 0
+
+    def start(self, t):
+        self.started = t
+        return self
+
+    def frame_at(self, t):
+        self.asked.append(t)
+        return np.full((2, 2, 3), 7, np.uint8)
+
+    def close(self):
+        self.closed += 1
+
+
+def test_a_clip_with_video_asks_for_the_moment_the_audio_has_reached():
+    player, reader, pb = FakePlayer(), FakeReader(), Playback()
+    pb.start_clip(player, CLIP, ("review", (1,), 2), now=10.0, video=reader, video_t0=55.25)
+    assert reader.started == 55.25  # decoding from the clip's first moment
+    assert pb.video_frame(10.5) is not None and reader.asked == [55.75]
+    pb.video_frame(9.0), pb.video_frame(20.0)  # clamped to the clip
+    assert reader.asked[1:] == [55.25, 57.25]
+    assert not pb.poll(12.0 + END_SLACK_S) and reader.closed == 1  # ended by itself: closed
+    assert pb.video_frame(12.5) is None
+
+
+def test_stopping_a_clip_closes_its_video_and_audio_only_has_none():
+    player, reader, pb = FakePlayer(), FakeReader(), Playback()
+    pb.start_clip(player, CLIP, ("review", (1,), 2), now=0.0, video=reader, video_t0=1.0)
+    assert pb.stop() and reader.closed == 1
+    pb.start_clip(player, CLIP, ("review", (1,), 2), now=0.0)
+    assert pb.video_frame(0.5) is None
+
+
 def test_one_thing_plays_at_a_time():
     player, speaker, pb = FakePlayer(), FakeSpeaker(), Playback()
     pb.start_say(speaker, ["hello"], ("prepare", (0,), None), now=0.0)

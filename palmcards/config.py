@@ -217,6 +217,7 @@ class Video:
     keyframe_s: float = 1.0  # a keyframe (and a fragment of the file) this often: what a crash can lose
     queue_s: float = 0.5  # frames the loop can hand over before they are dropped (and recorded as a gap)
     fps_guess: float = 30.0  # for sizing the queue and the encoder's rate hint; timestamps are real
+    read_ahead_s: float = 0.5  # Review's replay decodes this far ahead of what it shows
 
 
 @dataclass(frozen=True)

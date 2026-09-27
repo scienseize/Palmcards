@@ -156,3 +156,33 @@ def test_a_toggles_playback_and_x_stops_it(tmp_path, monkeypatch):
     log = [json.loads(line) for line in (tmp_path / "log.jsonl").read_text().splitlines()]
     assert [e["why"] for e in log if e["kind"] == "play_stop"] == ["key", "key"]
     assert [e["acted"] for e in log if e["kind"] == "key" and e["command"] == "stop"] == [False]  # nothing left: x as before
+
+
+def test_a_take_with_video_replays_it_in_place_of_the_mirror_while_it_plays(tmp_path, monkeypatch):
+    pytest.importorskip("av")
+    from palmcards.video import VideoWriter
+
+    saved = saved_session(tmp_path)
+    w = VideoWriter(saved.dir, 1, (640, 360), codec="mpeg4")
+    for i in range(60):  # take 1's video: 3 s of a bright frame from t_first 5.0, its audio's start
+        w.push(np.full((360, 640, 3), 200, np.uint8), 5.0 + i * 0.05)
+        __import__("time").sleep(0.005)
+    w.stop()
+    assert w.wait(10) and w.dropped == 0
+    session = Session.load(saved.dir)
+    session.take(1).video = w.summary()
+    session.save()
+    session.release()
+
+    shown = []
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={3: ord("a"), 260: ord("q")})
+    rig.devices.player = FakePlayer
+    rig.devices.show = lambda name, frame: shown.append(int(frame[180, 290].mean()))  # the face zone: nothing drawn
+    session = Session.load(saved.dir)
+    session.acquire()
+    notes = notes_from_bytes(NOTES, rig.notes_path)
+    assert main.run(session.notes, notes, b"", devices=rig.devices, session=session, prefs_file=rig.prefs_file) == 0
+    assert shown[:3] == [0, 0, 0]  # the live (black) camera before playing
+    replayed = [i for i, v in enumerate(shown) if abs(v - 200) <= 6]
+    assert replayed and replayed[0] <= 10  # the take's video from the first frames of the clip
+    assert shown[-1] == 0  # the clip (1.5 s) over: the live camera again

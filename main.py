@@ -125,8 +125,8 @@ from palmcards.review import Board
 from palmcards.sounds import Cues
 from palmcards.metrics import summary as metrics_summary
 from palmcards.pick import Picker
-from palmcards.playback import ClipPlayer, Playback, span_clip
-from palmcards.video import VideoWriter
+from palmcards.playback import ClipPlayer, Playback, clip_span, span_clip
+from palmcards.video import VideoReader, VideoWriter
 from palmcards.video import unavailable as video_unavailable
 from palmcards.recording import TakeWriter
 from palmcards.revisions import from_snapshot
@@ -690,12 +690,33 @@ class Takes:
         if clip is None:
             return False
         try:
-            self.playback.start_clip(self.clip_player(), clip, ("review", tuple(sentences), n), time.perf_counter())
+            self.playback.start_clip(self.clip_player(), clip, ("review", tuple(sentences), n), time.perf_counter(),
+                                     video=self._video_reader(take), video_t0=clip_span(take, mine)[0])
         except Exception as exc:  # no output device
             print(f"could not play: {exc}", file=sys.stderr)
             self._play_error = "COULD NOT PLAY (SEE TERMINAL)"
             return False
         return True
+
+    def _video_reader(self, take):
+        """A reader of the take's video, if it was recorded with one that is still there."""
+        video = take.video or {}
+        if video.get("state") not in ("saved", "interrupted") or video.get("t_first") is None:
+            return None
+        path = self.session.dir / video["file"]
+        if not path.exists():
+            return None
+        try:
+            return self.devices.video_reader(path, video["t_first"], self.frame_size)
+        except Exception as exc:  # the audio plays on without it
+            print(f"take {take.number}: video not replayed: {exc}", file=sys.stderr)
+            return None
+
+    def replay_frame(self):
+        """While a take's clip plays with its video: that moment's frame (a copy
+        to draw on), else None (the live camera)."""
+        frame = self.playback.video_frame(time.perf_counter())
+        return None if frame is None else frame.copy()
 
     def clip_player(self):
         """The player for clips (Review's, "hear it"), made at the first play."""
@@ -719,6 +740,8 @@ class Takes:
         grammar.set_focus_hold(t, "play" if self.playback.playing and view.mode == "focus" else None)
         view.playing = self.playback.playing
         view.play_progress = self.playback.progress(now)
+        cur = self.playback.current
+        view.replaying = f"TAKE {cur.target[2]}" if cur is not None and cur.video is not None else ""
         view.palm_progress = grammar.state.palm_progress
 
     def alert_line(self, mode: str = "") -> str:
@@ -1169,6 +1192,7 @@ class Devices:
     speaker: Callable = get_speaker
     player: Callable = ClipPlayer
     video: Callable = VideoWriter  # (folder, take number, frame size); only with video on
+    video_reader: Callable = VideoReader  # (path, t_first, frame size): Review's replay of a take's video
     llm: Callable = get_provider  # None: the optional LLM is off
     vision: Callable = Watcher.open  # face and pose; None or an error: off (they are optional)
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
@@ -1474,6 +1498,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
 
         overlay.follow(view, snap=snap_panel)
         snap_panel = False
+        if (replay := takes.replay_frame()) is not None:  # a take's video while its clip plays; hands stay live
+            frame = replay
         overlay.draw(frame, view)
         if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
             draw_hand_area(frame, grammar.cursor)

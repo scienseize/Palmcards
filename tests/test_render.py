@@ -890,3 +890,13 @@ def test_the_notes_give_a_little_when_pushed_past_their_end_and_spring_back():
     assert give < ov.shown_scroll(view) < 0  # on its way back
     view.now = 2.0
     assert ov.shown_scroll(view) == 0.0
+
+
+def test_a_replayed_take_is_marked_where_rec_is_during_a_take():
+    ov = overlay()
+    live = ViewState(app="review", mode="browse", level="sentence")
+    replay = replace(live, replaying="TAKE 2")
+    a = ov.draw(np.full((720, 1280, 3), 128, np.uint8), live)
+    b = ov.draw(np.full((720, 1280, 3), 128, np.uint8), replay)
+    changed = np.argwhere((a != b).any(axis=2))
+    assert len(changed) and changed[:, 1].min() > 1280 * 0.55  # in the hand zone, by the command zone

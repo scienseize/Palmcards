@@ -191,3 +191,55 @@ def test_drop_video_deletes_only_videos_and_the_take_says_so(tmp_path, capsys):
     assert Session.load(session.dir).take(1).video["state"] == "deleted"
     with pytest.raises(SystemExit):
         data.main(["drop-video"], root)  # a RUN or --older-than, not neither
+
+
+# --- replay (stage 2) ----------------------------------------------------------
+
+from palmcards.video import VideoReader  # noqa: E402
+
+
+def recorded_video(folder: Path, t_first: float = 100.0, n: int = 30, step: float = 0.1, size=SIZE) -> Path:
+    """n flat frames `step` s apart from t_first, frame i at brightness i * 8."""
+    w = VideoWriter(folder, 1, size, codec=CODEC)
+    for i in range(n):
+        w.push(np.full((size[1], size[0], 3), i * 8, np.uint8), t_first + i * step)
+        time.sleep(0.005)  # paced like a camera: the queue never fills
+    w.stop()
+    assert w.wait(10) and w.state == "saved" and w.dropped == 0
+    return folder / w.file
+
+
+def wait_frame(reader: VideoReader, t: float, want: int, timeout: float = 5.0) -> np.ndarray:
+    """frame_at(t) once the reader has decoded that far (it decodes in the background)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        image = reader.frame_at(t)
+        if image is not None and abs(int(image.mean()) - want * 8) <= 4:
+            return image
+        time.sleep(0.01)
+    raise AssertionError(f"no frame {want} at {t}: got {None if image is None else image.mean()}")
+
+
+def test_a_reader_gives_the_frame_for_a_moment_from_a_seek_in_the_middle(tmp_path):
+    path = recorded_video(tmp_path)
+    reader = VideoReader(path, 100.0).start(101.05)
+    wait_frame(reader, 101.05, 10)  # the newest frame at or before it (frame 10 is at 101.0)
+    wait_frame(reader, 101.52, 15)
+    wait_frame(reader, 102.29, 22)
+    wait_frame(reader, 150.0, 29)  # past the end: the last frame stays
+    reader.close()
+    assert reader.error is None
+
+
+def test_a_reader_scales_to_the_camera_frame(tmp_path):
+    path = recorded_video(tmp_path, size=(64, 48))
+    reader = VideoReader(path, 100.0, size=(128, 96)).start(100.0)
+    assert wait_frame(reader, 100.0, 0).shape == (96, 128, 3)
+    reader.close()
+
+
+def test_a_missing_video_gives_no_frames_and_says_why(tmp_path):
+    reader = VideoReader(tmp_path / "take-09.mp4", 0.0).start(1.0)
+    reader._thread.join(5)
+    assert reader.frame_at(1.0) is None and reader.error
+    reader.close()

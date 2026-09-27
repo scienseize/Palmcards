@@ -244,3 +244,88 @@ def video_info(path: Path) -> dict:
         tb = float(stream.time_base)
         return {"frames": len(pts), "duration_s": round((max(pts) - min(pts)) * tb, 3) if pts else 0.0,
                 "codec": stream.codec_context.name, "width": stream.width, "height": stream.height}
+
+
+class VideoReader:
+    """A take's video from an app time on (Review's replay), decoded ahead in
+    a background thread so the frame loop never waits on a seek:
+
+        reader = VideoReader(path, t_first, size)   # t_first: the take's video.t_first
+        reader.start(t_app)                          # from here (seeks to the keyframe before it)
+        reader.frame_at(t_app)                       # the newest frame at or before t_app, or None
+        reader.close()
+
+    Frames come back as BGR at `size` (the camera's, if the video was
+    recorded smaller). While the seek is still decoding its way from the
+    keyframe to `t_app`, frame_at gives the latest frame decoded so far, a
+    moment early, rather than nothing. Past the video's end it keeps giving
+    the last frame."""
+
+    def __init__(self, path: Path, t_first: float, size: tuple[int, int] | None = None,
+                 ahead_s: float = VIDEO.read_ahead_s):
+        self.path, self.t_first, self.size, self.ahead_s = Path(path), t_first, size, ahead_s
+        self.error: str | None = None
+        self._cond = threading.Condition()
+        self._frames: list[tuple[float, np.ndarray]] = []  # decoded, in time order, not yet passed
+        self._last: np.ndarray | None = None  # the newest frame given out
+        self._want = 0.0  # the app time the frame loop has asked for
+        self._ended = False
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self, t_app: float) -> "VideoReader":
+        self._want = t_app
+        self._running = True
+        self._thread = threading.Thread(target=self._run, args=(t_app,), name="video-reader", daemon=True)
+        self._thread.start()
+        return self
+
+    def frame_at(self, t_app: float) -> np.ndarray | None:
+        with self._cond:
+            self._want = t_app
+            while len(self._frames) > 1 and self._frames[1][0] <= t_app:
+                self._frames.pop(0)
+            if self._frames and (self._frames[0][0] <= t_app or self._last is None):
+                self._last = self._frames[0][1]  # at or before t_app; or, until one is, the first decoded
+            self._cond.notify_all()
+            return self._last
+
+    def close(self) -> None:
+        with self._cond:
+            self._running = False
+            self._cond.notify_all()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+
+    def _run(self, t_app: float) -> None:
+        try:
+            import av
+
+            with av.open(str(self.path)) as box:
+                stream = box.streams.video[0]
+                stream.thread_type = "AUTO"
+                offset = max(0.0, t_app - self.t_first)
+                box.seek(int(offset / stream.time_base), stream=stream, backward=True, any_frame=False)
+                for frame in box.decode(stream):
+                    if frame.pts is None:
+                        continue
+                    t = self.t_first + float(frame.pts * stream.time_base)
+                    image = frame.to_ndarray(format="bgr24")
+                    if self.size is not None and image.shape[1::-1] != tuple(self.size):
+                        image = cv2.resize(image, self.size, interpolation=cv2.INTER_LINEAR)
+                    with self._cond:
+                        if t < t_app and self._frames and self._frames[-1][0] < t_app:
+                            self._frames[-1] = (t, image)  # still seeking: keep only the latest before the start
+                        else:
+                            self._frames.append((t, image))
+                        self._cond.notify_all()
+                        # Decode ahead only so far: wait for the frame loop to catch up.
+                        self._cond.wait_for(lambda: not self._running or t <= self._want + self.ahead_s)
+                        if not self._running:
+                            return
+        except Exception as exc:  # noqa: BLE001 - a missing or broken file: no replay, the audio plays on
+            self.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            with self._cond:
+                self._ended = True
+                self._cond.notify_all()

@@ -1969,3 +1969,29 @@ Checked on this Mac (headless, VideoToolbox, 1280x720 at 30 fps for 10 s): 300/3
   dropped; push with the frame copy 0.26 ms median (p99 0.37); finished 2 ms after stop; read back
   300 frames over 9.97 s. Size on a synthetic moving texture 3 MB/min; a real camera to be measured.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: video of takes, stage 2 of 2: replay in Review (stage 1 pushed as 6b5b34c)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes:
+  palmcards/video.py: VideoReader(path, t_first, size).start(t_app): seeks to the keyframe before
+    t_app and decodes in its own thread, at most VIDEO.read_ahead_s (0.5) ahead of what the frame
+    loop asked for; frame_at(t) gives the newest frame at or before t (while still seeking, the latest
+    decoded so far; past the end, the last); frames scaled to the camera's size; a missing or broken
+    file sets `error` and gives no frames.
+  palmcards/playback.py: clip_span(take, sentences) -> the clip's app times (span_clip uses it, so
+    audio and video are the same padded stretch); start_clip(..., video=, video_t0=) starts the reader
+    at the clip's first sample; video_frame(now) asks for video_t0 + (now - start), the progress
+    bar's clock, clamped to the clip; the reader is closed when the clip stops or ends.
+  main.py: Takes._play opens the take's video (Devices.video_reader) when it is saved or interrupted
+    and its file is there; replay_frame() gives a copy of that moment's frame, drawn on in place of
+    the camera frame (after hand tracking, so gestures stay live); view.replaying = "TAKE n".
+  palmcards/render.py: a "▶ TAKE n" chip where REC is during a take (TYPE.operation on dark_fill).
+Tests: pytest (full) -> 588 passed; python -m palmcards.replay -> all ok. New: the reader gives the
+  frame for a moment after a seek mid-video, past the end, scaled, and nothing for a missing file;
+  playback asks for the audio's moment, clamped, and closes the reader on stop and at the end; the
+  frame loop (reopened session, key a) shows the take's video from the first frames of the clip and
+  the live camera again when it is over; the chip is drawn in the hand zone.
+Visual: Review focused, playing take 2 with video: the chip reads "▶ TAKE 2" over the zone's hint.
+```

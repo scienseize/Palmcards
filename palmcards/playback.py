@@ -9,6 +9,8 @@
     playback.start_rendered(player, speaker, words, target, now)  # "hear it": the speaker's audio
     playback.start_say(speaker, words, target, now)
     playback.poll(now); playback.progress(now); playback.stop()
+    playback.start_clip(player, clip, target, now, video=reader, video_t0=t0)   # with the take's video
+    playback.video_frame(now)                        # the video's frame for what plays now, or None
 
 The sentence is the take's own (Notes.sentences index in the take's notes
 revision); the clip runs from its first to its last matched word, padded a
@@ -23,6 +25,10 @@ sentence was focused; if it isn't ready yet, it starts as soon as it is),
 so its progress is exact too. Only a speaker that can't render speaks
 live, and `say` reports no position: that progress is an estimate from the
 word count, held short of the end until it has finished.
+
+A take recorded with video replays it with the clip: a VideoReader
+(palmcards.video) started at the clip's first moment (clip_span), asked each
+frame for the moment the audio has reached, the same clock as the progress bar.
 """
 
 from __future__ import annotations
@@ -44,18 +50,30 @@ def sentence_clip(session: Session, take: TakeRecord, sentence: int) -> tuple[np
     return span_clip(session, take, [sentence])
 
 
-def span_clip(session: Session, take: TakeRecord, sentences: list[int]) -> tuple[np.ndarray, int] | None:
-    """The audio of the take's sentences (its own indices) from the first word
-    said to the last, or None if none of them was said (or not yet aligned)."""
+def clip_span(take: TakeRecord, sentences: list[int]) -> tuple[float, float] | None:
+    """App times the take's sentences (its own indices) play from and to: the
+    first word said to the last, padded, within the take. None if none of
+    them was said (or not yet aligned)."""
     if take.alignment is None:
         return None
     entries = [take.alignment["sentences"][i] for i in sentences if 0 <= i < len(take.alignment["sentences"])]
     said = [e for e in entries if e["start"] is not None and e["end"] is not None]
     if not said:
         return None
+    t0 = max(take.t_start, min(e["start"] for e in said) - PAD_S)
+    t1 = min(take.t_start + take.duration_s, max(e["end"] for e in said) + PAD_S)
+    return (t0, t1) if t1 > t0 else None
+
+
+def span_clip(session: Session, take: TakeRecord, sentences: list[int]) -> tuple[np.ndarray, int] | None:
+    """The audio of the take's sentences (its own indices) from the first word
+    said to the last (clip_span), or None if none of them was said (or not yet aligned)."""
+    span = clip_span(take, sentences)
+    if span is None:
+        return None
     audio, rate = read_wav(session.dir / take.wav)
-    a = max(0, int((min(e["start"] for e in said) - take.t_start - PAD_S) * rate))
-    b = min(len(audio), int((max(e["end"] for e in said) - take.t_start + PAD_S) * rate))
+    a = max(0, int((span[0] - take.t_start) * rate))
+    b = min(len(audio), int((span[1] - take.t_start) * rate))
     return (audio[a:b], rate) if b > a else None
 
 
@@ -87,6 +105,8 @@ class Playing:
     render: Future | None = None  # rendering: the clip to come
     speaker: object = None  # rendering: says the words instead if making the clip failed
     words: list[str] | None = None
+    video: object = None  # a clip's VideoReader (the take's video), or None: audio only
+    video_t0: float = 0.0  # app time of the clip's first sample
 
 
 class Playback:
@@ -103,12 +123,24 @@ class Playback:
     def target(self) -> tuple | None:
         return self.current.target if self.current is not None else None
 
-    def start_clip(self, player, clip: tuple[np.ndarray, int], target: tuple, now: float) -> None:
-        """Play a take's clip (the player stops anything it was playing first)."""
+    def start_clip(self, player, clip: tuple[np.ndarray, int], target: tuple, now: float, video=None,
+                   video_t0: float = 0.0) -> None:
+        """Play a take's clip (the player stops anything it was playing first),
+        with its video from `video_t0` (the clip's first sample, app time) if given."""
         self.stop()
         audio, rate = clip
+        if video is not None:
+            video.start(video_t0)  # decoding from the keyframe before it while the audio starts
         player.play(audio, rate)
-        self.current = Playing("clip", target, now, len(audio) / rate, player)
+        self.current = Playing("clip", target, now, len(audio) / rate, player, video=video, video_t0=video_t0)
+
+    def video_frame(self, now: float):
+        """The video's frame for the moment the clip has reached (the progress
+        bar's clock), or None: no video, or none decoded yet."""
+        cur = self.current
+        if cur is None or cur.video is None:
+            return None
+        return cur.video.frame_at(cur.video_t0 + min(max(now - cur.start, 0.0), cur.duration_s))
 
     def start_rendered(self, player, speaker, words: list[str], target: tuple, now: float) -> None:
         """Play the speaker's audio of the words (speaker.render_async): at once
@@ -131,6 +163,8 @@ class Playback:
         if cur is None:
             return False
         cur.device.stop()
+        if cur.video is not None:
+            cur.video.close()
         return True
 
     def poll(self, now: float) -> bool:
@@ -156,6 +190,8 @@ class Playback:
             done = now - cur.start >= cur.duration_s
         if done:
             self.current = None
+            if cur.video is not None:
+                cur.video.close()
         return not done
 
     def progress(self, now: float) -> float | None:

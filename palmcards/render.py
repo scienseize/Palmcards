@@ -368,6 +368,7 @@ class ViewState:
     calibration: str | None = None  # count_in: the calibration step, "camera" (look into the lens) or "notes"
     rec_s: float = 0.0  # length of the take so far
     recording_video: bool = False  # the take's video is being recorded too (the REC chip says so)
+    replaying: str = ""  # Review: the frame is a take's video, not the live mirror ("TAKE 2"); a chip says so
     mic: float = 0.0  # microphone level, 0..1
     zone_active: bool = False  # a hand is in the command zone
     hold_progress: float = 0.0  # open palm held in the zone, 0..1
@@ -1797,6 +1798,9 @@ class TextOverlay:
         elif state.app == "count_in":
             hints = ("HOLD OPEN PALM: CANCEL",)
         else:
+            if state.replaying:  # where REC is during a take: this is a recording, not the mirror
+                chip = self._chip(f"▶ {state.replaying}", self._face(TYPE.operation), C.node_text, C.dark_fill)
+                y = self._blend_centered(frame, chip, cx, y + chip[0].shape[0] / 2)[3] + self.pad // 2
             hints = ("HOLD OPEN PALM: BACK TO PREPARE",)
         for text in hints:  # one plain line each
             ink = self._ink(text, f, C.node_text if active else C.dim)
