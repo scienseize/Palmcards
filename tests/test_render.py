@@ -840,3 +840,49 @@ def test_the_stretch_line_shows_its_limits():
     short = drawn(0.25)  # closer than the shortest: ticks where the limit would end, out beyond the hands
     tick = lambda f: np.abs(f[293:308, 595:606].astype(int) - 128).sum()  # the limit: twice as far out, at x 600
     assert tick(short) > 0 and tick(within) == 0
+
+
+# --- reduced motion, the notes' give at their ends --------------------------------------
+
+def test_with_reduced_motion_nothing_moves_or_scales_it_fades():
+    from palmcards.render import FocusMotion, PanelMotion, grow
+
+    render.set_reduced_motion(True)
+    g = grow((10.0, 20.0, 50.0, 40.0), (100.0, 200.0, 300.0, 260.0), 1.4, 0.3)
+    assert (g.s, g.at(100.0, 200.0), g.p) == (1.0, (100.0, 200.0), 0.3)  # in place, fading
+    ov = overlay()
+    notes = parse_text(LONG_SECTION, "md")
+    long = TextOverlay(notes.sentences, (1280, 720))
+    view = ViewState(app="rehearse", section=0, now=1.0, panel_motion=PanelMotion())
+    long.follow(view)
+    view.current, view.panel_scroll = 5, long.panel_scroll_to(view, 5)
+    long.follow(view)
+    assert long.shown_panel_scroll(view) == view.panel_scroll  # at once
+    tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None),
+                     ops=OpsView(kind="tone", tone=1.0, tone_over=0.5, dialing=True))
+    ov.follow(tone)
+    assert ov.shown_tone(tone) == 1.0  # no give past the end
+    ring = knob_view(now=1.0)
+    ov.follow_ring(ring, "being", 0)
+    ov.follow_ring(ring, "present", 1)
+    assert ring.ops.rot.at(1.0) == 1.0 and ov.focus_word(ring) == "present"  # no spin, no scramble
+
+
+def test_the_notes_give_a_little_when_pushed_past_their_end_and_spring_back():
+    from palmcards.motion import Spring
+    from palmcards.style import MOTION
+
+    ov = overlay()
+    view = ViewState(mode="browse", level="sentence", hover=Hit(0, None), scroll=0.0, scroll_bounce=Spring(),
+                     scroll_push=-3.0)  # the hand in the top band at the first row, for half a second
+    ov.follow(view)
+    give = ov.shown_scroll(view)
+    assert -MOTION.give_rows < give < 0  # the notes pulled down a little, less than pushed
+    frame = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(frame, view)  # drawn past the end: clear above the first row
+    view.scroll_push, view.now = 0.0, 0.05  # the hand leaves the band
+    ov.follow(view)
+    view.now = 0.1
+    assert give < ov.shown_scroll(view) < 0  # on its way back
+    view.now = 2.0
+    assert ov.shown_scroll(view) == 0.0

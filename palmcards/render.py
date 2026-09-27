@@ -55,7 +55,6 @@ import math
 import random
 import re
 import textwrap
-import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -84,6 +83,22 @@ def set_contrast(high: bool) -> None:
     """High-contrast colours (preferences); build a new TextOverlay afterwards."""
     global C
     C = HIGH_CONTRAST if high else COLORS
+
+
+REDUCED = False  # reduced motion (preferences, or macOS's setting): nothing moves or scales, things fade
+
+
+def set_reduced_motion(on: bool) -> None:
+    """Reduced motion: springs that move or scale things arrive at once, the
+    focus and the ring fade in place (MOTION.fade), no glyph scramble, no
+    rubber band; progress, dots and fades stay."""
+    global REDUCED
+    REDUCED = bool(on)
+
+
+def _r(response: float) -> float:
+    """A moving spring's response, or 0 (at once) with reduced motion."""
+    return 0.0 if REDUCED else response
 BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
 HINT_SEP = "  /  "  # in the label's second line: the operation, then the gesture hints
@@ -169,6 +184,8 @@ def ring_follow(offset: float) -> float:
     """How far the ring turns with the hand past its node (in nodes) for the
     knob turned `offset` steps past its step: not at all near the node, then
     MOTION.ring_gain of the way."""
+    if REDUCED:
+        return 0.0
     past = max(0.0, abs(offset) - MOTION.ring_flat)
     return math.copysign(past * MOTION.ring_gain, offset)
 
@@ -260,6 +277,8 @@ def grow(home: tuple[float, float, float, float], target: tuple[float, float, fl
          p: float) -> Grow:
     """The focus at p of the way from `home` (the unit in the notes) to
     `target` (focused, its text `scale` times the notes')."""
+    if REDUCED:  # fades in place: nothing moves or scales
+        return Grow(p, 1.0, target[0], target[1], target[0], target[1])
     k = 1.0 / scale
     return Grow(p, k + (1 - k) * p, home[0] + (target[0] - home[0]) * p, home[1] + (target[1] - home[1]) * p,
                 target[0], target[1])
@@ -282,6 +301,10 @@ class ViewState:
     hover: Hit | None = None
     focus: Hit | None = None
     scroll: float = 0.0  # in rows
+    # Browsing pushed past the first or last row: how far (rows, the app's),
+    # and the notes' give as drawn (follow_bounce). None: no give.
+    scroll_push: float = 0.0
+    scroll_bounce: Spring | None = None
     ops: OpsView = field(default_factory=OpsView)
     drop_progress: float = 0.0
     note: str = ""  # transient second label line, e.g. after a commit
@@ -680,7 +703,7 @@ class TextOverlay:
         if ops.opened is None:  # just spread: it opens out of the word
             ops.opened = Spring()
             ops.opened.snap(0.0, now)
-            ops.opened.retarget(1.0, now, MOTION.ring_open)
+            ops.opened.retarget(1.0, now, MOTION.fade if REDUCED else MOTION.ring_open)
         picked = labels.index(pick) if pick in labels else 0
         n = len(labels)
         if n != ops.nodes:
@@ -689,7 +712,7 @@ class TextOverlay:
         else:
             aim = ops.rot_to + (turn - ops.turn)  # where the knob's steps take it
             ops.rot_to = float(picked + n * round((aim - picked) / n))
-            ops.rot.retarget(ops.rot_to + ring_follow(ops.offset), now, MOTION.ring, MOTION.ring_damping)
+            ops.rot.retarget(ops.rot_to + ring_follow(ops.offset), now, _r(MOTION.ring), MOTION.ring_damping)
         ops.turn = turn
         if ops.pick_label is not None and labels[picked] != ops.pick_label:
             ops.changed_t = now
@@ -705,7 +728,7 @@ class TextOverlay:
         ops = state.ops
         if ops.kind != "ring" or ops.preview is None:
             return self.word_text(state.focus)
-        if ops.scrambled_t is not None and state.now - ops.scrambled_t < KNOB.scramble_s:
+        if not REDUCED and ops.scrambled_t is not None and state.now - ops.scrambled_t < KNOB.scramble_s:
             return resolve_scramble(ops.preview, (state.now - ops.scrambled_t) / KNOB.scramble_s,
                                     int(state.now * 60))
         return ops.preview
@@ -855,14 +878,13 @@ class TextOverlay:
         return top_ok and bottom_ok
 
     def _band_crop(self, state: ViewState) -> tuple[np.ndarray, np.ndarray]:
-        key = self._band_style(state)
-        if self._band_key != key or not self._band_valid(state.scroll):
-            self._band_start = max(0, math.floor(state.scroll) - BAND_SLACK_ROWS)
+        key, scroll = self._band_style(state), self.shown_scroll(state)
+        if self._band_key != key or not self._band_valid(scroll):
+            self._band_start = max(0, math.floor(scroll) - BAND_SLACK_ROWS)
             self._band = self._render_band(key, self._band_start)
             self._band_key = key
-        off = round((state.scroll - self._band_start) * self.line_h)
-        color, inv = self._band
-        return self._faded(color[off : off + self.box_h], inv[off : off + self.box_h])
+        off = round((scroll - self._band_start) * self.line_h)
+        return self._faded(*_window(*self._band, off, self.box_h))
 
     def _panel_unit(self, state: ViewState) -> tuple[int, ...] | None:
         """Sentences shown enlarged in the panel instead of the scrolling text, if any."""
@@ -909,7 +931,7 @@ class TextOverlay:
         sents = [parse_sentence(replacement)] if replacement is not None else [self.sentences[i] for i in unit]
         ids = (unit[0],) if replacement is not None else unit
         dfont = self._get_font(round(self.font_size * DETAIL.scale))
-        dlh = round(self.line_h * DETAIL.scale)
+        dlh = round(self.line_h * DETAIL.scale * DETAIL.leading)
         dcols = max(DETAIL.min_columns, int((width - 2 * self.pad) / dfont.getlength("M")))
         dlines = [piece for line in detail
                   for piece in textwrap.wrap(line, dcols, subsequent_indent=DETAIL.indent) or [""]]
@@ -919,7 +941,7 @@ class TextOverlay:
         # The largest size that fits the viewport with enough columns; never smaller than normal.
         for scale in TEXT.focus_scales:
             font = self._get_font(round(self.font_size * scale))
-            lh = round(self.line_h * scale)
+            lh = round(self.line_h * scale * (TEXT.focus_leading if scale > 1 else 1.0))
             cw = font.getlength("M")
             cols = int((width - 2 * self.pad) / cw)
             rows = layout(sents, cols, ids)
@@ -991,7 +1013,7 @@ class TextOverlay:
         return self._wrap(text, self._label_size(line), width, max_rows, LABEL.tracking[line])
 
     def _label_row_h(self, line: int) -> int:
-        return int(sum(self._get_font(self._label_size(line)).getmetrics()) * 1.1)
+        return int(sum(self._get_font(self._label_size(line)).getmetrics()) * LABEL.leading)
 
     @property
     def label_h(self) -> int:
@@ -1047,6 +1069,7 @@ class TextOverlay:
         says (the panel's scroll, the focus growing or shrinking, the tone
         knob). `snap`: the panel's scroll moved by a key, shown at once."""
         self.follow_panel_scroll(state, snap)
+        self.follow_bounce(state)
         self.follow_focus(state)
         self.follow_dials(state)
 
@@ -1091,13 +1114,13 @@ class TextOverlay:
         if key is not None:
             if fm.last is None or fm.last.key != key:
                 fm.spring.snap(0.0, now)
-            fm.home = self._home(key, state.scroll)
-            fm.spring.retarget(1.0, now, MOTION.focus_in)
+            fm.home = self._home(key, self.shown_scroll(state))
+            fm.spring.retarget(1.0, now, MOTION.fade if REDUCED else MOTION.focus_in)
             if fm.home is None:  # focused from out of view: nowhere to grow from
                 fm.spring.snap(1.0, now)
         else:
-            fm.home = self._home(fm.last.key, state.scroll) if fm.last is not None else None
-            fm.spring.retarget(0.0, now, MOTION.focus_out)
+            fm.home = self._home(fm.last.key, self.shown_scroll(state)) if fm.last is not None else None
+            fm.spring.retarget(0.0, now, MOTION.fade if REDUCED else MOTION.focus_out)
             if fm.home is None:
                 fm.spring.snap(0.0, now)
                 fm.last = None
@@ -1121,20 +1144,43 @@ class TextOverlay:
         if ops.kind != "tone":
             ops.tone_shown = None
             return
-        target = ops.tone + rubberband(ops.tone_over, GAUGE.rubber_max, MOTION.rubber)
+        target = ops.tone + self._tone_give(ops)
         if ops.tone_shown is None:
             ops.tone_shown = Spring()
             ops.tone_shown.snap(target, state.now)
         elif ops.dialing:
             ops.tone_shown.snap(target, state.now)
         else:
-            ops.tone_shown.retarget(target, state.now, MOTION.dial)
+            ops.tone_shown.retarget(target, state.now, _r(MOTION.dial))
+
+    @staticmethod
+    def _tone_give(ops: OpsView) -> float:
+        """How far past its end the tone knob is drawn for a hand gone past it (none with reduced motion)."""
+        return 0.0 if REDUCED else rubberband(ops.tone_over, GAUGE.rubber_max, MOTION.rubber)
 
     def shown_tone(self, state: ViewState) -> float:
         ops = state.ops
         if ops.tone_shown is not None:
             return ops.tone_shown.at(state.now)
-        return ops.tone + rubberband(ops.tone_over, GAUGE.rubber_max, MOTION.rubber)
+        return ops.tone + self._tone_give(ops)
+
+    def shown_scroll(self, state: ViewState) -> float:
+        """The notes' scroll as drawn: with the rubber band's give past an end (follow_bounce)."""
+        b = state.scroll_bounce
+        return state.scroll + (b.at(state.now) if b is not None else 0.0)
+
+    def follow_bounce(self, state: ViewState) -> None:
+        """Browsing pushed past the first or last row (ViewState.scroll_push,
+        rows): the notes follow the push with rising resistance
+        (rubberband, MOTION.give_rows at most), and spring back once the hand
+        stops pushing. None with reduced motion."""
+        b = state.scroll_bounce
+        if b is None:
+            return
+        if state.scroll_push and not REDUCED:
+            b.snap(rubberband(state.scroll_push, MOTION.give_rows, MOTION.rubber), state.now)
+        else:
+            b.retarget(0.0, state.now, _r(MOTION.scroll))
 
     def _put(self, frame: np.ndarray, x: float, y: float, color: np.ndarray, inv: np.ndarray,
              g: Grow | None = None, record: list | None = None, grows: bool = True) -> None:
@@ -1194,25 +1240,17 @@ class TextOverlay:
             m.unit, start = unit, target
             panel = self.panel(state)
             seen = self._drawn_rows.get(state.current)
-            if not snap and seen is not None and state.current in panel.rows:
+            if not snap and not REDUCED and seen is not None and state.current in panel.rows:
                 top = self._panel_top(self.panel_view_h(panel), panel.header_h)
                 start = panel.rows[state.current][0] + top - seen
             m.spring.snap(start, state.now)
         elif snap:
             m.spring.snap(target, state.now)
-        m.spring.retarget(target, state.now, MOTION.scroll)
+        m.spring.retarget(target, state.now, _r(MOTION.scroll))
 
     def _panel_view(self, panel: Panel, scroll: int, view_h: int) -> tuple[np.ndarray, np.ndarray]:
-        """The panel's content through its viewport at `scroll` px; clear
-        where a scroll past either end has nothing to show."""
-        if 0 <= scroll and scroll + view_h <= panel.height:
-            return panel.color[scroll:scroll + view_h], panel.inv[scroll:scroll + view_h]
-        color = np.zeros((view_h, *panel.color.shape[1:]), panel.color.dtype)
-        inv = np.ones((view_h, *panel.inv.shape[1:]), panel.inv.dtype)
-        a, b = max(0, scroll), min(panel.height, scroll + view_h)
-        if b > a:
-            color[a - scroll:b - scroll], inv[a - scroll:b - scroll] = panel.color[a:b], panel.inv[a:b]
-        return color, inv
+        """The panel's content through its viewport at `scroll` px."""
+        return _window(panel.color, panel.inv, scroll, view_h)
 
     @staticmethod
     def _receding(state: ViewState, color: np.ndarray, inv: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -1455,7 +1493,7 @@ class TextOverlay:
                         pts[j][axis] -= over * wj * sign
             if not moved:
                 break
-        k = 1.0 - MOTION.drop_pull * state.drop_progress  # backing out: drawn in toward the word
+        k = 1.0 - (0.0 if REDUCED else MOTION.drop_pull) * state.drop_progress  # backing out: drawn in toward the word
         return [(cx + (x - cx) * k, cy + (y - cy) * k) for x, y in pts]
 
     def _panel_origin(self, state: ViewState) -> tuple[Panel, float, float, int] | None:
@@ -1513,7 +1551,8 @@ class TextOverlay:
             nodes[picked] = (nodes[picked][0], nodes[picked][1] - MOTION.lift_px * state.lift)
         self._ring_snap = (labels, picked, nodes, box)
         opened = state.ops.opened.at(state.now) if state.ops.opened is not None else 1.0
-        self._draw_ring_at(frame, labels, picked, nodes, box, state.ops.closing, 0.35 + 0.65 * opened, opened)
+        spread = 1.0 if REDUCED else 0.35 + 0.65 * opened
+        self._draw_ring_at(frame, labels, picked, nodes, box, state.ops.closing, spread, opened)
 
     def _draw_ring_at(self, frame: np.ndarray, labels, picked: int, nodes, box, closing: bool,
                       spread: float = 1.0, alpha: float = 1.0) -> None:
@@ -1736,13 +1775,13 @@ class TextOverlay:
                     labels, picked, nodes, box = last.ring
                     (bx0, by0), (bx1, by1) = shrink.at(box[0], box[1]), shrink.at(box[2], box[3])
                     self._draw_ring_at(frame, labels, picked, [shrink.at(*n) for n in nodes], (bx0, by0, bx1, by1),
-                                       False, 0.35 + 0.65 * p, p)
+                                       False, 1.0 if REDUCED else 0.35 + 0.65 * p, p)
             else:
                 _blend(frame, self.x + self.margin, box_top, *self._band_crop(state))
 
         # Word chips are drawn over the cached band, so hovering never re-renders text.
         if state.mode == "browse" and state.level == "word" and state.hover and state.hover.word is not None:
-            if (box := self.word_box(state.hover, state.scroll)) is not None:
+            if (box := self.word_box(state.hover, self.shown_scroll(state))) is not None:
                 chip = self._chip(self.word_text(state.hover), round(self.font_size * CHIPS.hover_scale),
                                   C.chip_text, C.chip_fill)
                 x0, y0, x1, y1 = self._blend_centered(frame, chip, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
@@ -1754,12 +1793,14 @@ class TextOverlay:
                 self._draw_ring(frame, state, zoom)
             elif g is None and state.app == "prepare" and state.meaning:
                 self._draw_meaning(frame, state.meaning, zoom[3])
-            text = self.focus_word(state)
-            if state.loading:  # glyph scramble: the word is being rewritten
-                text = "".join(SCRAMBLE[(ord(c) + int(time.time() * 12)) % len(SCRAMBLE)] if c.isalpha() else c
+            text, ink = self.focus_word(state), C.orange_text
+            if state.loading and REDUCED:  # the word is being rewritten: dimmed, still (the label says so)
+                ink = C.dim
+            elif state.loading:  # glyph scramble: the word is being rewritten
+                text = "".join(SCRAMBLE[(ord(c) + int(state.now * 12)) % len(SCRAMBLE)] if c.isalpha() else c
                                for c in text)
             # Inline, in the gap the zoomed text left for it: orange, at the zoomed size (rising with a pinched hand).
-            color, inv, m = self._ink(text, self._word_zoom(state)[3], C.orange_text)
+            color, inv, m = self._ink(text, self._word_zoom(state)[3], ink)
             self._put(frame, int(zoom[0]) - m, int(zoom[1] - lift) - m, color, inv, g, layers)
         if layers is not None and target is not None:
             state.focus_motion.last = FocusFrame(key, layers, target, scale, self._ring_snap)
@@ -2092,6 +2133,18 @@ def _dot_blend(frame: np.ndarray, c: tuple[int, int], r: int, color, alpha: floa
     over = roi.copy()
     cv2.circle(over, (c[0] - x0, c[1] - y0), r, bgr(color), -1, cv2.LINE_AA)
     roi[:] = cv2.addWeighted(over, alpha, roi, 1 - alpha, 0)
+
+
+def _window(color: np.ndarray, inv: np.ndarray, off: int, h: int) -> tuple[np.ndarray, np.ndarray]:
+    """Rows off..off+h of a patch; clear where that runs past either end."""
+    if 0 <= off and off + h <= color.shape[0]:
+        return color[off:off + h], inv[off:off + h]
+    out_c = np.zeros((h, *color.shape[1:]), color.dtype)
+    out_i = np.ones((h, *inv.shape[1:]), inv.dtype)
+    a, b = max(0, off), min(color.shape[0], off + h)
+    if b > a:
+        out_c[a - off:b - off], out_i[a - off:b - off] = color[a:b], inv[a:b]
+    return out_c, out_i
 
 
 def _poly_blend(frame: np.ndarray, pts: np.ndarray, color, stroke: int, alpha: float) -> None:

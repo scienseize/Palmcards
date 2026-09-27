@@ -1760,7 +1760,7 @@ Pending: how the stop sounds on the Mac (reported by the user: not yet).
 Date: 2026-09-27
 Phase / issue IDs: motion audit items 1-4 (apple-design, emil-design-eng, improve-animations,
   translated to Pillow/OpenCV; the user chose items 1-4 of 12)
-Status: implemented; automated checks passed; not yet seen on the camera
+Status: implemented; automated checks passed; live check passed (the user, 2026-09-27)
 Changes:
   palmcards/motion.py (new): Spring (response, damping; closed form in time since the last
     retarget, so reading is pure and a retarget carries on from its place and speed; damping < 1
@@ -1790,13 +1790,13 @@ Visual (headless strips, 30 fps): the ring follows 0 -> 0.25 nodes, clicks over 
   so the text size still changes at the hand-over.
 Risk: the 1:1 ring shows what wobble the One Euro filter lets through; check on --trace recordings
   (tune ring_gain / ring_flat, not the knob's hysteresis).
-Pending: the user's feel-check on the camera; items 5-12 of the audit.
+Live (the user, 2026-09-27, the step-by-step check after items 9-12): all good.
 ```
 
 ```text
 Date: 2026-09-27
 Phase / issue IDs: motion audit items 5-8 (focus grows and shrinks, ring opens, dials, label tracking)
-Status: implemented; automated checks passed; not yet seen on the camera
+Status: implemented; automated checks passed; live check passed (the user, 2026-09-27)
 Changes:
   palmcards/render.py: FocusMotion / FocusFrame / Grow; TextOverlay.follow (panel scroll, focus,
     dials, once a frame), follow_focus, _home (the unit's rows or the word in the notes), _put (a
@@ -1828,6 +1828,40 @@ Tests: pytest (full) -> 554 passed; python -m palmcards.replay -> all ok. New: r
 Visual (headless strips, 30 fps): the sentence grows from its place in about 0.2 s, the context
   crossfading; the word focus zooms about the word and the ring opens out of it; backing out
   shrinks both back into the notes.
-Pending: the user's feel-check on the camera; items 9-12 (reduced motion, browse rubber band,
-  sound cues, leading).
+Live (the user, 2026-09-27): all good.
+```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: motion audit items 9-12 (reduced motion, the notes' give at their ends, sound
+  cues, leading)
+Status: implemented; automated checks passed; live check passed (the user, 2026-09-27)
+Changes:
+  palmcards/prefs.py: reduced_motion (None = auto: macOS's Reduce motion, read with NSWorkspace
+    accessibilityDisplayShouldReduceMotion; `set reduced_motion true|false|auto`), sounds (False).
+    apply() sets render's reduced motion.
+  palmcards/render.py: set_reduced_motion / REDUCED: moving springs arrive at once (_r), the focus
+    and the ring fade in place (grow() in place, MOTION.fade), the ring doesn't follow the hand
+    between nodes or spin, no scramble (a loading word dimmed instead), no give past a dial's or the
+    notes' end, no pull of the ring's nodes while backing out, no section slide. The loading scramble
+    runs on state.now, not time.time(). shown_scroll / follow_bounce: the notes pushed past an end
+    give (rubberband, MOTION.give_rows 2) and spring back; the band, the hover chip, the hit test
+    and the focus's home use the shown scroll; _window crops past either end (band and panel).
+    Leading: TEXT.focus_leading 0.95 on enlarged focus text, DETAIL.leading 1.05, LABEL.leading
+    (was a literal 1.1).
+  palmcards/sounds.py (new): Cues.react (focus, back, commit, ring step at most every
+    SOUND.step_gap_s; only Prepare and Review, nothing while playing); NSSound player, a copy per cue
+    at its own volume (style.SOUND: Tink, Bottle, Pop, Tink quieter); nothing without AppKit.
+  main.py: ViewState(scroll_bounce=Spring()); scroll_push kept by the edge scrolling; the hit test
+    on the shown scroll; Cues when prefs.sounds, reacting on the frame the events are handled.
+  tests/conftest.py: tests never read this Mac's Reduce motion, keep render.REDUCED, or play sounds.
+Tests: pytest (full) -> 560 passed; python -m palmcards.replay -> all ok. New: tests/test_sounds.py;
+  reduced motion (in place, at once, no give, no spin or scramble); the notes' give and return;
+  reduced_motion and sounds preferences.
+Checked on this Mac: the four cue sounds load (not played); the Reduce motion setting reads (off).
+Visual: a focused sentence at focus_leading 1.0 and 0.95: tighter, no glyphs touching; the take
+  lines a little looser.
+Live (the user, 2026-09-27): the step-by-step check (dots, sentence and word focus, the ring, pinch +
+  lift, tone, stretch, scroll ends, labels, a take with the follow, Review playback, reduced motion,
+  sounds): all good.
 ```

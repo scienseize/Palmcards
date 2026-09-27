@@ -103,3 +103,18 @@ def test_keys_in_the_app_save_preferences_to_its_file(tmp_path, monkeypatch, res
     assert rig.run() == 0
     saved = json.loads(rig.prefs_file.read_text())
     assert saved["high_contrast"] is True and saved["tutorial_done"] is True
+
+
+def test_reduced_motion_and_sounds_are_preferences(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(prefs, "path", lambda: tmp_path / "prefs.json")
+    assert prefs.Prefs().reduced_motion is None and prefs.Prefs().sounds is False  # as macOS; silent
+    prefs.apply(prefs.Prefs())
+    assert render.REDUCED is False  # macOS's setting (off in tests)
+    monkeypatch.setattr(prefs, "system_reduce_motion", lambda: True)
+    prefs.apply(prefs.Prefs())
+    assert render.REDUCED is True  # follows it
+    prefs.apply(prefs.Prefs(reduced_motion=False))
+    assert render.REDUCED is False  # unless set
+    assert prefs.main(["set", "reduced_motion", "true"]) == 0 and prefs.load().reduced_motion is True
+    assert prefs.main(["set", "reduced_motion", "auto"]) == 0 and prefs.load().reduced_motion is None
+    assert prefs.main(["set", "sounds", "on"]) == 0 and prefs.load().sounds is True

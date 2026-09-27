@@ -9,6 +9,9 @@ sessions (which are evidence and never change with your settings).
   stop_hold_s    how long an open palm is held in the zone (stop, cancel, back to Prepare)
   high_contrast  brighter dimmed text and a darker backing (key c in the app)
   show_hand_box  the hand box drawn faintly while a hand is up
+  reduced_motion nothing moves or scales, things fade (true / false; auto: as macOS's
+                 Accessibility > Display > Reduce motion)
+  sounds         soft sound cues in Prepare and Review (focus, back, commit, the ring's steps)
   tutorial_done  the first-run gesture tutorial has been seen (key g shows it again)
 """
 
@@ -28,6 +31,8 @@ class Prefs:
     tutorial_done: bool = False
     high_contrast: bool = False
     show_hand_box: bool = True
+    reduced_motion: bool | None = None  # None: as macOS's setting
+    sounds: bool = False
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
     stop_hold_s: float = REHEARSE.hold_s
@@ -81,6 +86,16 @@ def apply(prefs: Prefs) -> None:
     gestures.REHEARSE = replace(gestures.REHEARSE, start_hold_s=prefs.start_hold_s, hold_s=prefs.stop_hold_s)
     render.REHEARSE = replace(render.REHEARSE, start_hold_s=prefs.start_hold_s, hold_s=prefs.stop_hold_s)
     render.set_contrast(prefs.high_contrast)
+    render.set_reduced_motion(system_reduce_motion() if prefs.reduced_motion is None else prefs.reduced_motion)
+
+
+def system_reduce_motion() -> bool:
+    """macOS's Reduce motion setting (Accessibility > Display); False where it can't be read."""
+    try:
+        from AppKit import NSWorkspace
+        return bool(NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion())
+    except Exception:
+        return False
 
 
 def main(argv: list[str]) -> int:
@@ -91,7 +106,13 @@ def main(argv: list[str]) -> int:
         if key not in kinds:
             print(f"unknown preference {key!r}; one of: {', '.join(kinds)}", file=sys.stderr)
             return 1
-        value = raw.lower() in ("1", "true", "yes", "on") if kinds[key] in (bool, "bool") else float(raw)
+        truth = raw.lower() in ("1", "true", "yes", "on")
+        if kinds[key] in (bool, "bool"):
+            value = truth
+        elif kinds[key] == "bool | None":  # auto: follow the system
+            value = None if raw.lower() == "auto" else truth
+        else:
+            value = float(raw)
         prefs = replace(prefs, **{key: value}).checked()
         save(prefs)
     elif argv:

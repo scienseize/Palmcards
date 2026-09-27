@@ -120,7 +120,9 @@ from palmcards.render import (
     FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_stats, draw_zone_outline,
 )
+from palmcards.motion import Spring
 from palmcards.review import Board
+from palmcards.sounds import Cues
 from palmcards.metrics import summary as metrics_summary
 from palmcards.pick import Picker
 from palmcards.playback import ClipPlayer, Playback, span_clip
@@ -211,7 +213,7 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     view.mode, view.level, view.drop_progress = gs.mode, gs.level, gs.drop_progress
     if gs.mode == "browse" and gs.cursor is not None:
         word_level = gs.level == "word"
-        hit = overlay.hit_test(*overlay.cursor_to_text(*gs.cursor), view.scroll, snap=word_level)
+        hit = overlay.hit_test(*overlay.cursor_to_text(*gs.cursor), overlay.shown_scroll(view), snap=word_level)
         if hit is not None:
             view.hover = hit if word_level else Hit(hit.sentence, None)
             view.current = hit.sentence
@@ -1245,7 +1247,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         modes.enter(start_mode, 0.0)
     grammar = modes.grammar
     grammar.defer_edit_commit = True
-    view = ViewState(panel_motion=PanelMotion(), focus_motion=FocusMotion())
+    view = ViewState(panel_motion=PanelMotion(), focus_motion=FocusMotion(), scroll_bounce=Spring())
+    cues = Cues() if prefs.sounds else None
+    ring_turn_seen = 0
     snap_panel = False  # the panel's scroll moved by a key: shown at once, not sprung
     show_debug = False
     note_until = None
@@ -1313,6 +1317,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if until is not None:
                 note_until = until
         view.app, view.now = modes.mode, start - t0
+        if cues is not None:  # the sound on the frame the event is handled (Prepare, Review; nothing playing)
+            cues.react(events, modes.mode, view.playing, grammar.state.ring_turn != ring_turn_seen, start - t0)
+        ring_turn_seen = grammar.state.ring_turn
         view.llm = takes.llm
         view.llm_busy = bool(takes.assistant and takes.assistant.pending)
         view.title = "GAZE CHECK" if takes.gaze_check and modes.mode in ("count_in", "rehearse") \
@@ -1374,9 +1381,14 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 page_t = start
         elif view.app in ("prepare", "review"):
             view.panel_scroll, page_t = 0.0, start
-        # Edge scrolling advances every displayed frame so it stays smooth.
+        # Edge scrolling advances every displayed frame so it stays smooth; pushed
+        # past the first or last row, the notes give a little (scroll_push).
         if view.app in ("prepare", "review") and view.mode == "browse" and grammar.state.scroll_rate:
-            view.scroll = overlay.clamp_scroll(view.scroll + grammar.state.scroll_rate * (start - prev_start))
+            wanted = view.scroll + grammar.state.scroll_rate * (start - prev_start)
+            view.scroll = overlay.clamp_scroll(wanted)
+            view.scroll_push = view.scroll_push + (wanted - view.scroll) if wanted != view.scroll else 0.0
+        else:
+            view.scroll_push = 0.0
         prev_start = start
         if note_until is not None and start > note_until:
             view.note, note_until = "", None

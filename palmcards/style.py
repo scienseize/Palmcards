@@ -170,6 +170,8 @@ class Text:
     visible_rows: int | None = None
     # A focused word: the notes zoomed by this, the word moved to the middle of the box.
     word_zoom: float = 1.6
+    # Leading shrinks as text grows: the enlarged focus text's rows, x its scaled line height.
+    focus_leading: float = 0.95
     meaning_min_size: int = 9  # smallest definition text in a narrow window; shrink to fit below the word
     preview_anchor: float = 0.2  # fixed starting row for live rewrites, fraction of the text viewport
     fade: float = 0.5  # lines: rows partly scrolled out fade out over this at the box's top and bottom
@@ -211,6 +213,7 @@ class Label:
     tracking: tuple[float, float, float] = (0.10, 0.06, 0.0)
     small_tracking: float = 0.04  # the pills and the command zone's hints
     min_top: int = 4  # px from the frame's top edge
+    leading: float = 1.1  # a row's height, x the font's own
     pill_scale: float = 0.6  # the pills at the bottom left (CLOUD LLM, H: KEYS) and the keys help
 
 
@@ -218,6 +221,7 @@ class Label:
 class Detail:
     """Review: a line per take under the focused sentence."""
     scale: float = 0.9  # x the notes' size and line height
+    leading: float = 1.05  # smaller text, a little more room between its rows
     min_columns: int = 10
     indent: str = "    "  # wrapped continuation lines (past the line's "▸ " marker)
 
@@ -305,6 +309,10 @@ class Motion:
     # GAUGE.rubber_max).
     dial: float = 0.10
     rubber: float = 0.55
+    # Browsing pushed past the first or last row: the notes give, up to give_rows.
+    give_rows: float = 2.0
+    # Reduced motion (preferences): the focus and the ring fade in place over this, nothing moves.
+    fade: float = 0.12
     # The focus panel's scroll (Rehearse following the voice, the pages a tall
     # panel turns by itself, the section handed on).
     scroll: float = 0.30
@@ -315,6 +323,20 @@ class Motion:
     # ring's nodes are drawn in toward the word by up to drop_pull, as the timer runs.
     drop_fade: float = 0.4
     drop_pull: float = 0.3
+
+
+@dataclass(frozen=True)
+class Sound:
+    """Soft cues in Prepare and Review (optional: preferences `sounds`;
+    palmcards/sounds.py): macOS's own sounds, quiet. Never during a take or
+    while something plays."""
+    cues: dict[str, tuple[str, float]] = field(default_factory=lambda: {
+        "focus": ("Tink", 0.25),   # a unit focused
+        "back": ("Bottle", 0.18),  # backed out
+        "commit": ("Pop", 0.3),    # pinch + lift: an edit made
+        "step": ("Tink", 0.1),     # the options ring onto the next node
+    })
+    step_gap_s: float = 0.08  # at most one step tick this often, however fast the ring turns
 
 
 @dataclass(frozen=True)
@@ -451,6 +473,7 @@ RING = Ring()
 GAUGE = Gauge()
 PLAYBAR = Playbar()
 MOTION = Motion()
+SOUND = Sound()
 ZONE = Zone()
 COUNT_IN = CountIn()
 SUMMARY = Summary()
