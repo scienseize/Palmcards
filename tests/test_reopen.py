@@ -140,3 +140,19 @@ def test_reopening_refuses_an_old_session_without_notes(tmp_path, monkeypatch, c
     args = argparse.Namespace(open=str(folder), trace=False, no_follow=True)
     assert main.reopen(args) == 1
     assert "--rebind" in capsys.readouterr().err
+
+
+def test_a_toggles_playback_and_x_stops_it(tmp_path, monkeypatch):
+    saved = saved_session(tmp_path)
+    FakePlayer.played = []
+    keys = {3: ord("a"), 4: ord("a"), 5: ord("a"), 6: ord("x"), 7: ord("x"), 9: ord("q")}
+    rig = Rig(tmp_path, monkeypatch, script={}, keys=keys)
+    rig.devices.player = FakePlayer
+    session = Session.load(saved.dir)
+    session.acquire()
+    notes = notes_from_bytes(NOTES, rig.notes_path)
+    assert main.run(session.notes, notes, b"", devices=rig.devices, session=session, prefs_file=rig.prefs_file) == 0
+    assert len(FakePlayer.played) == 2  # a plays, a stops, a plays again, x stops
+    log = [json.loads(line) for line in (tmp_path / "log.jsonl").read_text().splitlines()]
+    assert [e["why"] for e in log if e["kind"] == "play_stop"] == ["key", "key"]
+    assert [e["acted"] for e in log if e["kind"] == "key" and e["command"] == "stop"] == [False]  # nothing left: x as before

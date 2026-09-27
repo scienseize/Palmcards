@@ -744,6 +744,79 @@ def test_a_held_open_palm_on_a_focused_unit_plays_it_once_per_hold():
     assert [e["level"] for e in m.log.entries if e["kind"] == "palm_hold"] == ["sentence", "sentence", "paragraph"]
 
 
+def playing(m, t):
+    """Review, a sentence focused and playing: the palm that started it still up."""
+    t = sentence_focus(m, t)
+    events, t = run(m, hold(open_palm, 1.0), t)
+    assert kinds(events) == ["palm_hold"]
+    m.grammar.set_focus_hold(t, "play")  # the app, as the audio starts
+    return t
+
+
+def low(**kw):
+    return two(origin=(960, 0.95 * H + 220), **kw)  # every landmark below the drop band
+
+
+def test_while_it_plays_a_dropped_or_lowered_hand_keeps_the_focus():
+    m, t = reviewing()
+    t = playing(m, t)
+    focused_at = next(e["t"] for e in reversed(m.log.entries) if e["kind"] == "focus")
+    events, t = run(m, [None] * 90 + hold(low, 2.0), t)  # 3 s out of frame, then low
+    assert events == [] and m.state.mode == "focus" and m.state.drop_progress == 0.0
+    events, t = run(m, hold(two, 0.5), t)  # back: the same focus carries on
+    assert events == [] and m.state.mode == "focus"
+    assert next(e["t"] for e in reversed(m.log.entries) if e["kind"] == "focus") == focused_at
+
+
+def test_when_playback_ends_with_the_hand_down_the_drop_timer_starts_afresh():
+    m, t = reviewing()
+    t = playing(m, t)
+    events, t = run(m, [None] * 60, t)  # 2 s down: held
+    assert events == [] and m.state.mode == "focus"
+    m.grammar.set_focus_hold(t, None)  # the audio ends
+    events, t2 = run(m, [None] * round((TIMING.drop_s - 0.2) / DT), t)
+    assert events == [] and m.state.mode == "focus"  # not at once: a full drop_s from the end
+    events, _ = run(m, [None] * 12, t2)
+    assert kinds(events) == ["back"]
+    assert [e["reason"] for e in m.log.entries if e["kind"] == "focus_hold"] == ["play", None]
+
+
+def test_a_new_palm_stops_playback_and_the_palm_that_started_it_does_not():
+    m, t = reviewing()
+    t = playing(m, t)
+    events, t = run(m, hold(open_palm, 3.0), t)  # the starting palm, held on
+    assert events == [] and m.grammar.focus_hold == "play"
+    events, t = run(m, hold(two, 0.3) + hold(open_palm, 0.3), t)  # (0.15 s of it to settle)
+    assert events == [] and 0 < m.state.palm_progress < 1  # the STOP bar filling
+    events, t = run(m, hold(open_palm, 0.3), t)
+    assert [(e.kind, e.level) for e in events] == [("palm_stop", "sentence")]
+    assert m.grammar.focus_hold is None and m.state.mode == "focus" and m.state.palm_progress == 0.0
+    events, t = run(m, hold(open_palm, 1.0), t)  # held on after the stop: it doesn't play again
+    assert events == []
+    events, t = run(m, hold(two, 0.3) + hold(open_palm, 1.0), t)  # a new palm: plays again
+    assert kinds(events) == ["palm_hold"]
+
+
+def test_a_palm_held_through_the_end_does_not_start_it_again():
+    # Live (trace 20260927-165358, 136.45 s) a palm held from the start through the end
+    # started the same sentence again 0.6 s after it ended.
+    m, t = reviewing()
+    t = playing(m, t)
+    _, t = run(m, hold(open_palm, 2.0), t)
+    m.grammar.set_focus_hold(t, None)  # it ends by itself, the palm still up
+    events, t = run(m, hold(open_palm, 2.0), t)
+    assert events == []
+    events, t = run(m, hold(two, 0.3) + hold(open_palm, 1.0), t)  # a new palm
+    assert kinds(events) == ["palm_hold"]
+
+
+def test_a_palm_raised_again_after_leaving_the_frame_is_new():
+    m, t = reviewing()
+    t = playing(m, t)
+    events, t = run(m, [None] * 10 + hold(open_palm, 0.6), t)
+    assert kinds(events) == ["palm_stop"]
+
+
 def test_in_prepare_a_held_palm_hears_a_sentence_but_not_a_paragraph_or_word():
     m = ModeMachine((W, H))
     t = sentence_focus(m, 0.0)

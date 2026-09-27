@@ -251,6 +251,13 @@ class Ring:
 
 
 @dataclass(frozen=True)
+class Playbar:
+    """What plays (a take's clip, "hear it"): a thin bar under the focused unit."""
+    height: int = 3  # px
+    gap: int = 6  # px below the unit's last enlarged row
+
+
+@dataclass(frozen=True)
 class Gauge:
     """Vertical tone dial, in the text box's right padding."""
     min_lines: float = 3.0  # track height in note line heights, sized to the focused sentence
@@ -387,6 +394,7 @@ LABEL = Label()
 DETAIL = Detail()
 RING = Ring()
 GAUGE = Gauge()
+PLAYBAR = Playbar()
 ZONE = Zone()
 COUNT_IN = CountIn()
 SUMMARY = Summary()

@@ -137,6 +137,9 @@ class Ops:
     # An open palm held this long on a focused unit: hear the sentence
     # (Prepare), play the sentence or paragraph from the take it shows (Review).
     play_hold_s: float = 0.6
+    # While it plays, a new open palm (the hand has left the palm or the frame
+    # since playback started) held this long stops it.
+    stop_hold_s: float = 0.3
 
 
 @dataclass(frozen=True)

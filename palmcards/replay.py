@@ -20,7 +20,10 @@ gesture log (KINDS); poses are left out, they flicker too much to pin down.
 A step of the options ring's knob keeps its direction (`dir`). What the app
 told the grammar is in `inputs`, given back at its time: the options ring's
 nodes, [{"t": 1.2, "ring_nodes": ["imparted", "stamped", "hear it"]}]
-(optional; without it the ring has the grammar's DEFAULT_RING).
+(optional; without it the ring has the grammar's DEFAULT_RING), and the focus
+hold while audio plays, {"t": 3.4, "focus_hold": "play"} and then null when it
+ends (the app logs these after the hand frame they follow, so they are given
+back before the next one).
 `known_issue` explains a sample the current code gets wrong: the sample is
 kept as evidence, and its test is an expected failure until the bug is fixed.
 
@@ -38,7 +41,7 @@ import numpy as np
 from palmcards.gestures import GestureLog, Hand, ModeMachine
 
 SAMPLES_DIR = Path(__file__).resolve().parent.parent / "samples" / "gestures"
-KINDS = ("focus", "back", "commit", "op", "zone", "mode", "palm_hold")
+KINDS = ("focus", "back", "commit", "op", "zone", "mode", "palm_hold", "palm_stop")
 DETAIL = ("level", "op", "command", "mode")  # the field that says which focus, op, ...
 EXTRA = ("dir",)  # kept as well: which way the ring's knob stepped
 TIME_TOL = 0.25  # seconds an entry may drift before it counts as a change
@@ -76,7 +79,11 @@ def replay(sample: dict) -> list[dict]:
     inputs = sorted(sample.get("inputs", []), key=lambda i: i["t"])
     for frame in frames:
         while inputs and inputs[0]["t"] <= frame["t"]:
-            machine.grammar.set_ring_labels(frame["t"], tuple(inputs.pop(0)["ring_nodes"]))
+            given = inputs.pop(0)
+            if "ring_nodes" in given:
+                machine.grammar.set_ring_labels(given["t"], tuple(given["ring_nodes"]))
+            if "focus_hold" in given:
+                machine.grammar.set_focus_hold(given["t"], given["focus_hold"])
         machine.update(hands(frame), frame["t"])
         machine.tick(frame["t"])
     return [entry(e) for e in log.entries if e["kind"] in KINDS]

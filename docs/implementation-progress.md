@@ -1713,3 +1713,45 @@ Visual: Review rendered offline at 1280x720 (focused sentence with chips, focuse
   its summary); hints fit one row at 720p and 1080p except "L: 11/12" at 1080p (two rows, whole hints).
 Pending: the user's look at the label hints and the paragraph summary on screen.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: stopping playback, and the focus held while it plays
+Status: implemented; automated checks passed; exercised live (the user's trace 20260927-165358)
+Decisions (the user): the focus hold is for playback only (no LLM-wait hold existed: a loading
+  preview still cancels on a drop); "hear it" progress is estimated from the word count. There is
+  no hold ring in the app: the stop fills a label bar, "STOP: HOLD [===   ]". `a` toggles in Prepare
+  too (the same rule as the palm).
+Files and behavior changed:
+  palmcards/gestures.py: Grammar.set_focus_hold(t, reason), logged focus_hold on change: while set,
+    a dropped or low hand doesn't back out; released, the drop timer starts afresh. While "play",
+    a new open palm (left the palm or the frame since it started) held OPS.stop_hold_s (0.3) is a
+    palm_stop and releases the hold; the palm that started it never stops it. palm_progress.
+  palmcards/playback.py: Playback (one thing at a time, its target, progress, poll, stop).
+  palmcards/tts.py: MacSay.stop no longer waits (SIGTERM, reaped later, killed after 0.5 s);
+    estimate_s. main.py: play_target; Takes.sync_playback each frame (stop on a target mismatch:
+    another take, another sentence, focus gone, another mode; the focus hold); stop on palm_stop,
+    count_in and drill; `a` toggles, `x` stops playback first; play_stop logged with why.
+  palmcards/render.py, style.py (PLAYBAR): the progress bar under the focused unit; "OPEN PALM:
+    STOP" (Review "PALM: STOP" short; "A: STOP" browsing); STOP: HOLD bar; KEYS_HELP.
+  palmcards/replay.py: palm_stop in KINDS; focus_hold inputs. cut_gesture_samples.py copies them.
+  CLAUDE.md, docs/hardware-smoke-test.md, main.py help text.
+Tests run and exact outcome: pytest (full) -> 536 passed; python -m palmcards.replay -> 18 ok. New: tests/test_playback.py; focus-hold and palm-stop
+  grammar tests; target, key, count-in and render tests; focus_hold inputs through replay().
+Visual: a playing paragraph rendered offline at 1280x720: the bar under its last row, the hint
+  "OPEN PALM: STOP".
+Live (trace 20260927-165358): the hand out of frame for 4.7 s of a sentence and 23 s of a
+  paragraph, focus kept both times; four palm stops (0.3 s after the new palm); hear it ending with
+  the hand out of frame backed out 1.00 s later. Found: a palm held through the end started the
+  sentence again 0.6 s later (136.45 -> 137.06 s). Fixed: a palm up when the hold starts or ends
+  must leave first (test_a_palm_held_through_the_end_does_not_start_it_again).
+Samples (from that trace): play-drop-hand-keeps-focus (48-60 s), play-ends-hand-down-backs-out
+  (155-175.5 s, Prepare, two hear-its; kept at 0.1 px: rounded, one palm settles a frame late and
+  loses the race with the app's focus_hold), play-fresh-palm-stops (107.3-116.5 s),
+  play-held-palm-does-not-stop (128.9-136.95 s, ending before the re-trigger). The cut script
+  leaves out the grammar's own releases (logged `by` from now; before, at a palm_stop's time),
+  which the replay makes again. Existing samples re-cut byte for byte.
+Risk: a playback sample depends on the app's focus_hold arriving a frame after palm_hold, as live;
+  a pose that settles a frame differently in a replay can flip it (seen once, above).
+Pending: how the stop sounds on the Mac (reported by the user: not yet).
+```

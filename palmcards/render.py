@@ -68,8 +68,8 @@ from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
 from palmcards.notes import Sentence, parse_sentence
 from palmcards.preview import PreviewView
 from palmcards.style import (
-    CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT, OUTLINE, PLAYER,
-    RING, SCRIM, SHADOW, TEXT, ZONE, bgr,
+    CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT, OUTLINE, PLAYBAR,
+    PLAYER, RING, SCRIM, SHADOW, TEXT, ZONE, bgr,
 )
 
 if TYPE_CHECKING:
@@ -106,6 +106,8 @@ def review_hint(state: "ViewState") -> tuple[str, str]:
     """Review's gesture hints for the label: what acts now, (long, short).
     The short form is used when the long one doesn't fit a row of the text
     column (TextOverlay.label_rows)."""
+    if state.playing:  # an open palm stops it on a focus; a key while browsing
+        return ("OPEN PALM: STOP", "PALM: STOP") if state.mode == "focus" else ("A: STOP", "A: STOP")
     if state.mode == "browse" and state.level == "sentence":
         return "FOLD: DETAILS · FIST: NEW TAKE", "FOLD: DETAILS · FIST: NEW TAKE"
     if state.mode == "browse" and state.level == "paragraph":
@@ -129,10 +131,10 @@ def review_hint(state: "ViewState") -> tuple[str, str]:
     return FIST_HINT
 KEYS_HELP = (
     "KEYS (WHEN GESTURES WON'T DO)",
-    "T  START A TAKE      X  STOP / CANCEL",
+    "T  START A TAKE      X  STOP (AUDIO, TAKE)",
     "N B  NEXT / PREVIOUS SECTION     U  UNDO EDIT",
     "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
-    "A  HEAR / PLAY       P  BACK TO PREPARE",
+    "A  PLAY / STOP       P  BACK TO PREPARE",
     "E  CALIBRATE EYES AT THE NEXT TAKE",
     "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
 )
@@ -245,6 +247,11 @@ class ViewState:
     takes: tuple[str, ...] = ()
     take_shown: int = 0
     playable: bool = False  # Review: the focused sentence or paragraph has a take to play
+    # Playback (a take's clip in Review, "hear it" in Prepare): something plays,
+    # how far it has got (0..1), and an open palm held toward stopping it (0..1).
+    playing: bool = False
+    play_progress: float | None = None
+    palm_progress: float = 0.0
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
 
@@ -540,6 +547,8 @@ class TextOverlay:
             second = f"START A TAKE: HOLD FIST  {_bar(state.start_progress)}"
         elif state.hold_progress > 0:
             second = f"BACK TO PREPARE: HOLD  {_bar(state.hold_progress)}"
+        elif state.palm_progress > 0:
+            second = f"STOP: HOLD  {_bar(state.palm_progress)}"
         elif state.drop_progress > 0:
             second = "DROP HAND TO BACK OUT"
         elif ops.kind == "ring":
@@ -558,6 +567,8 @@ class TextOverlay:
             second = f"PARAGRAPH LENGTH: {change}  " + ("/  PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM)
         elif state.mode == "focus" and state.app == "prepare" and state.proposal:
             second = "PINCH + LIFT: USE THE PROPOSAL  /  DROP HAND: DISCARD IT"
+        elif state.mode == "focus" and state.app == "prepare" and state.playing:
+            second = "OPEN PALM: STOP"
         elif state.mode == "focus" and state.app == "prepare":  # nothing started yet: say what the next shape does
             second = (FOCUS_HINTS_LLM if state.llm else FOCUS_HINTS).get(state.level, "")
         elif state.app == "review":  # what the focus shows, then the gestures that act
@@ -948,6 +959,24 @@ class TextOverlay:
         reserved = LABEL.min_top + self.label_h + self.pad // 2 + extra_header
         top = max(reserved, box_top + (self.box_h - view_h) // 2)
         return max(reserved, min(top, self.frame_h - self.line_h - self.pad - view_h))
+
+    def _draw_playbar(self, frame: np.ndarray, state: ViewState, panel: Panel, top: int, bottom: int,
+                      scroll: int) -> None:
+        """A thin bar under the focused unit's last enlarged row: how far what
+        plays has got. Kept inside the panel's viewport."""
+        rows = [panel.rows[i] for i in self._panel_unit(state) or () if i in panel.rows]
+        if not rows:
+            return
+        y = min(top - scroll + max(b for _, b in rows) + PLAYBAR.gap, bottom - PLAYBAR.height)
+        if y < top:
+            return
+        x0 = self.x + self.margin + self.pad
+        x1 = self.x + self.margin + panel.color.shape[1] - self.pad
+        h = PLAYBAR.height
+        cv2.rectangle(frame, (x0, y), (x1, y + h - 1), bgr(C.scroll_track), -1)
+        done = x0 + int((x1 - x0) * min(max(state.play_progress, 0.0), 1.0))
+        if done > x0:
+            cv2.rectangle(frame, (x0, y), (done, y + h - 1), bgr(C.orange), -1)
 
     def _draw_scrollbar(self, frame: np.ndarray, top: int, view_h: int, scroll: float, height: int,
                         width: int, left: bool = False) -> None:
@@ -1380,6 +1409,8 @@ class TextOverlay:
             # Inline, in the gap the zoomed text left for it: orange, at the zoomed size.
             self._blend_ink(frame, self._ink(text, self._word_zoom(state)[3], C.orange_text), zoom[0], zoom[1])
 
+        if state.mode == "focus" and state.play_progress is not None and panel is not None:
+            self._draw_playbar(frame, state, panel, top, bottom, scroll)
         if state.mode == "focus" and state.ops.kind == "tone":
             bounds = None
             if panel is not None and state.focus is not None and state.focus.sentence in panel.rows:

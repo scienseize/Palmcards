@@ -8,7 +8,9 @@ writes one samples/gestures/<name>.json per entry in SEGMENTS: the frames in
 the window, rebased to t = 0, points rounded to whole pixels, as
 `expected` what the app recognised live in that window, and as `inputs` what
 the app told the grammar (the options ring's nodes, from the log's
-"ring_nodes" lines: the last one before the window, at t = 0, and those in it).
+"ring_nodes" lines, and the focus hold while audio plays, from its
+"focus_hold" lines: for each, the last one before the window, at t = 0, and
+those in it).
 
 The traces themselves stay in sessions/ (gitignored); only the samples are
 committed. They hold hand landmarks only: no image, no face, no voice.
@@ -77,6 +79,20 @@ SEGMENTS = [
     ("review-paragraph-play", "20260927-162724", (72.5, 86.5), "review",
      "In Review a flat hand folds to focus a paragraph; an open palm held on it plays the paragraph "
      "(palm_hold), once; dropping the hand backs out.", None),
+    # Playback holds the focus (focus_hold inputs from the app) and a new palm stops it.
+    ("play-drop-hand-keeps-focus", "20260927-165358", (48.0, 60.0), "review",
+     "A sentence plays; the hand is out of frame for 4.7 s of it and comes back: the focus is kept "
+     "(no back).", None),
+    ("play-ends-hand-down-backs-out", "20260927-165358", (155.0, 175.5), "prepare",
+     "Hear it in Prepare, twice. First it ends with the hand up, which then drops low: back 1 s later. "
+     "Then it ends with the hand already out of frame: the focus stays, and backs out a full second "
+     "after the end, not at once.", None),
+    ("play-fresh-palm-stops", "20260927-165358", (107.3, 116.5), "review",
+     "A palm plays the sentence; the hand closes to a fist, then a new palm held 0.3 s stops it "
+     "(palm_stop); the focus stays.", None),
+    ("play-held-palm-does-not-stop", "20260927-165358", (128.9, 136.95), "review",
+     "The palm that started the sentence stays up until it ends by itself: no palm_stop. (Live, that "
+     "palm then started it again at 137.06 s; fixed since, see tests/test_gestures.py.)", None),
 ]
 
 # Segments whose grammar entries come from the replay (see the docstring): name -> why.
@@ -85,6 +101,12 @@ FROM_REPLAY = {
                                   "295.23 and back word at 298.07; the replay has the sentence at the same times",
 }
 GRAMMAR_KINDS = ("focus", "back", "commit", "op", "palm_hold")
+
+# Segments whose points keep the trace's 0.1 px (the others are rounded to whole pixels): name -> why.
+PRECISE = {
+    "play-ends-hand-down-backs-out": "rounded, the open palm settles a frame later (170.07 s, live 170.04), after the "
+                                     "app's focus_hold, so the second hear-it doesn't start",
+}
 
 
 def main() -> int:
@@ -99,14 +121,24 @@ def main() -> int:
         for line in trace.open():
             fr = json.loads(line)
             if a <= fr["t"] <= b:
+                digits = 1 if name in PRECISE else None
                 frames.append({"t": round(fr["t"] - a, 3), "hands": [
-                    {"label": h["label"], "points": [round(v) for xy in h["points"] for v in xy]}
+                    {"label": h["label"], "points": [round(v, digits) for xy in h["points"] for v in xy]}
                     for h in fr["hands"]]})
         live = [json.loads(line) for line in live_log.open()]
-        nodes = [e for e in live if e["kind"] == "ring_nodes" and e["t"] <= b]
-        before = [e for e in nodes if e["t"] < a][-1:]
-        inputs = [{"t": round(max(e["t"] - a, 0.0), 3), "ring_nodes": e["nodes"]}
-                  for e in before + [e for e in nodes if e["t"] >= a]]
+        # The grammar's own releases (a palm_stop: marked `by`, or before that mark at the stop's time)
+        # are made again by the replay; given back first, they would take the stop away.
+        stops = {e["t"] for e in live if e["kind"] == "palm_stop"}
+        inputs = []
+        for kind, key, field in (("ring_nodes", "ring_nodes", "nodes"), ("focus_hold", "focus_hold", "reason")):
+            given = [e for e in live if e["kind"] == kind and e["t"] <= b]
+            before = [e for e in given if e["t"] < a][-1:]  # the state as the window starts
+            if kind == "focus_hold" and before and before[0]["reason"] is None:
+                before = []  # nothing held when the window starts: nothing to give
+            inside = [e for e in given if e["t"] >= a and not (
+                kind == "focus_hold" and (e.get("by") or (e["reason"] is None and e["t"] in stops)))]
+            inputs += [{"t": round(max(e["t"] - a, 0.0), 3), key: e[field]} for e in before + inside]
+        inputs.sort(key=lambda i: i["t"])
         sample = {
             "name": name,
             "description": description,

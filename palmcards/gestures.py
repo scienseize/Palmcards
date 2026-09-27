@@ -16,7 +16,8 @@ The grammar (Kat's "gestural editing/writing"):
   pinch + lift commits      back to Browse at the same level
   drop the hand backs out   out of frame or below the bottom band for 1 s
   held open palm            on a focused sentence: hear it (Prepare) or play it (Review);
-                            on a focused paragraph in Review: play it
+                            on a focused paragraph in Review: play it. While it plays
+                            the focus is held (the hand may drop) and a new palm stops it
 
 Review has no word level: one finger browses sentences there (and a pinch
 focuses the sentence), as two fingers do.
@@ -453,7 +454,8 @@ class GestureLog:
 class GestureEvent:
     # Grammar: "focus" | "commit" | "back" | "rewind" (a pinch took Review's take
     # pointer back to before the curl) | "palm_hold" (an open palm held on the
-    # focused unit: hear it, or play it). Modes: "count_in" | "drill" (a
+    # focused unit: hear it, or play it) | "palm_stop" (a new open palm while it
+    # plays: stop it). Modes: "count_in" | "drill" (a
     # count-in for one sentence) | "count_in_cancel" | "take_start" |
     # "next_section" | "previous_section" | "take_stop" | "to_prepare".
     kind: str
@@ -491,6 +493,7 @@ class GestureState:
     closing: bool = False  # a pinch is coming or held: the dial or the pointed word is held (and shown so)
     stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
     drop_progress: float = 0.0  # 0..1 while backing out
+    palm_progress: float = 0.0  # 0..1 while an open palm is held toward stopping playback
     primary: HandTrack | None = None
     secondary: HandTrack | None = None
 
@@ -512,6 +515,9 @@ class Grammar:
         self._browse_shape: str | None = None  # the shape that set the browse level
         self._palm_since: float | None = None  # focus: open palm held since
         self._palm_done = False  # focus: this hold has acted
+        # Set by the app each frame (set_focus_hold): why the focus must not be
+        # dropped ("play": audio plays for the focused unit), or None.
+        self.focus_hold: str | None = None
         self._primary_key: str | None = None
         self._lost_since: float | None = None  # browse: primary hand missing
         self._gone_since: float | None = None  # focus: hand missing or dropped
@@ -568,7 +574,27 @@ class Grammar:
         self._tilt0 = self._d0 = self._p0 = None
         self._browse_shape = None
         self._palm_since, self._palm_done = None, False
+        self.focus_hold = None
         self._reset_ring()
+
+    def set_focus_hold(self, t: float, reason: str | None, by: str | None = None) -> None:
+        """Hold the focus (the app, every frame): while `reason` is set, a hand
+        that drops or leaves doesn't back out, and when it comes back it carries
+        on at the same focus. Released, the drop timer starts afresh, so a hand
+        already down backs out a full TIMING.drop_s later. "play" also makes an
+        open palm a stop: a new palm, held OPS.stop_hold_s. Logged when it
+        changes, so a replay can give it back; `by` marks a release the grammar
+        made itself (a palm_stop), which a replay makes again and isn't given."""
+        if reason == self.focus_hold:
+            return
+        self.focus_hold = reason
+        self.log(t, "focus_hold", reason=reason, **({"by": by} if by else {}))
+        self._gone_since, self.state.drop_progress = None, 0.0
+        p = self.state.primary
+        # A palm up as it starts or ends has done its part: it must leave the palm or the frame before
+        # it acts again (else a palm held on through the end starts the audio over, 0.6 s later).
+        self._palm_since, self._palm_done = None, p is not None and p.stable == OPEN
+        self.state.palm_progress = 0.0
 
     def update(self, hands: list[Hand], t: float) -> list[GestureEvent]:
         return self.step(self.track(hands, t), t)
@@ -717,7 +743,7 @@ class Grammar:
         events.append(ev)
         self.log(t, kind, level=s.level, op=s.op, value=ev.value)
         s.mode, s.op, s.pointing, s.stretch_ends, s.drop_progress = "browse", None, False, None, 0.0
-        s.turning = False
+        s.turning, s.palm_progress = False, 0.0
         s.closing = False
         self._focus_armed = False
         self._lost_since = None
@@ -730,6 +756,10 @@ class Grammar:
         s, p = self.state, self.state.primary
         gone = "no hand" if p is None else "low" if p.hand.points[:, 1].min() > TIMING.drop_band * self.h else None
         if gone:
+            self._palm_since, self._palm_done, s.palm_progress = None, False, 0.0  # a palm after this is new
+            if self.focus_hold is not None:  # held: the focus waits for the hand
+                self._gone_since, s.drop_progress = None, 0.0
+                return
             if self._gone_since is None:
                 self._gone_since = t
                 self.log(t, "drop_start", reason=gone)
@@ -767,14 +797,25 @@ class Grammar:
     def _hold_palm(self, t: float, p: HandTrack, events: list[GestureEvent]) -> None:
         """An open palm held OPS.play_hold_s on the focused unit, at a level in
         palm_levels: a "palm_hold" event (the app hears or plays the unit).
-        Once per hold: letting go or a new focus arms it again."""
+        While it plays (focus_hold "play"), a new palm held OPS.stop_hold_s is a
+        "palm_stop" instead, and releases the hold (the app stops the audio).
+        Once per hold: letting go, leaving the frame or a new focus arms it again."""
         s = self.state
-        if p.stable != OPEN or s.level not in self.palm_levels:
-            self._palm_since, self._palm_done = None, False
+        playing = self.focus_hold == "play"
+        if p.stable != OPEN or (s.level not in self.palm_levels and not playing):
+            self._palm_since, self._palm_done, s.palm_progress = None, False, 0.0
             return
         if self._palm_since is None:
             self._palm_since = t
-        if not self._palm_done and t - self._palm_since >= OPS.play_hold_s:
+        held = t - self._palm_since
+        s.palm_progress = 0.0 if self._palm_done or not playing else min(1.0, held / OPS.stop_hold_s)
+        if self._palm_done:
+            return
+        if playing and held >= OPS.stop_hold_s:
+            events.append(GestureEvent("palm_stop", t, s.level))
+            self.log(t, "palm_stop", level=s.level)
+            self.set_focus_hold(t, None, by="palm_stop")  # this palm, held on, doesn't start the audio again
+        elif not playing and held >= OPS.play_hold_s:
             self._palm_done = True
             events.append(GestureEvent("palm_hold", t, s.level))
             self.log(t, "palm_hold", level=s.level)

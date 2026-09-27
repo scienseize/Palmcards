@@ -3,6 +3,8 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from palmcards import render
+
 from palmcards.notes import parse_text
 from palmcards.render import Hit, OpsView, TextOverlay, ViewState, layout, sentence_units
 from palmcards.style import LABEL
@@ -234,6 +236,34 @@ def test_review_hints_take_the_short_form_when_the_long_one_does_not_fit_a_row(s
     assert hint_rows(ov, browse) == ["FOLD: DETAILS · FIST: NEW TAKE"]  # the long form fits
     paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), playable=True)
     assert hint_rows(ov, paragraph) == ["PALM: PLAY PARAGRAPH · DROP: BACK"]
+
+
+def test_while_it_plays_the_hint_is_stop_and_a_held_palm_fills_the_stop_bar():
+    ov = overlay()
+    review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2",
+                       takes=("TAKE 1", "TAKE 2"), take_shown=1, playable=True, playing=True, play_progress=0.4)
+    assert ov.label_lines(review)[1] == "TAKE 2  /  OPEN PALM: STOP"
+    review.palm_progress = 0.5
+    assert ov.label_lines(review)[1] == "STOP: HOLD  [=====     ]"
+    prepare = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None), playing=True)
+    assert ov.label_lines(prepare)[1] == "OPEN PALM: STOP"
+    browse = ViewState(app="review", mode="browse", level="sentence", playing=True)
+    assert ov.label_lines(browse)[1].endswith("A: STOP")  # no palm stop while browsing: the key
+
+
+def test_a_thin_progress_bar_under_the_focused_unit_while_it_plays():
+    ov = overlay()
+    view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), hover=Hit(1, None),
+                     playing=True)  # the same label either way
+    quiet = ov.draw(np.full((720, 1280, 3), 128, np.uint8), view).copy()
+    view.play_progress = 0.5
+    playing = ov.draw(np.full((720, 1280, 3), 128, np.uint8), view)
+    changed = np.argwhere((playing != quiet).any(axis=2))
+    assert len(changed)
+    rows = sorted(set(changed[:, 0]))
+    assert rows[-1] - rows[0] < 12  # a thin bar, not a redraw
+    orange = np.array(render.bgr(render.C.orange))
+    assert ((playing[rows[0]] == orange).all(axis=1)).sum() > 20  # its played half in orange
 
 
 def test_draw_count_in_and_rehearse():

@@ -25,7 +25,8 @@ the right of the frame; it steers the highlight in the text on the left.
                            make an L and turn it like a knob: one option per ~15 degrees, tilting right
                            turns the ring clockwise; the picked word previews in the sentence
   L-hand tilt (sentence)   live wording preview: cold / original / warm
-  hold open palm (sentence) hear the selected sentence (~0.6 s; also key a)
+  hold open palm (sentence) hear the selected sentence (~0.6 s; also key a); a new open palm
+                           stops it, and the focus is held while it speaks
   two L-hands (paragraph)  live length preview: about 70% / original / 130%
   pinch + lift             commit: an alternative makes a new notes revision (u undoes it);
                            tone and length commit only the complete preview visible for the selected target;
@@ -64,7 +65,8 @@ side by side.
   pinch + lift (focused)   drill the sentence: count-in, then just that
                            sentence; open palm in the zone to stop
   open palm on a focused sentence or paragraph, held ~0.6 s
-                           play it from the take it shows (key: a)
+                           play it from the take it shows (key: a); while it plays the focus
+                           is held (drop the hand freely) and a new open palm, ~0.3 s, stops it
   fist raised, held 1 s    new full take
   open palm held 1.5 s in the command zone
                            back to Prepare, to edit before the next take
@@ -76,10 +78,10 @@ folder under sessions/, with its transcript, pitch and loudness, and
 session.json (the metrics).
 
 Keys, the fallback when gestures won't do (h shows them in the app):
-  t start a take, x stop it (or cancel the count-in), n next section, b previous section,
+  t start a take, x stop playback (else the take, or cancel the count-in), n next section, b previous section,
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
-  a hear the sentence (Prepare) / play the sentence or paragraph (Review), u undo the last edit (Prepare), r retry failed analysis,
+  a hear the sentence (Prepare) / play the sentence or paragraph (Review), again to stop, u undo the last edit (Prepare), r retry failed analysis,
   e calibrate the eyes again at the next take,
   g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit.
 Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
@@ -121,7 +123,7 @@ from palmcards.render import (
 from palmcards.review import Board
 from palmcards.metrics import summary as metrics_summary
 from palmcards.pick import Picker
-from palmcards.playback import ClipPlayer, span_clip
+from palmcards.playback import ClipPlayer, Playback, span_clip
 from palmcards.recording import TakeWriter
 from palmcards.revisions import from_snapshot
 from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
@@ -142,9 +144,14 @@ HINT_EVERY_S = 6.0  # a hint about a gesture that didn't act is shown at most th
 ENTER = 13
 
 
-def hear_sentence(sentence: int, overlay: TextOverlay, speaker, log: GestureLog, t: float) -> str:
+def hear_sentence(sentence: int, overlay: TextOverlay, speaker, log: GestureLog, t: float,
+                  playback: Playback | None = None) -> str:
+    words = [w.text for w in overlay.sentences[sentence].words]
     try:
-        speaker.say_words([w.text for w in overlay.sentences[sentence].words])
+        if playback is not None:
+            playback.start_say(speaker, words, ("prepare", (sentence,), None), time.perf_counter())
+        else:
+            speaker.say_words(words)
     except OSError as exc:
         print(f"text to speech failed: {exc}", file=sys.stderr)
         return "COULD NOT SPEAK (SEE TERMINAL)"
@@ -159,12 +166,28 @@ def play_focus(view: ViewState, overlay: TextOverlay, log: GestureLog, speaker, 
     nothing focused on the current sentence. Returns a label note."""
     sentence = view.focus.sentence if view.focus is not None else view.current
     if view.app == "prepare":
-        return hear_sentence(sentence, overlay, speaker, log, t)
+        return hear_sentence(sentence, overlay, speaker, log, t, takes.playback if takes is not None else None)
     if takes is None:
         return ""
     if view.mode == "focus" and view.level == "paragraph":
         return takes.play_paragraph(overlay.unit("paragraph", sentence))
     return takes.play_sentence(sentence)
+
+
+def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | None:
+    """What the screen would play now: (app, sentences, take). Playback stops
+    when this no longer matches what plays: another take picked, the hover
+    moved to another sentence, the focus gone, another mode."""
+    if view.app not in ("prepare", "review"):
+        return None
+    focused = view.mode == "focus" and view.focus is not None
+    sentence = view.focus.sentence if focused else view.current
+    if view.app == "prepare":
+        return "prepare", (sentence,), None
+    if focused and view.level == "paragraph":
+        unit = tuple(overlay.unit("paragraph", sentence))
+        return "review", unit, board.paragraph_shown(unit)
+    return "review", (sentence,), board.shown(sentence)
 
 
 def nonactivation_hint(mode: str, gs, zone_active: bool, open_s: float) -> str:
@@ -221,6 +244,11 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
     if ev.kind == "palm_hold":  # an open palm held on the focus: hear it (Prepare), play it (Review)
         view.note = play_focus(view, overlay, log, speaker, takes, ev.t)
         return time.perf_counter() + NOTE_S if view.note else None
+    if ev.kind == "palm_stop":  # a new open palm while it plays: stop it; the focus stays
+        if takes is not None and takes.stop_playback("palm", ev.t):
+            view.note = "STOPPED"
+            return time.perf_counter() + NOTE_S
+        return None
     if ev.kind == "commit" and view.app == "review":
         if ev.level != "sentence":  # a sentence commit is a drill, which the mode events start
             view.note = "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
@@ -272,6 +300,7 @@ class Takes:
         self.follow_enabled = follow
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
         self.player = None  # Review playback, made at the first play
+        self.playback = Playback()  # what plays now (a take's clip or "hear it"), for which target
         self._play_error = ""
         self.notes_version = 0  # bumped when an edit or undo changes the notes
         self.llm_off = ""  # why the chosen LLM can't be used, if it can't
@@ -637,12 +666,30 @@ class Takes:
         try:
             if self.player is None:
                 self.player = self.devices.player()
-            self.player.play(*clip)
+            self.playback.start_clip(self.player, clip, ("review", tuple(sentences), n), time.perf_counter())
         except Exception as exc:  # no output device
             print(f"could not play: {exc}", file=sys.stderr)
             self._play_error = "COULD NOT PLAY (SEE TERMINAL)"
             return False
         return True
+
+    def stop_playback(self, why: str, t: float) -> bool:
+        """Stop what plays (a take's clip or "hear it"). True if something was playing."""
+        if not self.playback.stop():
+            return False
+        self.log(t, "play_stop", why=why)
+        return True
+
+    def sync_playback(self, grammar: Grammar, view: ViewState, overlay: TextOverlay, t: float) -> None:
+        """Every frame: forget what has finished, stop what the screen no longer
+        shows, and hold the focus while its audio plays."""
+        now = time.perf_counter()
+        if self.playback.poll(now) and self.playback.target != play_target(view, overlay, self.board):
+            self.stop_playback("target", t)
+        grammar.set_focus_hold(t, "play" if self.playback.playing and view.mode == "focus" else None)
+        view.playing = self.playback.playing
+        view.play_progress = self.playback.progress(now)
+        view.palm_progress = grammar.state.palm_progress
 
     def alert_line(self, mode: str = "") -> str:
         """Persistent trouble (recording, analysis, voice follow), shown until it is dealt with."""
@@ -720,6 +767,7 @@ class Takes:
     def handle(self, ev: GestureEvent, modes: ModeMachine, view: ViewState, overlay: TextOverlay) -> str:
         """Mode events. Returns a label note to show, or ""."""
         if ev.kind in ("count_in", "drill"):
+            self.stop_playback("take", ev.t)
             self.drill = ev.sentence if ev.kind == "drill" else None
             if self.drill is not None:
                 self.log(ev.t, "drill", sentence=self.drill)
@@ -1251,7 +1299,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "drill" and ev.sentence is None:
                 ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
-            if ev.kind in ("focus", "commit", "back", "rewind", "palm_hold"):
+            if ev.kind in ("focus", "commit", "back", "rewind", "palm_hold", "palm_stop"):
                 until = apply_event(ev, view, overlay, log, speaker, takes, grammar)
             elif note := takes.handle(ev, modes, view, overlay):
                 view.note, until = note, start + NOTE_S
@@ -1292,6 +1340,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.mic = takes.recorder.level if takes.recorder else 0.0
             view.start_progress = 0.0
             view.detail = ()
+        takes.sync_playback(grammar, view, overlay, start - t0)
         if tutorial.update(grammar.state, events, start - t0) and tutorial.done:
             prefs.tutorial_done = True
             preferences.save(prefs, prefs_file)
@@ -1355,7 +1404,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if key in (ord("q"), 27):
             break
         now_t = time.perf_counter() - t0
-        if key in KEY_COMMANDS:
+        if key == ord("x") and takes.stop_playback("key", now_t):  # x stops any playback first
+            view.note, note_until = "STOPPED", time.perf_counter() + NOTE_S
+        elif key in KEY_COMMANDS:
             queued += modes.command(KEY_COMMANDS[key], now_t)
         elif key in (ord(" "), ord("j"), ord("k")):
             step = -1 if key == ord("k") else 1
@@ -1391,8 +1442,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             overlay = TextOverlay(sentences, (w, h))  # its cached text was drawn in the old colours
         elif key == ord("u") and view.app == "prepare":
             view.note, note_until = takes.undo(), time.perf_counter() + NOTE_S
-        elif key == ord("a") and view.app in ("prepare", "review"):
-            view.note = play_focus(view, overlay, log, speaker, takes, time.perf_counter() - t0)
+        elif key == ord("a") and view.app in ("prepare", "review"):  # play, or stop what plays
+            view.note = "STOPPED" if takes.stop_playback("key", now_t) \
+                else play_focus(view, overlay, log, speaker, takes, now_t)
             note_until = time.perf_counter() + NOTE_S
         elif key == ord("e"):
             view.note, note_until = takes.recalibrate(), time.perf_counter() + NOTE_S
