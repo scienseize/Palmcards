@@ -26,3 +26,7 @@ docs/local/
 *.webm
 *.avi
 *.mkv
+
+# Local agent setup
+.claude/skills/
+AGENTS.md
