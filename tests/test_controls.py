@@ -85,8 +85,9 @@ def test_unavailable_edits_never_claim_a_commit(op, level, what):
     view = focused(OpsView(kind=op), level=level, hit=Hit(0, None))
     log = GestureLog()
     main.apply_event(GestureEvent("commit", 1.0, level, op, value=0.4), view, ov, log, FakeSpeaker())
-    assert view.note == f"{what} EDITS ARE NOT AVAILABLE YET: NOTHING CHANGED"
-    assert "COMMITTED" not in view.note and log.entries[-1]["kind"] == "commit_stub"
+    assert view.note == "PREVIEW NOT READY: SET UP THE OPTIONAL LLM"
+    assert view.focus is not None and view.mode == "focus"
+    assert "COMMITTED" not in view.note and not log.entries
 
 
 def test_the_keyboard_runs_a_take_while_tracking_sees_nothing(tmp_path, monkeypatch):

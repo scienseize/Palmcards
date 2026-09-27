@@ -1635,3 +1635,42 @@ Validation: full headless suite 469 passed; after the definition-card sizing adj
   passed in the full run). Rendered at 1280x720 and 640x480, including maximum-length definitions.
 Pending: live camera/gesture and audible playback check by the user.
 ```
+
+```text
+Date: 2026-09-27
+Phase / issue IDs: immediate in-context tone and length previews
+Status: implemented; automated and offline visual checks passed; live validation pending
+Changes:
+  palmcards/preview.py: explicit operation ID, source revision/unit/original, selected and displayed
+    targets, request ticket/generation, loading/error state and per-operation candidate cache.
+    Hysteretic cold/original/warm and 70%/100%/130% targets; configurable 250 ms debounce and two-call
+    concurrency limit (including obsolete requests). Uses the existing asynchronous Assistant;
+    no provider call on hover/focus, no canonical Notes mutation, no slow-request glyph scrambling.
+  main.py / gestures.py: deliberate L-hand/two-L activation starts the preview. Pinch + lift only
+    accepts the complete candidate already shown for the selected target; loading commits remain
+    focused, with no later auto-commit. Drop cancels. An error keeps the prior readable candidate;
+    pinch + lift or r retries. Commit uses Session.edit, u restores the original, old takes retain
+    their revisions. Undo invalidates active edits and refreshes focus/layout before further input.
+  render.py: candidate replaces the focused unit inside a bounded scrollable viewport, dim context,
+    anchored starting row, explicit unsaved/loading/error labels and target versus actual counts.
+    Header space is reserved; long passages page/scroll; tone gauge retains its compact size and
+    does not share the scrollbar's edge. Exact original uses the canonical layout, not a rewrite.
+  llm.py: prompts preserve facts, names, numbers, negation and qualifications; forbid invented claims.
+    Numeric changes and delivery-mark syntax are rejected. Oversize source passages are explicitly
+    unavailable rather than silently truncated. Semantic fidelity still needs real-provider checks.
+  Delivery marks: active Notes have no marks (removed previously). Legacy raw/snapshot marks are
+    flagged for review, never mapped to new words. Historical mark-bearing snapshots are unchanged.
+Automated:
+  Full headless suite: 497 passed (two existing protobuf deprecation warnings).
+  Final targeted preview/control/lifecycle checks, including an additional legacy-snapshot test:
+    44 passed. Controlled response ordering and threading Events avoid timing-fragile sleeps.
+  Covers targets/hysteresis/debounce/cache, stale/out-of-order results, cancel/focus/revision changes,
+    loading and not-yet-visible commit rejection, failure/retry, save failure, original/undo,
+    historical snapshots, removed mark handling, relative gestures and long viewport reachability.
+Visual:
+  Rendered/inspected original, loading, warm, cold, shorter, longer, error and cancelled at 1280x720
+    and 640x480 with offline fixture text; no real provider output was represented as a rewrite.
+  QA images: /tmp/palmcards-preview-checks/ (temporary, not committed).
+Real-provider checks: not performed; no real service called and no credentials accessed.
+Live-gesture checks: not performed; updated docs/hardware-smoke-test.md for the user's camera check.
+```

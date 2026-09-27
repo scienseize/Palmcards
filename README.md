@@ -39,6 +39,14 @@ Notes are plain text; headings start sections. (Older versions read delivery mar
 - **Rehearse.** Raise a closed fist and hold it for 1 s to start a take after a 3-2-1 count-in. The notes follow your voice. Flick sideways in the top-right zone to move on by hand. An open palm held there for 1.5 s stops the take.
 - **Review.** A table sets your last few takes side by side: length, pace, fillers, long pauses, restarts, pitch range, time looking at the screen, face touches, posture. Focus a sentence to see it in every take that said it. Pinch and lift on it to drill just that sentence.
 
+While a sentence is focused, make an **L-hand** and tilt to preview **cold/formal → original → warm/conversational** wording. For a paragraph, use **two L-hands**: move them closer for about **70%** of the original word count, return to the starting distance for the exact original, or move apart for about **130%**. Tone changes the wording, not synthesized speech or delivery scores.
+
+The gauge, connecting line and target update immediately. After a target stays steady for 250 ms, the configured LLM generates wording in the background; previously generated candidates return immediately. The last complete version stays readable under “Updating preview…”. The text changes directly in the focused viewport, labelled **PREVIEW - NOT SAVED**, with requested and actual word counts shown separately. Long passages scroll automatically; `j`/`k` also scroll them.
+
+**Pinch + lift** commits only the complete, visible candidate for the selected target. If it is still loading, “Preview not ready” keeps the operation open; nothing is committed later automatically. **Drop your hand for one second** to cancel. After a generation error, pinch + lift (or `r`) retries; the previous readable candidate stays on screen. `u` undoes a saved edit. Historical takes always keep their original notes revision. No provider request starts merely from sentence/paragraph focus, and no provider means an explicit unavailable message. Targets, hysteresis, debounce and concurrent request limits are configured in `config.PREVIEW`.
+
+Delivery marks remain unsupported, as in the existing app: rewrites are plain text and provider-added marks are rejected. If a source revision contains legacy sentence marks, word stress or pauses, the preview flags them for review; none are silently mapped onto new words. Historical snapshots retain their legacy data unchanged.
+
 Keys work when gestures won't (press `h` to see them in the app):
 
 | Key | Action |
@@ -48,7 +56,7 @@ Keys work when gestures won't (press `h` to see them in the app):
 | `n` / `b` | next / previous section |
 | `j` / `k` | next / previous sentence, or scroll a focused panel |
 | `p` | back to Prepare from Review |
-| `r` | retry failed analysis |
+| `r` | retry a failed edit preview, otherwise retry failed analysis |
 | `q` | quit |
 
 The full gesture grammar and design are in [CLAUDE.md](CLAUDE.md).

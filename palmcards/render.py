@@ -65,7 +65,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from palmcards.config import CURSOR, KNOB, REHEARSE
 from palmcards.gestures import HAND_CONNECTIONS, INDEX_TIP, TIPS
-from palmcards.notes import Sentence
+from palmcards.notes import Sentence, parse_sentence
+from palmcards.preview import PreviewView
 from palmcards.style import (
     CHIPS, COLORS, COUNT_IN, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT, OUTLINE, PLAYER,
     RING, SCRIM, SHADOW, TEXT, ZONE, bgr,
@@ -207,6 +208,7 @@ class ViewState:
     meaning: str = ""  # shown on word selection, before opening alternatives
     loading: bool = False
     proposal: str = ""
+    edit_preview: PreviewView | None = None  # immutable snapshot of what this frame presents
     llm: str = ""  # the optional LLM in use: "cloud" (the text asked about leaves the Mac), "local", or ""
     llm_busy: bool = False  # a request is out
     # Review, a focused sentence: the takes that said it, as chips beside it to
@@ -223,6 +225,7 @@ class Panel:
     color: np.ndarray
     inv: np.ndarray
     rows: dict[int, tuple[int, int]]  # sentence -> (top, bottom) of its enlarged rows, px into the content
+    header_h: int = 0  # extra room for the edit target, status and gestures
 
 
 @dataclass(frozen=True)
@@ -760,7 +763,8 @@ class TextOverlay:
         return None
 
     def _focus_panel(self, unit: tuple[int, ...], detail: tuple[str, ...] = (),
-                     current: int | None = None, preview_from: int | None = None, width: int | None = None) -> Panel:
+                     current: int | None = None, preview_from: int | None = None, width: int | None = None,
+                     replacement: str | None = None, editing: bool = False, header_h: int = 0) -> Panel:
         """The unit's sentences enlarged, then the detail lines (Review: a line
         per take that said the sentence), faint context rows around them when
         there is room.
@@ -771,28 +775,30 @@ class TextOverlay:
         (the next section, previewed) are faint. `width` narrows it (Review's
         take chips beside it), and then it has no context rows."""
         width = width or self.box_w
-        key = (unit, detail, current, preview_from, width)
+        key = (unit, detail, current, preview_from, width, replacement, editing, header_h)
         if self._panel_key == key:
             return self._panel
-        sents = [self.sentences[i] for i in unit]
+        sents = [parse_sentence(replacement)] if replacement is not None else [self.sentences[i] for i in unit]
+        ids = (unit[0],) if replacement is not None else unit
         dfont = self._get_font(round(self.font_size * DETAIL.scale))
         dlh = round(self.line_h * DETAIL.scale)
         dcols = max(DETAIL.min_columns, int((width - 2 * self.pad) / dfont.getlength("M")))
         dlines = [piece for line in detail
                   for piece in textwrap.wrap(line, dcols, subsequent_indent=DETAIL.indent) or [""]]
         detail_h = len(dlines) * dlh + (self.pad // 2 if dlines else 0)
-        avail = self.max_panel_h - 2 * self.pad - detail_h
+        box_h = max(self.line_h * 3, self.box_h - header_h)
+        avail = self.max_panel_h - header_h - 2 * self.pad - detail_h
         # The largest size that fits the viewport with enough columns; never smaller than normal.
         for scale in TEXT.focus_scales:
             font = self._get_font(round(self.font_size * scale))
             lh = round(self.line_h * scale)
             cw = font.getlength("M")
             cols = int((width - 2 * self.pad) / cw)
-            rows = layout(sents, cols, unit)
+            rows = layout(sents, cols, ids)
             if len(rows) * lh <= avail and cols >= TEXT.focus_min_columns:
                 break
         big_h = len(rows) * lh
-        panel_h = max(self.box_h, big_h + detail_h + 2 * self.pad)
+        panel_h = max(box_h, big_h + detail_h + 2 * self.pad)
         spare = panel_h - 2 * self.pad - big_h - detail_h
         first, last = self._first_row[unit[0]], self._last_row[unit[-1]]
         above = self.rows[max(0, first - int(spare / 2 // self.line_h)) : first]
@@ -801,6 +807,15 @@ class TextOverlay:
             above, below = [], []
         content = (len(above) + len(below)) * self.line_h + big_h + detail_h
         y = self.pad + max(0, (panel_h - 2 * self.pad - content) // 2)
+        if editing:
+            # A fixed starting row for the selected unit: incoming wording grows down,
+            # instead of recentering the entire passage whenever its length changes.
+            anchor = self.pad + round(box_h * TEXT.preview_anchor)
+            count = max(0, (anchor - self.pad) // self.line_h)
+            above = above[-count:] if count else []
+            below = below[:max(0, (box_h - anchor - big_h - detail_h - self.pad) // self.line_h)]
+            y = anchor - len(above) * self.line_h
+            panel_h = max(box_h, anchor + big_h + detail_h + self.pad)
 
         img, under = (Image.new("RGBA", (width, panel_h), CLEAR) for _ in range(2))
         draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
@@ -864,11 +879,16 @@ class TextOverlay:
             return None
         takes_w = self._takes_w(state)
         width = min(self.box_w, self.col_x1 - takes_w - self.x + self.pad) if takes_w else None
-        return self._focus_panel(unit, state.detail, self._panel_current(state, unit),
-                                 self._preview_from(state, unit), width)
+        preview = state.edit_preview if state.app == "prepare" else None
+        header_h = max(0, sum(self._label_row_h(i) for i, _ in self.label_rows(state)) - self.label_h) if preview else 0
+        panel = self._focus_panel(unit, state.detail, self._panel_current(state, unit),
+                                 self._preview_from(state, unit), width,
+                                 preview.text if preview and not preview.original else None, preview is not None, header_h)
+        panel.header_h = header_h
+        return panel
 
     def panel_view_h(self, panel: Panel) -> int:
-        return min(panel.height, self.max_panel_h)
+        return min(panel.height, max(self.line_h * 3, self.max_panel_h - panel.header_h))
 
     def panel_max_scroll(self, state: ViewState) -> float:
         panel = self.panel(state)
@@ -891,15 +911,15 @@ class TextOverlay:
             scroll = bottom + self.pad - view
         return self.clamp_panel_scroll(state, scroll)
 
-    def _panel_top(self, view_h: int) -> int:
+    def _panel_top(self, view_h: int, extra_header: int = 0) -> int:
         box_top = self.y + self.margin
-        reserved = LABEL.min_top + self.label_h + self.pad // 2
+        reserved = LABEL.min_top + self.label_h + self.pad // 2 + extra_header
         top = max(reserved, box_top + (self.box_h - view_h) // 2)
         return max(reserved, min(top, self.frame_h - self.line_h - self.pad - view_h))
 
     def _draw_scrollbar(self, frame: np.ndarray, top: int, view_h: int, scroll: float, height: int,
-                        width: int) -> None:
-        x = int(self.x + self.margin + width - self.pad // 3)
+                        width: int, left: bool = False) -> None:
+        x = int(self.x + self.margin + (self.pad // 3 if left else width - self.pad // 3))
         cv2.line(frame, (x, top + self.pad), (x, top + view_h - self.pad), bgr(C.scroll_track), 2, cv2.LINE_AA)
         span = view_h - 2 * self.pad
         y0 = top + self.pad + int(span * scroll / height)
@@ -980,6 +1000,18 @@ class TextOverlay:
         """The label as drawn, Kat's style: (line, text) per row. Line 0 is
         the state, 1 the operation, 2 the gesture hint (label_lines' second
         line after its first HINT_SEP); each wrapped to the text column."""
+        if (preview := state.edit_preview) is not None and state.app == "prepare" and state.mode == "focus":
+            title = "TONE PREVIEW" if preview.kind == "tone" else "LENGTH PREVIEW"
+            status = preview.error.partition(": PINCH")[0] if preview.error else ("UPDATING PREVIEW..." if preview.loading else
+                                      "ORIGINAL UNCHANGED" if preview.original else "PREVIEW - NOT SAVED")
+            hint = "PINCH + LIFT: RETRY" if preview.error else "PINCH + LIFT: COMMIT"
+            lines = [(0, title), (1, f"TARGET: {preview.target_label}"),
+                     (2, f"SHOWING {preview.shown_label}: {preview.actual_words} WORDS"),
+                     (2, state.note or status), (2, hint), (2, "DROP HAND: CANCEL")]
+            if preview.marks_warning:
+                lines.append((2, "LEGACY MARKS NEED REVIEW; PREVIEW IS PLAIN TEXT"))
+            width = self.col_x1 - self.x - self.pad
+            return [(level, row) for level, line in lines for row in self._wrap(line, self._label_size(level), width)]
         first, second = self.label_lines(state)
         operation, _, hint = second.partition(HINT_SEP)
         width = self.col_x1 - self.x - self.pad
@@ -1082,7 +1114,7 @@ class TextOverlay:
         if panel is None:
             return None
         view_h = self.panel_view_h(panel)
-        top = self._panel_top(view_h)
+        top = self._panel_top(view_h, panel.header_h)
         return panel, self.x + self.margin, top - int(self.clamp_panel_scroll(state, state.panel_scroll)), top
 
     def _takes_w(self, state: ViewState) -> int:
@@ -1266,14 +1298,15 @@ class TextOverlay:
         if panel is not None:
             view_h = self.panel_view_h(panel)
             scroll = int(self.clamp_panel_scroll(state, state.panel_scroll))
-            top = self._panel_top(view_h)
+            top = self._panel_top(view_h, panel.header_h)
             bottom = top + view_h
             color, inv = panel.color[scroll:scroll + view_h], panel.inv[scroll:scroll + view_h]
             if panel.height > view_h:
                 color, inv = self._faded(color, inv)
             _blend(frame, self.x + self.margin, top, color, inv)
             if panel.height > view_h:
-                self._draw_scrollbar(frame, top, view_h, scroll, panel.height, panel.color.shape[1])
+                self._draw_scrollbar(frame, top, view_h, scroll, panel.height, panel.color.shape[1],
+                                     left=state.ops.kind == "tone")
         elif (zoom := self.focus_word_box(state)) is not None:
             color, inv, _, _ = self._word_zoom(state)
             _blend(frame, 0, box_top, color, inv)

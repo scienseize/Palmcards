@@ -24,12 +24,12 @@ the right of the frame; it steers the highlight in the text on the left.
   open palm (word)         options ring: the word and alternatives (with --llm);
                            make an L and turn it like a knob: one option per ~15 degrees, tilting right
                            turns the ring clockwise; the picked word previews in the sentence
-  L-hand tilt (sentence)   tone dial, warm to the right, cold to the left
+  L-hand tilt (sentence)   live wording preview: cold / original / warm
   hold open palm (sentence) hear the selected sentence (~0.6 s; also key a)
-  two L-hands (paragraph)  length stretch
+  two L-hands (paragraph)  live length preview: about 70% / original / 130%
   pinch + lift             commit: an alternative makes a new notes revision (u undoes it);
-                           tone and length ask the LLM for a rewrite, shown as a proposal when the unit
-                           is focused again (pinch + lift uses it); without --llm they say they need it
+                           tone and length commit only the complete preview visible for the selected target;
+                           a loading preview stays open; after an error pinch + lift retries
   drop the hand for 1 s    back out
   fist raised into view, held 1 s
                            start a take after a 3-2-1 count-in. The session's first
@@ -105,6 +105,7 @@ from palmcards.gestures import FIST, OPEN, GestureEvent, GestureLog, Grammar, Ha
 from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.edit import replace_text, replace_word
+from palmcards.preview import Previews
 from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
     meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
@@ -197,11 +198,12 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
 
 
 def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog,
-                speaker=None, takes: "Takes | None" = None) -> float | None:
+                speaker=None, takes: "Takes | None" = None, grammar: Grammar | None = None) -> float | None:
     """Grammar events. Returns the time a label note should expire, if one was set.
     A commit only ever reports what really happened."""
     if ev.kind == "focus":
         if takes is not None:
+            takes.previews.cancel()
             takes.llm_failed.clear()  # a new focus may ask again what failed before
             takes.reset_pick()
         if view.hover is None:  # focused before the cursor ever touched the text
@@ -224,20 +226,25 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         if picked in view.alternatives and takes is not None and view.focus is not None and view.ops.picked > 0:
             view.note = takes.use_alternative(view.focus.sentence, view.focus.word, picked)
         elif ev.op in ("tone", "stretch") and takes is not None and unit:
-            view.note = takes.ask_rewrite("tone" if ev.op == "tone" else "length", unit, ev.value)
+            committed, view.note = takes.commit_preview(view, unit, ev.value, ev.t)
+            if not committed:
+                return time.perf_counter() + NOTE_S
+            if grammar is not None:
+                grammar.accept_edit_commit(ev.t)
         elif ev.op is None and takes is not None and unit in takes.proposals:
             view.note = takes.use_proposal(unit)
         elif ev.op in ("tone", "stretch"):
-            what = "TONE" if ev.op == "tone" else "LENGTH"
-            log(ev.t, "commit_stub", level=ev.level, sentence=sentence, op=ev.op, value=ev.value)
-            view.note = f"{what} EDITS ARE NOT AVAILABLE YET: NOTHING CHANGED"
+            view.note = "PREVIEW NOT READY: SET UP THE OPTIONAL LLM"
+            return time.perf_counter() + NOTE_S
         else:
             view.note = "NO CHANGE"
     if ev.kind == "back" and takes is not None and view.focus is not None:  # backing out discards a proposal
         takes.proposals.pop(tuple(overlay.unit(ev.level, view.focus.sentence)), None)
     if takes is not None:
+        takes.previews.cancel()
         takes.reset_pick()  # the take picker starts again with the next focus
     view.focus = None
+    view.edit_preview = None
     view.ops = OpsView()
     return time.perf_counter() + NOTE_S if ev.kind == "commit" and view.note else None
 
@@ -271,6 +278,7 @@ class Takes:
         if provider is not None:
             print(describe(provider))
         self.assistant = Assistant(provider) if provider is not None else None
+        self.previews = Previews(self.assistant)
         self.alternatives: dict[tuple[int, int], tuple[str, ...]] = {}  # (sentence, word) -> words, this revision
         self.meanings: dict[tuple[int, int], str] = {}
         self.proposals: dict[tuple[int, ...], tuple[str, object, str]] = {}  # unit -> (kind, value, text shown)
@@ -349,6 +357,7 @@ class Takes:
     def _use_notes(self, notes: Notes) -> None:
         """New current notes (an edit or an undo): the board, the follow and the
         display (main's frame loop rebuilds the overlay on notes_version)."""
+        self.previews.cancel()
         self.notes = notes
         self.board = Board(notes)
         self._fill_board()
@@ -429,6 +438,53 @@ class Takes:
                            alternatives_request(s.text, text), lambda reply: parse_alternatives(reply, text))
         self.log(time.perf_counter() - self.t0, "llm", ask="alternatives", sentence=sentence, word=word)
 
+    def sync_edit(self, view: ViewState, overlay: TextOverlay, now: float) -> None:
+        from palmcards.notes import parse_sentence
+
+        if view.app != "prepare" or view.mode != "focus" or view.focus is None \
+                or (view.level, view.ops.kind) not in (("sentence", "tone"), ("paragraph", "stretch")):
+            self.previews.cancel()
+            view.edit_preview = None
+            return
+        unit = tuple(overlay.unit(view.level, view.focus.sentence))
+        op = self.previews.operation
+        # Source parsing and joining happen once, not on every camera frame.
+        if op is None or op.unit != unit or op.source_revision != self._llm_revision():
+            original = " ".join(self.notes.sentences[i].text for i in unit)
+            ignored = []
+            for i in unit:
+                parse_sentence(self.notes.sentences[i].raw, ignored)
+            marks = bool(sum(ignored))
+            if self.session.current_revision is not None:
+                saved = self.session.snapshot(self.session.current_revision)["sentences"]
+                marks = marks or any(saved[i].get("marks") or any(w.get("stressed") for w in saved[i]["words"])
+                                     for i in unit)
+        else:
+            original, marks = op.original, op.marks_warning
+        self.previews.sync("tone" if view.ops.kind == "tone" else "length", self._llm_revision(), unit,
+                           original, view.ops.tone if view.ops.kind == "tone" else view.ops.stretch, now, marks)
+        previous = view.edit_preview
+        view.edit_preview = self.previews.view()
+        if previous is None or previous.text != view.edit_preview.text:
+            # Begin a newly arrived candidate at its first line; later pages remain reachable.
+            view.panel_scroll = 0.0
+
+    def commit_preview(self, view: ViewState, unit: tuple[int, ...], value: float, now: float) -> tuple[bool, str]:
+        op = self.previews.operation
+        if op is None or op.source_revision != self._llm_revision() or op.unit != unit:
+            return False, "PREVIEW NOT READY"
+        if not self.previews.can_commit(view.edit_preview, value):
+            if op.error:
+                self.previews.retry(now)
+                return False, "RETRYING PREVIEW" if op.loading else op.error
+            return False, "PREVIEW NOT READY"
+        if op.displayed_target == op.original_target or op.displayed_candidate == op.original:
+            self.previews.cancel()
+            return True, "ORIGINAL KEPT: NO CHANGE"
+        error = self._save_edit(replace_text(self.notes, list(unit), op.displayed_candidate),
+                                f"{op.kind} preview committed", op=op.kind, sentences=list(unit))
+        return (False, error) if error else (True, "PREVIEW COMMITTED / U: UNDO")
+
     def ask_rewrite(self, kind: str, unit: tuple[int, ...], amount: float) -> str:
         what = "TONE" if kind == "tone" else "LENGTH"
         if self.assistant is None:
@@ -456,6 +512,10 @@ class Takes:
         self._log_llm_usage()  # after: a call's usage is queued before its answer, so these answers' are in
         note = ""
         for a in answers:
+            if a.reason == "API KEY REJECTED":
+                self.llm_alert = "CLOUD LLM: API KEY REJECTED (SEE TERMINAL)"
+            if self.previews.accept(a, self._llm_revision()):
+                continue
             if a.revision != self._llm_revision():
                 note = "THE NOTES CHANGED: SUGGESTION DROPPED"
                 continue
@@ -1090,6 +1150,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     if start_mode:
         modes.enter(start_mode, 0.0)
     grammar = modes.grammar
+    grammar.defer_edit_commit = True
     view = ViewState()
     show_debug = False
     note_until = None
@@ -1108,6 +1169,15 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     while True:
         frame = camera.read()
         start = time.perf_counter()
+        if takes.notes_version != notes_seen:  # e.g. undo from the previous frame's key handler
+            notes_seen = takes.notes_version
+            sentences = takes.notes.sentences
+            overlay = TextOverlay(sentences, (w, h))
+            grammar.reset()
+            view.focus, view.edit_preview, view.ops = None, None, OpsView()
+            view.mode, view.level = "idle", None
+            view.current = min(view.current, len(sentences) - 1)
+            view.scroll = overlay.clamp_scroll(view.scroll)
         tracker.submit(frame, start - t0)
         if takes.vision is not None:  # before anything is drawn on the frame; idle outside calibration and takes
             takes.vision.frame(frame, start - t0, frame_index, late=(start - prev_start) * 1000 > BODY.late_ms)
@@ -1140,7 +1210,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
             if ev.kind in ("focus", "commit", "back", "rewind"):
-                until = apply_event(ev, view, overlay, log, speaker, takes)
+                until = apply_event(ev, view, overlay, log, speaker, takes, grammar)
             elif note := takes.handle(ev, modes, view, overlay):
                 view.note, until = note, start + NOTE_S
             else:
@@ -1157,23 +1227,20 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         zone = modes.zone
         view.zone_active, view.hold_progress, view.flick_progress = zone.active, zone.hold_progress, zone.flick_progress
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
+        if modes.mode in ("prepare", "review") and result is not None:
+            sync_view(grammar, view, overlay)
+        takes.sync_edit(view, overlay, start - t0)
         if modes.mode == "prepare":  # the optional LLM: what the focused word or unit has
             takes.sync_word(view, grammar.state.op)
-            unit = tuple(overlay.unit(view.level, view.focus.sentence)) \
-                if view.mode == "focus" and view.focus is not None and view.level in ("sentence", "paragraph") else ()
-            proposal = takes.proposals.get(unit) if unit else None
-            view.proposal = proposal[2] if proposal else ""
             if view.focus is not None and view.focus.word is not None and grammar.state.op == "ring":
                 grammar.set_ring_labels(start - t0, overlay.ring_labels(view))
                 overlay.follow_ring(view, grammar.state.ring_pick, grammar.state.ring_turn)
         if modes.mode in ("prepare", "review"):
-            if result is not None:
-                sync_view(grammar, view, overlay)
             view.start_progress = modes.start_progress
             if modes.mode == "review":
                 takes.sync_review(grammar, view, overlay, start - t0)
             else:
-                view.detail = (f"PROPOSED: {view.proposal}",) if view.proposal else ()
+                view.detail = ()
         else:
             if modes.mode == "rehearse":
                 takes.poll_follow(view, overlay)
@@ -1298,7 +1365,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         elif key == ord("d"):
             show_debug = not show_debug
         elif key == ord("r"):
-            view.note, note_until = takes.retry(), time.perf_counter() + NOTE_S
+            if takes.previews.operation is not None and takes.previews.operation.error:
+                takes.previews.retry(time.perf_counter() - t0)
+                view.note = "RETRYING PREVIEW" if takes.previews.operation.loading else takes.previews.operation.error
+            else:
+                view.note = takes.retry()
+            note_until = time.perf_counter() + NOTE_S
         elif key == ord("s"):
             SCREENS_DIR.mkdir(parents=True, exist_ok=True)
             shot = SCREENS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.png"

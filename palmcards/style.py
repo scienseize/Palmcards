@@ -171,6 +171,7 @@ class Text:
     # A focused word: the notes zoomed by this, the word moved to the middle of the box.
     word_zoom: float = 1.6
     meaning_min_size: int = 9  # smallest definition text in a narrow window; shrink to fit below the word
+    preview_anchor: float = 0.2  # fixed starting row for live rewrites, fraction of the text viewport
     fade: float = 0.5  # lines: rows partly scrolled out fade out over this at the box's top and bottom
     # Everything below scales with the line height: padding inside the box is half a line.
     focus_scales: tuple[float, ...] = (1.4, 1.2, 1.0)  # focus panel: largest that fits the box wins

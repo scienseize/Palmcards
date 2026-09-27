@@ -137,6 +137,16 @@ class Ops:
 
 
 @dataclass(frozen=True)
+class Preview:
+    debounce_s: float = 0.25
+    tone_targets: tuple[float, ...] = (-1.0, 0.0, 1.0)
+    tone_hysteresis: float = 0.1
+    length_targets: tuple[float, ...] = (0.7, 1.0, 1.3)
+    length_hysteresis: float = 0.035
+    max_inflight: int = 2  # includes obsolete requests still running on the provider
+
+
+@dataclass(frozen=True)
 class Knob:
     # The word's options ring turned like a knob (Kat's "spin synonyms";
     # palmcards.knob). The angle is the L-hand's index tilt (landmarks 5 -> 8
@@ -416,6 +426,7 @@ POSE = Pose()
 TIMING = Timing()
 CURSOR = Cursor()
 OPS = Ops()
+PREVIEW = Preview()
 KNOB = Knob()
 REHEARSE = Rehearse()
 RECORDING = Recording()

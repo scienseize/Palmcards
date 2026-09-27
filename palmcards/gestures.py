@@ -497,6 +497,7 @@ class Grammar:
         self.log = log or GestureLog()
         self.tracks: dict[str, HandTrack] = {}
         self.operations = True  # Prepare's ring, tone and stretch; off in Review
+        self.defer_edit_commit = False  # the app accepts only a complete, already displayed preview
         self.take_dial = False  # Review's take dial on a focused sentence
         self._primary_key: str | None = None
         self._lost_since: float | None = None  # browse: primary hand missing
@@ -701,6 +702,10 @@ class Grammar:
         self._focus_armed = False
         self._lost_since = None
 
+    def accept_edit_commit(self, t: float) -> None:
+        """The app has saved the visible rewrite (or kept the original)."""
+        self._leave_focus("commit", t, [], value=self.state.tone if self.state.op == "tone" else self.state.stretch)
+
     def _update_focus(self, t: float, track_events: dict[str, list[str]], events: list[GestureEvent]) -> None:
         s, p = self.state, self.state.primary
         gone = "no hand" if p is None else "low" if p.hand.points[:, 1].min() > TIMING.drop_band * self.h else None
@@ -723,6 +728,11 @@ class Grammar:
                 tr = self.tracks[key]
                 if "commit" in evs and tr.pinch_start is not None and tr.pinch_start >= self._commit_armed_t:
                     value = s.tone if s.op == "tone" else s.stretch if s.op == "stretch" else None
+                    if self.defer_edit_commit and self.operations and s.op in ("tone", "stretch"):
+                        events.append(GestureEvent("commit", t, s.level, s.op, value=value))
+                        self.log(t, "commit_attempt", level=s.level, op=s.op, value=value)
+                        self._commit_armed_t = None
+                        return
                     self._leave_focus("commit", t, events, value=value)
                     return
 
