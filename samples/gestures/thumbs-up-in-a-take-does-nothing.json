@@ -1,15 +1,12 @@
 {
- "name": "thumbs-up-stops-take",
- "description": "A thumbs-up held 1.5 s during a take stops it, into Review. Expected entries from the replay: recorded before the thumbs-up was a command (live, a take had just started).",
+ "name": "thumbs-up-in-a-take-does-nothing",
+ "description": "A thumbs-up held during a take does nothing (the OK sign stops a take since 2026-09-28). Expected entries from the replay: recorded before the thumbs-up was a command (live, a take had just started); from 2026-09-27 to 28 it stopped the take, now the OK sign does.",
  "source": "20260927-234235.trace.jsonl",
  "window": [62.2, 68.0],
  "frame_size": [1280, 720],
  "start_mode": "rehearse",
  "known_issue": null,
- "expected": [
-  {"t": 1.508, "kind": "done", "mode": "rehearse"},
-  {"t": 1.508, "kind": "mode", "mode": "review"}
- ],
+ "expected": [],
  "frames": [
   {"t":0.007,"hands":[{"label":"Left","points":[1000,680,948,566,932,448,924,362,920,288,1061,411,905,422,886,482,913,508,1094,471,906,488,905,538,940,551,1102,545,923,552,933,588,972,596,1095,621,959,612,959,626,991,629]},{"label":"Right","points":[326,673,393,555,450,439,484,351,496,268,377,397,540,432,514,478,466,472,354,466,540,498,497,528,449,519,345,543,522,570,475,593,430,585,348,616,488,630,453,640,402,632]}]},
   {"t":0.041,"hands":[{"label":"Left","points":[995,676,946,563,931,446,926,361,922,286,1061,411,906,423,884,482,909,509,1094,472,905,490,901,540,934,553,1102,545,924,553,931,588,969,597,1096,622,960,613,958,626,988,630]},{"label":"Right","points":[324,673,392,556,450,440,484,352,496,268,377,397,539,430,513,477,465,471,354,464,540,497,497,527,450,519,345,540,521,568,475,592,431,585,348,614,486,629,452,639,402,632]}]},

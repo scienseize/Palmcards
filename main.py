@@ -38,7 +38,8 @@ the right of the frame; it steers the highlight in the text on the left.
                            for 2.5 s, then read the orange sentence during the 3-2-1
 
 Rehearse listens for one gesture only, anywhere in the frame:
-  thumbs-up held 1.5 s     stop the take (or cancel the count-in), on to Review
+  OK sign held 1.5 s       stop the take (or cancel the count-in), on to Review: thumb and
+                           index touching in a circle, middle, ring and pinky up
 Everything else your hands do while you speak is only measured. The notes
 follow your voice (the current sentence in orange, the next section shown
 faint as you start the last sentence of one); n, b, j and k move by hand
@@ -63,14 +64,15 @@ side by side.
   L-hand, then point (focused)
                            the takes that said this sentence, as chips beside it: point at one
   pinch + lift (focused)   drill the sentence: count-in, then just that
-                           sentence; a thumbs-up held to stop
+                           sentence; the OK sign held to stop
   open palm on a focused sentence or paragraph, held ~0.6 s
                            play it from the take it shows (key: a); a take recorded with
                            video (--video) replays it full frame, as others see you; while it
                            plays the focus is held (drop the hand freely) and a new open palm,
                            ~0.3 s, stops it
   fist raised, held 1 s    new full take
-  thumbs-up held 1.5 s     back to Prepare, to edit before the next take
+  V sign held 1 s          back to Prepare, to edit before the next take (in Prepare, with an
+                           edit made, a V sign held undoes it)
 
 Without --llm, tone and length preview their controls and say they need the
 optional LLM; nothing is ever sent unless you ask. Poses and events are
@@ -111,7 +113,7 @@ from palmcards.config import ANALYSIS, BODY, FOLLOW, LLM, RECORDING, REHEARSE, S
 from palmcards import features, gaze
 from palmcards import prefs as preferences
 from palmcards import render
-from palmcards.gestures import FIST, OPEN, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
+from palmcards.gestures import FIST, OPEN, THUMB_UP, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.edit import replace_text, replace_word
@@ -215,6 +217,7 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
 
 FIST_HINT = "NEW TAKE: DROP THE HAND, RAISE\u00a0A\u00a0FIST"  # it wraps at the comma, not before "A FIST"
 PALM_HINT = {"rehearse": "A PALM DOESN'T STOP A TAKE", "count_in": "A PALM DOESN'T CANCEL"}
+THUMB_HINT = {"rehearse": "A THUMBS-UP DOESN'T STOP A TAKE", "count_in": "A THUMBS-UP DOESN'T CANCEL"}
 HINT_DWELL_S = 0.6  # a gesture that does nothing held this long before its hint (a fist formed from
 #                     another pose: a fold or a slow pinch passes through a fist on its way to a focus;
 #                     an open palm in a take)
@@ -223,9 +226,9 @@ FIST_HINT_S = HINT_DWELL_S
 
 def nonactivation_hint(mode: str, gs, open_s: float, t: float | None = None) -> str:
     """Why a gesture the camera sees is not doing anything, when that's likely
-    to puzzle: a fist formed from another pose and held, an open palm held
-    during a take (it stopped takes before the thumbs-up did; the label's hint
-    row already says what does)."""
+    to puzzle: a fist formed from another pose and held; in a take or count-in,
+    an open palm or a thumbs-up held (each stopped takes once; the label's hint
+    row already says what does now)."""
     p = gs.primary
     if p is None:
         return ""
@@ -234,6 +237,8 @@ def nonactivation_hint(mode: str, gs, open_s: float, t: float | None = None) -> 
         return FIST_HINT
     if mode in ("count_in", "rehearse") and p.stable == OPEN and open_s > HINT_DWELL_S:
         return PALM_HINT[mode]
+    if mode in ("count_in", "rehearse") and p.stable == THUMB_UP and t is not None and p.held(t) >= HINT_DWELL_S:
+        return THUMB_HINT[mode]
     return ""
 KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("b"): "previous",
                 ord("p"): "prepare"}  # ModeMachine.command
@@ -934,7 +939,7 @@ class Takes:
             except (OSError, SessionError) as exc:
                 print(f"cannot record: {exc}", file=sys.stderr)
                 self.log(ev.t, "record_error", error=str(exc))
-                self.alert = "CANNOT RECORD (SEE TERMINAL): THUMB UP TO STOP"
+                self.alert = "CANNOT RECORD (SEE TERMINAL): OK SIGN TO STOP"
                 return ""
             self.writer.mark_section(ev.t, self.section, "start")
             self.recorder.start(self.writer)
@@ -1476,7 +1481,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "drill" and ev.sentence is None:
                 ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
-            if ev.kind == "undo":  # a thumbs-down held in Prepare after an edit
+            if ev.kind == "undo":  # a V sign held in Prepare after an edit
                 view.note, until = takes.undo(), start + NOTE_S
             elif ev.kind == "retry":  # an open palm held in Review with failed analysis
                 view.note, until = takes.retry(), start + NOTE_S

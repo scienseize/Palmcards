@@ -127,7 +127,7 @@ BROWSE_HINTS = {
 }
 BROWSE_ENTRY = "FINGER UP: BROWSE"  # nothing up yet: how to start browsing
 NEW_TAKE = "RAISE A FIST: NEW TAKE"
-UNDO_HINT = "THUMB DOWN: UNDO"  # Prepare, after an edit: a thumbs-down held undoes it (u too)
+UNDO_HINT = "V SIGN: UNDO"  # Prepare, after an edit: a V sign (index and middle apart) held undoes it (u too)
 NEEDS_LLM = f"PREVIEW ONLY: {NEEDS_AI}"
 TONE_NAMES = {"WARM": "WARM", "COLD": "FORMAL", "ORIGINAL": "ORIGINAL", "NEUTRAL": "ORIGINAL"}  # the gauge's ends
 GROWN = 0.99  # a focus this far grown is drawn as focused (the last step is under 2 px)
@@ -392,7 +392,7 @@ class ViewState:
     rec_s: float = 0.0  # length of the take so far
     recording_video: bool = False  # the take's video is being recorded too (the REC chip says so)
     mic: float = 0.0  # microphone level, 0..1
-    hold_progress: float = 0.0  # a thumbs-up held toward "done" (stop, cancel), or a V sign toward Prepare (Review), 0..1
+    hold_progress: float = 0.0  # the OK sign held toward "done" (stop, cancel), or a V sign toward Prepare (Review), 0..1
     drill: int | None = None  # count_in, rehearse: the one sentence a drill rehearses
     detail: tuple[str, ...] = ()  # Review focus: the lines under the sentence (a take each)
     summary: tuple[str, ...] = ()  # Review, browsing: the take table (palmcards.review), a line each
@@ -428,8 +428,8 @@ class ViewState:
     palm_spent: bool = False  # the palm up started or ended what plays: it must leave before it acts
     shape: str | None = None  # the hand shape that set the browse level (Review: a pinch or a fold closes it)
     scrolling: int = 0  # browsing at the hand box's top (-1) or bottom (+1) band: the notes scroll
-    undo_ready: bool = False  # Prepare: an edit to undo (a thumbs-down held, or u)
-    undo_progress: float = 0.0  # Prepare: a thumbs-down held toward undo, 0..1
+    undo_ready: bool = False  # Prepare: an edit to undo (a V sign held, or u)
+    undo_progress: float = 0.0  # Prepare: a V sign held toward undo, 0..1
     retry_progress: float = 0.0  # Review: an open palm held toward retrying failed analysis, 0..1
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
@@ -722,8 +722,8 @@ class TextOverlay:
                 second = f"STARTING IN {state.count_in}"
             else:
                 second = state.status
-            if progress is None:  # the only command in a take: a thumbs-up, anywhere
-                second += HINT_SEP + ("THUMB UP: CANCEL" if state.app == "count_in" else "THUMB UP: STOP")
+            if progress is None:  # the only command in a take: the OK sign, anywhere
+                second += HINT_SEP + ("OK SIGN: CANCEL" if state.app == "count_in" else "OK SIGN: STOP")
             return state.title or ("DRILL" if state.drill is not None else "REHEARSE"), second, progress
 
         level = (state.level or "").upper()

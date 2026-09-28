@@ -70,6 +70,11 @@ def thumbs_down(**kw):
     return thumbs_up(rotate=180 + kw.pop("rotate", 0), **kw)  # the thumbs-up turned over
 
 
+def ok_sign(**kw):
+    """The OK sign: thumb and index tips touching in a circle, middle, ring and pinky up."""
+    return hand({8: (-50, -130), 12: (0, -205), 16: (25, -200), 20: (50, -190)}, thumb=(-48, -127), **kw)
+
+
 def victory(**kw):
     return hand({8: (-60, -200), 12: (30, -200)}, **kw)  # a V sign: index and middle out, apart
 
@@ -157,6 +162,15 @@ def test_the_users_calibration_poses_read_as_labelled():
         read = [classify(features(Hand(np.array(f["points"], float)))) for f in frames]
         share = sum(r == label for r in read) / len(read)
         assert len(frames) >= 50 and share >= 0.95, (label, share)
+
+
+def test_the_ok_sign_reads_as_a_pinch_and_is_told_apart_from_one():
+    from palmcards.gestures import is_ok_sign
+
+    assert classify(features(ok_sign())) == PINCH  # in Prepare and Review a pinch still focuses
+    assert is_ok_sign(features(ok_sign())) and is_ok_sign(features(ok_sign(rotate=25)))
+    assert not is_ok_sign(features(pinch())) and not is_ok_sign(features(open_palm()))
+    assert not is_ok_sign(features(flat())) and not is_ok_sign(features(fist()))
 
 
 def test_a_v_sign_is_not_two_fingers_together_and_three_fingers_are_none():
@@ -582,25 +596,43 @@ def test_a_v_sign_leaves_review_but_not_from_a_focus_and_a_thumbs_up_never_does(
     assert kinds(events) == ["to_prepare"] and m.mode == "prepare"
 
 
-def test_a_thumbs_down_held_in_prepare_undoes_an_edit():
+def test_a_v_sign_held_in_prepare_undoes_an_edit():
     m = ModeMachine((W, H))
-    events, t = run(m, hold(thumbs_down, 2.0))
+    events, t = run(m, hold(victory, 2.0))
     assert "undo" not in kinds(events)  # nothing to undo
     m.undo_ready = True
-    events, t = run(m, [None] * 12 + hold(thumbs_up, 2.0), t)  # a thumbs-up doesn't undo
-    assert events == [] and m.mode == "prepare"
-    events, t = run(m, [None] * 12 + hold(thumbs_down, REHEARSE.start_hold_s + 0.3), t)
+    events, t = run(m, [None] * 12 + hold(thumbs_down, 2.0) + [None] * 12 + hold(thumbs_up, 2.0), t)
+    assert events == [] and m.mode == "prepare"  # neither thumb undoes
+    events, t = run(m, [None] * 12 + hold(victory, REHEARSE.start_hold_s + 0.3), t)
     assert kinds(events) == ["undo"] and m.mode == "prepare"
-    events, t = run(m, hold(thumbs_down, 2.0), t)  # held on: one undo per thumbs-down
+    events, t = run(m, hold(victory, 2.0), t)  # held on: one undo per V sign
     assert events == [] and m.undo_progress == 0.0
-    # A misread frame or two doesn't start it over; the thumbs-down, lowered and raised, undoes again.
-    frames = [thumbs_down() if i % 8 else fist() for i in range(round((REHEARSE.start_hold_s + 0.4) / DT))]
+    # A misread frame or two doesn't start it over; the V sign, lowered and raised, undoes again.
+    frames = [victory() if i % 8 else two() for i in range(round((REHEARSE.start_hold_s + 0.4) / DT))]
     events, t = run(m, [None] * 12 + frames, t)
     assert kinds(events) == ["undo"]
     _, t = run(m, [None] * 12 + hold(one, 0.3) + hold(pinch, 0.3), t)  # a focus: the hand is at work
     assert m.state.mode == "focus"
-    events, _ = run(m, hold(thumbs_down, 2.0), t)
+    events, _ = run(m, hold(victory, 2.0), t)
     assert "undo" not in kinds(events)
+
+
+def test_the_v_sign_that_left_review_held_on_does_not_undo():
+    m, t = reviewing()
+    m.undo_ready = True  # (the app sets it in Prepare only; set here to show the V must come down)
+    events, t = run(m, hold(victory, REHEARSE.start_hold_s + 0.3) + hold(victory, 2.0), t)
+    assert kinds(events) == ["to_prepare"] and m.mode == "prepare"
+    events, _ = run(m, [None] * 12 + hold(victory, REHEARSE.start_hold_s + 0.3), t)
+    assert kinds(events) == ["undo"]
+
+
+def test_a_thumbs_up_in_a_take_does_nothing_and_says_what_does():
+    import main
+
+    m, t = rehearsing()
+    events, t = run(m, hold(thumbs_up, 3.0), t)
+    assert events == [] and m.mode == "rehearse"
+    assert main.nonactivation_hint("rehearse", m.state, 0.0, t) == main.THUMB_HINT["rehearse"]
 
 
 def test_low_wrist_with_raised_fingers_stays_focused_and_operates():
@@ -697,7 +729,7 @@ def rehearsing(m=None, t=0.0):
     return m, t
 
 
-def test_rehearse_ignores_everything_but_a_thumbs_up():
+def test_rehearse_ignores_everything_but_a_ok_sign():
     m, t = rehearsing()
     swipe = [one(origin=(1100 - 150 * i / 6, 250)) for i in range(1, 7)]  # what was a flick
     events, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(fist, 1.5) + hold(open_palm, 2.0)
@@ -705,12 +737,12 @@ def test_rehearse_ignores_everything_but_a_thumbs_up():
     assert events == [] and m.mode == "rehearse" and m.state.mode == "idle"
 
 
-def test_a_thumbs_up_held_anywhere_stops_the_take_into_review():
+def test_a_ok_sign_held_anywhere_stops_the_take_into_review():
     for origin in ((960, 600), (300, 500), (1100, 250)):
         m, t = rehearsing()
-        events, t = run(m, hold(thumbs_up, 1.2, origin=origin), t)
+        events, t = run(m, hold(ok_sign, 1.2, origin=origin), t)
         assert events == [] and 0.7 < m.done.progress < 1.0
-        events, t = run(m, hold(thumbs_up, 0.4, origin=origin), t)
+        events, t = run(m, hold(ok_sign, 0.4, origin=origin), t)
         assert kinds(events) == ["take_stop"] and m.mode == "review" and m.done.progress == 0.0
         assert not m.grammar.operations
     # Review browses and focuses like Prepare, without the operations.
@@ -718,37 +750,37 @@ def test_a_thumbs_up_held_anywhere_stops_the_take_into_review():
     assert m.state.mode == "focus" and m.state.op is None
 
 
-def test_a_thumbs_up_rides_out_misread_frames_and_label_flips():
+def test_a_ok_sign_rides_out_misread_frames_and_label_flips():
     m, t = rehearsing()
-    frames = [thumbs_up(label="Left" if (i // 5) % 2 else "Right") if i % 9 else fist() for i in range(round(1.7 / DT))]
+    frames = [ok_sign(label="Left" if (i // 5) % 2 else "Right") if i % 9 else fist() for i in range(round(1.7 / DT))]
     events, _ = run(m, frames, t)
     assert kinds(events) == ["take_stop"]
 
 
-def test_a_thumbs_up_let_go_starts_over():
+def test_a_ok_sign_let_go_starts_over():
     m, t = rehearsing()
-    events, t = run(m, hold(thumbs_up, 1.0) + [None] * 15 + hold(thumbs_up, 1.0), t)  # 0.5 s down between
+    events, t = run(m, hold(ok_sign, 1.0) + [None] * 15 + hold(ok_sign, 1.0), t)  # 0.5 s down between
     assert events == [] and m.mode == "rehearse"
 
 
-def test_a_thumbs_up_during_the_count_in_cancels():
+def test_a_ok_sign_during_the_count_in_cancels():
     for back_to in ("prepare", "review"):
         m, t = ModeMachine((W, H)), 0.0
         if back_to == "review":
             m, t = rehearsing(m)
-            _, t = run(m, hold(thumbs_up, 1.7), t)
+            _, t = run(m, hold(ok_sign, 1.7), t)
             assert m.mode == "review"
             _, t = run(m, [None] * 10, t)
         events, t = run(m, hold(fist, 1.3), t)
         assert m.mode == "count_in"
-        events, t = run(m, hold(thumbs_up, 1.7), t)
+        events, t = run(m, hold(ok_sign, 1.7), t)
         assert kinds(events) == ["count_in_cancel"] and m.mode == back_to
         assert m.tick(t + REHEARSE.count_in_s) == []
 
 
 def test_a_v_sign_goes_from_review_back_to_prepare():
     m, t = rehearsing()
-    _, t = run(m, hold(thumbs_up, 1.7), t)
+    _, t = run(m, hold(ok_sign, 1.7), t)
     assert m.mode == "review"
     _, t = run(m, [None] * 10, t)  # hand down between the two
     events, t = run(m, hold(victory, 1.7), t)
@@ -761,27 +793,27 @@ def test_a_v_sign_goes_from_review_back_to_prepare():
     assert kinds(events) == ["count_in"]
 
 
-def test_the_thumbs_up_that_stopped_a_take_held_on_does_not_leave_review():
+def test_the_ok_sign_that_stopped_a_take_held_on_does_not_leave_review():
     # One thumbs-up kept up: it stopped the take, then went straight on to Prepare
     # (the hold started again on Review's first frame).
     m, t = rehearsing()
-    events, t = run(m, hold(thumbs_up, 1.7) + hold(thumbs_up, 3.0), t)
+    events, t = run(m, hold(ok_sign, 1.7) + hold(ok_sign, 3.0), t)
     assert kinds(events) == ["take_stop"] and m.mode == "review" and m.done.progress == 0.0
     # A V sign is what goes back.
     events, t = run(m, [None] * 12 + hold(victory, 1.7), t)
     assert kinds(events) == ["to_prepare"] and m.mode == "prepare"
     # A misread frame or two while it is still up doesn't count as it coming down.
     m, t = rehearsing()
-    frames = hold(thumbs_up, 1.7) + [thumbs_up() if i % 7 else fist() for i in range(round(3.0 / DT))]
+    frames = hold(ok_sign, 1.7) + [ok_sign() if i % 7 else fist() for i in range(round(3.0 / DT))]
     events, _ = run(m, frames, t)
     assert kinds(events) == ["take_stop"] and m.mode == "review"
 
 
-def test_the_thumbs_up_that_cancelled_a_count_in_does_not_leave_review():
+def test_the_ok_sign_that_cancelled_a_count_in_does_not_leave_review():
     m, t = reviewing()
     events, t = run(m, hold(fist, 1.3), t)
     assert m.mode == "count_in"
-    events, t = run(m, hold(thumbs_up, 1.7) + hold(thumbs_up, 3.0), t)
+    events, t = run(m, hold(ok_sign, 1.7) + hold(ok_sign, 3.0), t)
     assert kinds(events) == ["count_in_cancel"] and m.mode == "review"
 
 
@@ -789,7 +821,7 @@ def test_a_fist_formed_by_a_hand_kept_up_across_a_mode_change_does_not_start_a_t
     # The fist that started the take, kept in view through it, stopped with a
     # thumbs-up; folding the thumb back in is a fist formed, not one raised.
     m, t = rehearsing()
-    events, t = run(m, hold(fist, 1.0) + hold(thumbs_up, 1.7), t)
+    events, t = run(m, hold(fist, 1.0) + hold(ok_sign, 1.7), t)
     assert kinds(events) == ["take_stop"] and m.mode == "review"
     events, t = run(m, hold(fist, 2.0), t)
     assert events == [] and m.mode == "review"
@@ -810,7 +842,7 @@ def test_a_thumbs_up_never_starts_a_take():
 
 def reviewing():
     m, t = rehearsing()
-    _, t = run(m, hold(thumbs_up, 1.7), t)
+    _, t = run(m, hold(ok_sign, 1.7), t)
     assert m.mode == "review" and m.grammar.take_dial
     _, t = run(m, [None] * 10, t)
     return m, t
@@ -980,7 +1012,7 @@ def test_pinch_and_lift_on_a_focused_sentence_in_review_drills_it():
     t += REHEARSE.count_in_s
     # A thumbs-up stops it as it does a take.
     _, t = run(m, [None] * 40, t)
-    events, t = run(m, hold(thumbs_up, 1.7), t)
+    events, t = run(m, hold(ok_sign, 1.7), t)
     assert kinds(events) == ["take_stop"] and m.mode == "review" and not m.drill
 
 

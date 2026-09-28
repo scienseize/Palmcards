@@ -2262,3 +2262,25 @@ Tests: pytest (full) -> 616 passed. New: THUMB_DOWN and VICTORY classified (and 
   misreads forgiven, not in a focus); back to Prepare by a V sign (not a thumbs-up, not in a focus).
 ```
 
+```text
+Date: 2026-09-28
+Phase / issue IDs: undo is the V sign too; the OK sign replaces the thumbs-up (user: "Change thumb down into
+  V sign also and change thumb up into doing the ok sign (holding middle finger, ring finger and pinky up)")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: palmcards/gestures.py: is_ok_sign(f) — thumb and index tips within POSE.pinch_off palms, middle,
+  ring and pinky extended. The classifier still reads it as PINCH (Prepare and Review pinch to focus and
+  commit), so the OK sign is looked for only by DoneHold, in the count-in and a take, where a pinch means
+  nothing: held 1.5 s it stops a take or drill and cancels a count-in. ModeMachine.undo_hold is a V sign
+  (VICTORY), like back_hold; a V sign up at a mode change must come down first, so the one that left
+  Review doesn't undo on arrival. THUMB_UP and THUMB_DOWN stay pose classes (never read as a fist) with no
+  command. main: THUMB_HINT "A THUMBS-UP DOESN'T STOP A TAKE" (count-in: "... CANCEL") after
+  HINT_DWELL_S; hints OK SIGN: STOP / CANCEL, V SIGN: UNDO; help text and the recording alert.
+  samples/gestures: thumbs-up-stops-take is now thumbs-up-in-a-take-does-nothing (regenerated: no
+  entries); the others are unchanged.
+Tests: pytest (full) -> 620 passed. New: the OK sign reads as PINCH and is told apart from a pinch, an open
+  palm, a flat hand and a fist; undo by a V sign (not a thumbs-up or thumbs-down, once per hold, misreads
+  forgiven, not in a focus); the V that left Review doesn't undo until it comes down; a thumbs-up in a
+  take does nothing and gets its hint. The done tests now use the OK sign. Headless replay of every
+  sample and the 2026-09-26 session: no errors.
+```
+

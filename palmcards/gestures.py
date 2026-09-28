@@ -26,9 +26,10 @@ The cursor is relative: a hand box on the right of the frame maps onto the
 text box on the left; its top and bottom bands scroll.
 
 Around the grammar, ModeMachine runs the app's modes: a fist held 1 s starts
-a take after a 3-2-1 count-in; in Rehearse the only command is a thumbs-up
-held 1.5 s anywhere (stop, on to Review), which also cancels a count-in and,
-in Review, goes back to Prepare (DoneHold). Everything else a hand does in
+a take after a 3-2-1 count-in; in Rehearse the only command is the OK sign
+held 1.5 s anywhere (stop, on to Review), which also cancels a count-in
+(DoneHold); a V sign goes back to Prepare from Review and undoes an edit in
+Prepare (PoseHold). Everything else a hand does in
 Rehearse is only logged; the notes follow the voice, keys move them by hand.
 
 Run `python -m palmcards.gestures` for a debug view with landmarks, poses,
@@ -77,13 +78,15 @@ HAND_CONNECTIONS = [
 
 # Pose classes.
 ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", "PINCH", "FIST", "NONE"
-THUMB_UP = "THUMB_UP"  # "done": no finger out, the thumb up (never a fist, so it never starts a take)
-THUMB_DOWN = "THUMB_DOWN"  # undo in Prepare: no finger out, the thumb down (never a fist either)
-VICTORY = "VICTORY"  # a V sign, index and middle out and apart: back to Prepare from Review
+# A thumbs-up and a thumbs-down are no command (the thumbs-up was "done" until 2026-09-28: it was
+# sometimes read as a fist); they stay classes of their own so neither is ever read as a fist.
+THUMB_UP = "THUMB_UP"
+THUMB_DOWN = "THUMB_DOWN"
+VICTORY = "VICTORY"  # a V sign, index and middle out and apart: undo (Prepare), back to Prepare (Review)
 CARRIED = "CARRIED"  # not a pose: HandTrack.first_pose of a hand in view across a mode change
-# Every hold (a fist to start, a thumbs-up for done, a thumbs-down for undo, a V sign for back, an open palm to hear, play, stop,
+# Every hold (a fist to start, the OK sign for done, a V sign for undo or back, an open palm to hear, play, stop,
 # open the ring or retry) forgives the same misreadings in the middle and completes only on a
-# frame that reads its pose (or, with the hand lost, none). The thumbs-up reads the raw pose,
+# frame that reads its pose (or, with the hand lost, none). The OK sign reads each frame's features,
 # the others the stable pose: a misread under TIMING.stable_s never reaches the stable pose,
 # and a longer one lasts about as long there, so the grace is the same 0.3 s for all.
 HOLD_GRACE_S = REHEARSE.done_grace_s
@@ -313,6 +316,15 @@ def is_thumb_down(f: Features) -> bool:
     low, high = POSE.thumb_up_height
     return (not any(f.extended) and lo <= f.thumb_dist <= hi and f.thumb_up_deg >= 180.0 - POSE.thumb_up_deg
             and low <= -f.thumb_height <= high)
+
+
+def is_ok_sign(f: Features) -> bool:
+    """The OK sign ("done": stop a take, cancel the count-in): the thumb and index
+    tips touching in a circle (within POSE.pinch_off palms), middle, ring and
+    pinky up. The classifier reads it as PINCH (in Prepare and Review a pinch
+    focuses and commits); the OK sign is looked for only in the count-in and a
+    take, where a pinch means nothing."""
+    return f.pinch_dist < POSE.pinch_off and f.extended[1] and f.extended[2] and f.extended[3]
 
 
 def classify(f: Features, was_pinching: bool = False, was_open: bool = False) -> str:
@@ -1160,20 +1172,20 @@ class Grammar:
 # --- rehearse: the done hold and modes ------------------------------------------
 
 class DoneHold:
-    """A thumbs-up held REHEARSE.done_hold_s, by either hand, anywhere in the
+    """The OK sign held REHEARSE.done_hold_s, by either hand, anywhere in the
     frame: "done" (stop the take, cancel the count-in). It
     counts the raw pose frame by frame, forgiving short misreads
     (REHEARSE.done_grace_s), so a blurry frame doesn't restart it.
 
-    After a mode change it waits for the thumb to come down (no thumbs-up for
-    longer than done_grace_s) before a hold can begin: the thumbs-up that
-    stopped a take, held on, must not go on to leave Review too."""
+    After a mode change it waits for the sign to come down (none for longer
+    than done_grace_s) before a hold can begin: the one that cancelled a
+    count-in, held on, must not act again."""
 
     def __init__(self):
         self.reset()
 
     def reset(self, release: bool = False) -> None:
-        """`release`: a thumbs-up is up now; it doesn't count until it has come down."""
+        """`release`: the OK sign is up now; it doesn't count until it has come down."""
         self.progress = 0.0  # 0..1
         self._since: float | None = None
         self._last = -math.inf
@@ -1181,9 +1193,9 @@ class DoneHold:
 
     def update(self, tracks: dict[str, HandTrack], t: float, hold_s: float | None = None) -> bool:
         """True once, when the hold (`hold_s`, default REHEARSE.done_hold_s) completes:
-        on a frame that reads a thumbs-up, or one with no hand at all (tracking often
-        loses a thumbs-up for a moment), never on one that reads another pose."""
-        up = any(tr.raw == THUMB_UP for tr in tracks.values())
+        on a frame that reads the OK sign, or one with no hand at all (tracking can
+        lose a hand for a moment), never on one that reads another pose."""
+        up = any(tr.feat is not None and is_ok_sign(tr.feat) for tr in tracks.values())
         if self._waiting:
             if up:
                 self._last = t
@@ -1250,14 +1262,14 @@ class ModeMachine:
 
       prepare, review  --fist held 1 s-->  count_in  --3 s-->  rehearse
       review    --pinch + lift on a focused sentence-->  count_in (a drill)
-      rehearse  --thumbs-up held-->  review
-      count_in  --thumbs-up held-->  back where it came from
+      rehearse  --OK sign held-->  review
+      count_in  --OK sign held-->  back where it came from
       review    --V sign held-->  prepare
-      prepare   --thumbs-down held (an edit made)-->  undo
+      prepare   --V sign held (an edit made)-->  undo
 
     Prepare and Review run the grammar (Review without Prepare's operations,
     with the take dial instead). A drill rehearses one sentence: the same
-    count-in and recording. In count_in and rehearse a thumbs-up is the only
+    count-in and recording. In count_in and rehearse the OK sign is the only
     command; the hands are still tracked, so every pose is logged.
     """
 
@@ -1272,9 +1284,9 @@ class ModeMachine:
         self._back_to = "prepare"
         self._fist_since: float | None = None
         self._fist_last = -math.inf
-        # Set by the app each frame: an edit to undo (Prepare: a thumbs-down, held, undoes it), and failed analysis to retry (Review: an open palm held, no focus, retries it).
+        # Set by the app each frame: an edit to undo (Prepare: a V sign, held, undoes it), and failed analysis to retry (Review: an open palm held, no focus, retries it).
         self.undo_ready = False
-        self.undo_hold = PoseHold(THUMB_DOWN)  # Prepare: a thumbs-down, held, undoes the last edit
+        self.undo_hold = PoseHold(VICTORY)  # Prepare: a V sign, held, undoes the last edit
         self.back_hold = PoseHold(VICTORY)  # Review: a V sign, held, goes back to Prepare
         self.retry_ready = False
         self.retry_progress = 0.0
@@ -1303,7 +1315,7 @@ class ModeMachine:
         present = [self.grammar.tracks[k] for k in track_events]
         focused = self.grammar.state.mode == "focus"  # the hand is at work: no command poses
         if self.mode == "prepare":
-            # A thumbs-down, held as long as a fist to start a take, undoes the last edit.
+            # A V sign, held as long as a fist to start a take, undoes the last edit.
             if self.undo_hold.update(present, t, REHEARSE.start_hold_s, armed=self.undo_ready and not focused):
                 self.log(t, "undo")
                 events.append(GestureEvent("undo", t))
@@ -1312,7 +1324,7 @@ class ModeMachine:
             if self._retry_held(t):
                 events.append(GestureEvent("retry", t))
                 self.log(t, "retry")
-            # A V sign, held as long as a fist, goes back to Prepare (a thumbs-up does nothing here:
+            # A V sign, held as long as a fist, goes back to Prepare (a thumbs-up does nothing:
             # it is "stop" in a take, and one read as a fist could start a take).
             if self.back_hold.update(present, t, REHEARSE.start_hold_s, armed=not focused):
                 self.log(t, "done", mode=self.mode, pose=VICTORY)
@@ -1428,13 +1440,13 @@ class ModeMachine:
         self.grammar.take_dial = mode == "review"
         self.grammar.shape_levels = REVIEW_LEVEL_OF_SHAPE if mode == "review" else LEVEL_OF_SHAPE
         self.grammar.palm_levels = ("sentence", "paragraph") if mode == "review" else ("sentence",)
-        # What a hand in view was doing carries over: the thumbs-up that ended a mode must come
+        # What a hand in view was doing carries over: the OK sign that ended a mode must come
         # down before it counts again, and a hand that came into view before the change can't
         # start a take by closing into a fist (a fist raised anew still can).
         tracks = self.grammar.tracks.values()
         live = [tr for tr in tracks if t - tr.last_seen <= TIMING.browse_lost_s]
-        self.done.reset(release=any(tr.raw == THUMB_UP for tr in live))
-        self.undo_hold.reset(release=any(tr.stable == THUMB_DOWN for tr in live))
+        self.done.reset(release=any(tr.feat is not None and is_ok_sign(tr.feat) for tr in live))
+        self.undo_hold.reset(release=any(tr.stable == VICTORY for tr in live))
         self.back_hold.reset(release=any(tr.stable == VICTORY for tr in live))
         for track in tracks:
             track.first_pose = CARRIED

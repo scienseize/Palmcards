@@ -11,18 +11,19 @@ and `done_hold_s` can be changed in the preferences, as `start_hold_s` and `done
 
 **Grammar states** (`GestureState.mode`, Prepare and Review only): `idle` (no browse shape),
 `browse` (at a level), `focus` (at a level, with an `op`: `ring`, `tone`, `stretch` or `take`).
-Count-in and Rehearse don't run the grammar: only the thumbs-up hold, and every pose is logged.
+Count-in and Rehearse don't run the grammar: only the OK sign's hold, and every pose is logged.
 
 **Poses** (stable after `TIMING.stable_s` 0.15 s): `ONE`, `TWO`, `FLAT`, `OPEN`, `L`, `PINCH`,
-`FIST`, `THUMB_UP`, `NONE`. **Events**: `fold` (fingertips reach the thumb within 0.4 s), `commit`
+`FIST`, `THUMB_UP`, `THUMB_DOWN`, `VICTORY` (a V sign), `NONE`; the OK sign reads as `PINCH` and is looked for
+only in the count-in and a take (`gestures.is_ok_sign`). **Events**: `fold` (fingertips reach the thumb within 0.4 s), `commit`
 (pinch + lift: wrist up 15% of the frame height within 0.6 s, from a pinch started after the hand
 opened in the focus).
 
-**Every hold** (a fist to start, a thumbs-up for done, a thumbs-down for undo, a V sign for back, an open palm to hear, play, stop,
+**Every hold** (a fist to start, the OK sign for done, a V sign for undo or back, an open palm to hear, play, stop,
 open the ring or retry) forgives 0.3 s of other readings in the middle (`gestures.HOLD_GRACE_S`
-on the stable pose, `REHEARSE.done_grace_s` on the thumbs-up's raw pose). It completes only on a
+on the stable pose, `REHEARSE.done_grace_s` on the OK sign, read frame by frame). It completes only on a
 frame that reads its pose, or one where tracking has lost the hand, never on another pose. A pose
-that was up when the mode changed doesn't count until it has come down: a thumbs-up, or a hand
+that was up when the mode changed doesn't count until it has come down: the OK sign, a V sign, or a hand
 that closes into a fist (its first pose is `CARRIED`).
 
 ## 1. The matrix
@@ -33,8 +34,8 @@ that closes into a fist (its first pose is `CARRIED`).
 |---|---|---|---|---|
 | idle | `FIST` raised into view (its first pose) | held 1.0 s | count-in (a take) | `RAISE A FIST: NEW TAKE`; while held `NEW TAKE: HOLD` and a bar |
 | idle, browse | `FIST` formed from another pose, or by a hand up across a mode change | held 0.6 s | nothing; a hint (at most every 6 s) | `NEW TAKE: DROP THE HAND, RAISE A FIST` |
-| idle, browse, an edit made | `THUMB_DOWN` | held 1.0 s, once per hold | undo the last edit | idle: `THUMB DOWN: UNDO`; after an edit `… / THUMB DOWN: UNDO`; `UNDO: HOLD` + bar |
-| idle, browse | `THUMB_UP` | – | nothing | – |
+| idle, browse, an edit made | `VICTORY` (a V sign) | held 1.0 s, once per hold (one that left Review must come down first) | undo the last edit | idle: `V SIGN: UNDO`; after an edit `… / V SIGN: UNDO`; `UNDO: HOLD` + bar |
+| idle, browse | `THUMB_UP`, `THUMB_DOWN` | – | nothing | – |
 | idle, browse | `ONE` / `TWO` / `FLAT` | 0.15 s | browse by word / sentence / paragraph (a change of shape changes the level) | idle: `FINGER UP: BROWSE`; browse: the other levels' shapes |
 | browse | index tip moving in the hand box | shape of the level held | the highlight follows it | – (implicit) |
 | browse | index tip in the hand box's top or bottom 10% | – | the notes scroll (up to 6 rows/s) | a chevron in each band; while scrolling `SCROLLING UP` / `DOWN` / `MOVE TO THE MIDDLE: STOP` |
@@ -66,7 +67,8 @@ that closes into a fist (its first pose is `CARRIED`).
 
 | Grammar state | Gesture | Condition, hold | Action | Hint on screen |
 |---|---|---|---|---|
-| – | `THUMB_UP`, either hand, anywhere | held 1.5 s | cancel, back to Prepare or Review | `THUMB UP: CANCEL`; `CANCEL: HOLD` + bar |
+| – | the OK sign (thumb and index tips touching, middle, ring and pinky up), either hand, anywhere | held 1.5 s | cancel, back to Prepare or Review | `OK SIGN: CANCEL`; `CANCEL: HOLD` + bar |
+| – | `THUMB_UP` | held 0.6 s | nothing; a hint | `A THUMBS-UP DOESN'T CANCEL` |
 | – | `OPEN` | held 0.6 s | nothing; a hint | `A PALM DOESN'T CANCEL` |
 | – | anything else | – | logged only | – |
 | – | (time) | 3 s (5.5 s the first time: eye calibration) | recording starts (Rehearse) | `STARTING IN n`, digit + bar; calibration prompts |
@@ -75,7 +77,8 @@ that closes into a fist (its first pose is `CARRIED`).
 
 | Grammar state | Gesture | Condition, hold | Action | Hint on screen |
 |---|---|---|---|---|
-| – | `THUMB_UP`, either hand, anywhere | held 1.5 s | stop the take, go to Review | `THUMB UP: STOP`; `STOP: HOLD` + bar |
+| – | the OK sign, either hand, anywhere | held 1.5 s | stop the take, go to Review | `OK SIGN: STOP`; `STOP: HOLD` + bar |
+| – | `THUMB_UP` | held 0.6 s | nothing; a hint | `A THUMBS-UP DOESN'T STOP A TAKE` |
 | – | `OPEN` | held 0.6 s | nothing; a hint | `A PALM DOESN'T STOP A TAKE` |
 | – | anything else | – | logged as data (movement, face touches) | – |
 | – | voice | 3 words of the next section | the notes follow; the section moves | the orange sentence moves |
@@ -88,7 +91,7 @@ that closes into a fist (its first pose is `CARRIED`).
 | idle, browse | `FIST` formed from another pose, or by a hand up across a mode change | held 0.6 s | nothing; a hint | `NEW TAKE: DROP THE HAND, RAISE A FIST` |
 | idle, browse | `VICTORY` (a V sign), either hand, anywhere | held 1.0 s | back to Prepare | `V SIGN: PREPARE`; `BACK TO PREPARE: HOLD` + bar |
 | focus | `VICTORY` | – | nothing (drop the hand first) | – |
-| any | `THUMB_UP` | – | nothing (it is "stop" in a take; one read as a fist could start a take) | – |
+| any | `THUMB_UP` | – | nothing (one read as a fist could start a take) | – |
 | idle, browse, analysis failed | `OPEN` | held 1.0 s | retry the analysis | alert `… ANALYSIS FAILED … / OPEN PALM, HELD, OR R: RETRY`; `RETRY ANALYSIS: HOLD` + bar |
 | idle, browse | `ONE` or `TWO` / `FLAT` | 0.15 s | browse sentences / paragraphs | idle: `FINGER UP: BROWSE` |
 | browse | index tip in the hand box's top or bottom 10% | – | the notes scroll | chevrons; `SCROLLING UP` / `DOWN` |
@@ -111,12 +114,12 @@ that closes into a fist (its first pose is `CARRIED`).
 | Key | Action | Gesture that does the same |
 |---|---|---|
 | `t` | start a take (Prepare, Review) | fist held |
-| `x` | stop any playback; else stop the take or cancel the count-in | new palm; thumbs-up |
+| `x` | stop any playback; else stop the take or cancel the count-in | new palm; the OK sign |
 | `a` | play or stop (Prepare: hear it; Review: the focused unit) | palm held; new palm |
 | `p` | Review → Prepare | V sign held |
-| `n` / `b` | next / previous section (Rehearse) | none: in a take only the thumbs-up is a command (the voice moves on) |
+| `n` / `b` | next / previous section (Rehearse) | none: in a take only the OK sign is a command (the voice moves on) |
 | `space` / `j`, `k` | next / previous sentence, or scroll a panel | none in Rehearse (as above); browsing elsewhere |
-| `u` | undo the last edit (Prepare) | thumbs-down held |
+| `u` | undo the last edit (Prepare) | V sign held |
 | `r` | retry failed analysis or a failed preview | open palm held (Review); pinch + lift (a preview) |
 | `e` | calibrate the eyes again at the next count-in | none (a setting) |
 | `m` | flip a replayed video | none (a setting) |
@@ -129,8 +132,8 @@ that closes into a fist (its first pose is `CARRIED`).
 | Action | Gesture | Hold |
 |---|---|---|
 | start a take | fist (first pose) | 1.0 s |
-| back to Prepare (Review), undo (Prepare), retry analysis (Review) | V sign; thumbs-down; open palm | 1.0 s (as long as a fist: nobody is speaking) |
-| stop a take / cancel the count-in | thumbs-up | 1.5 s (clear of gestures made while speaking) |
+| back to Prepare (Review), undo (Prepare), retry analysis (Review) | V sign; V sign; open palm | 1.0 s (as long as a fist: nobody is speaking) |
+| stop a take / cancel the count-in | the OK sign | 1.5 s (clear of gestures made while speaking) |
 | hear it / play / open the options ring | open palm on a focus | 0.6 s |
 | stop playback | new open palm | 0.3 s (stopping is quick) |
 | back out of a focus | drop the hand | 1.0 s |
@@ -157,6 +160,11 @@ started a take with a fist and stayed in view kept `first_pose == FIST`, so fold
 into a fist in Review started a new count-in.
 
 ## 3. Findings and what was done
+
+*Since the findings below (2026-09-28, the user's choices): the OK sign stops a take and cancels a
+count-in in place of the thumbs-up (sometimes read as a fist), and the V sign undoes in Prepare as it
+goes back to Prepare in Review; a thumbs-up and a thumbs-down are no commands. The matrix above is
+current; the notes below keep the path.*
 
 Severity when found: **S** should, **N** nice. All fixed on 2026-09-28 unless marked *kept*, with
 the reason.

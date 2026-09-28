@@ -49,7 +49,7 @@ def test_hints_follow_what_the_state_machine_does():
     scrolling = ViewState(mode="browse", level="word", scrolling=1)
     assert ov.label_lines(scrolling)[1] == "SCROLLING DOWN  /  MOVE TO THE MIDDLE: STOP"
     # An edit to undo: the idle hint offers the thumbs-up; while held, a bar.
-    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("RAISE A FIST: NEW TAKE · THUMB DOWN: UNDO")
+    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("RAISE A FIST: NEW TAKE · V SIGN: UNDO")
     assert ov.label_lines(ViewState(undo_progress=0.5))[1] == "UNDO: HOLD"
     assert ov.label_lines(ViewState(app="review", hold_progress=0.5))[1] == "BACK TO PREPARE: HOLD"
     assert ov.label_lines(ViewState(app="review", retry_progress=0.5))[1] == "RETRY ANALYSIS: HOLD"
@@ -253,13 +253,13 @@ def test_label_lines_for_takes():
     assert ov.label_progress(ViewState(start_progress=0.5)) == 0.5  # drawn as a bar after the text
     assert ov.label_progress(ViewState(status="TAKE 1: SAVING…")) is None
     # In a take the only command is a thumbs-up: the hint line says so.
-    assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2  /  THUMB UP: CANCEL")
+    assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2  /  OK SIGN: CANCEL")
     assert ov.label_lines(ViewState(app="count_in", hold_progress=0.3))[1] == "CANCEL: HOLD"
     rehearse = ViewState(app="rehearse", status="SECTION 1/2: ONE")
-    assert ov.label_lines(rehearse) == ("REHEARSE", "SECTION 1/2: ONE  /  THUMB UP: STOP")
-    assert [text for line, text in ov.label_rows(rehearse) if line == 2] == ["THUMB UP: STOP"]
+    assert ov.label_lines(rehearse) == ("REHEARSE", "SECTION 1/2: ONE  /  OK SIGN: STOP")
+    assert [text for line, text in ov.label_rows(rehearse) if line == 2] == ["OK SIGN: STOP"]
     rehearse.note = "LAST SECTION"
-    assert ov.label_lines(rehearse)[1] == "LAST SECTION  /  THUMB UP: STOP"
+    assert ov.label_lines(rehearse)[1] == "LAST SECTION  /  OK SIGN: STOP"
     rehearse.note, rehearse.hold_progress = "", 0.5
     assert ov.label_lines(rehearse)[1] == "STOP: HOLD" and ov.label_progress(rehearse) == 0.5
     review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None))
@@ -381,7 +381,7 @@ def test_a_drill_shows_only_its_sentence():
     ov = TextOverlay(parse_text(SECTIONS, "md").sentences, (1280, 720))
     view = ViewState(app="rehearse", section=0, drill=1, status="SENTENCE 2")
     assert ov._panel_unit(view) == (1,)
-    assert ov.label_lines(view) == ("DRILL", "SENTENCE 2  /  THUMB UP: STOP")
+    assert ov.label_lines(view) == ("DRILL", "SENTENCE 2  /  OK SIGN: STOP")
 
 
 # --- everything reachable (review finding F2) -------------------------------------
@@ -458,9 +458,9 @@ def test_the_alert_line_and_keys_help_are_drawn():
 def test_the_calibration_steps_in_the_count_in():
     ov = overlay()
     view = ViewState(app="count_in", count_in=5, calibration="camera", current=0)
-    assert ov.label_lines(view) == ("REHEARSE", "LOOK INTO THE CAMERA LENS  /  THUMB UP: CANCEL")
+    assert ov.label_lines(view) == ("REHEARSE", "LOOK INTO THE CAMERA LENS  /  OK SIGN: CANCEL")
     view = ViewState(app="count_in", count_in=2, calibration="notes", current=0)
-    assert ov.label_lines(view)[1] == "READ THE ORANGE SENTENCE\u00a0·\u00a02  /  THUMB UP: CANCEL"
+    assert ov.label_lines(view)[1] == "READ THE ORANGE SENTENCE\u00a0·\u00a02  /  OK SIGN: CANCEL"
     # No big count digit while calibrating: it would pull the eyes away.
     calibrating, counting = (np.full((720, 1280, 3), 128, np.uint8) for _ in range(2))
     ov.draw(calibrating, view)
