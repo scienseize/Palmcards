@@ -244,7 +244,8 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     gs = grammar.state
     view.mode, view.level, view.drop_progress = gs.mode, gs.level, gs.drop_progress
     view.shape, view.palm_spent = gs.shape, gs.palm_spent and gs.primary is not None and gs.primary.stable == OPEN
-    view.scrolling = (gs.scroll_rate > 0) - (gs.scroll_rate < 0) if gs.mode == "browse" else 0
+    rate = float(gs.scroll_rate)  # a numpy float from the cursor's filter: its comparisons are numpy bools
+    view.scrolling = (1 if rate > 0 else -1 if rate < 0 else 0) if gs.mode == "browse" else 0
     if gs.mode == "browse" and gs.cursor is not None:
         word_level = gs.level == "word"
         hit = overlay.hit_test(*overlay.cursor_to_text(*gs.cursor), overlay.shown_scroll(view), snap=word_level)

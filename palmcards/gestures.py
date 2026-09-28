@@ -463,7 +463,7 @@ class RelativeCursor:
         """Rows per second: negative in the top band, positive in the bottom."""
         if self.uv is None:
             return 0.0
-        v, band = self.uv[1], CURSOR.edge_band
+        v, band = float(self.uv[1]), CURSOR.edge_band  # a plain float out, whatever the filter hands in
         if v < band:
             return -CURSOR.edge_speed_rows_s * (band - v) / band
         if v > 1 - band:

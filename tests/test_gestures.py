@@ -1078,3 +1078,21 @@ def test_review_an_l_starts_pointing_at_the_takes():
     _, t = run(m, hold(l_hand, 0.3) + hold(l_hand, 0.4, origin=(960, 600 + 80)), t)
     assert m.state.op == "take" and m.state.pointing and m.state.point[1] > 0.05
     assert m.state.tone == 0.0  # not Prepare's tone dial
+
+
+def test_browsing_at_the_hand_boxs_edge_tells_the_view_it_scrolls():
+    # Regression: the live cursor is numpy, so gs.scroll_rate was a numpy float and
+    # main.sync_view's sign arithmetic on its comparisons raised a TypeError.
+    import main
+    from palmcards.notes import parse_text
+    from palmcards.render import TextOverlay, ViewState
+
+    g = Grammar((W, H))
+    x0, y0, x1, y1 = g.cursor.box
+    overlay = TextOverlay(parse_text("One. Two. Three.").sentences, (W, H))
+    for y, sign in ((y1 - 0.02 * (y1 - y0) + 200, 1), (y0 + 0.02 * (y1 - y0) + 200, -1), ((y0 + y1) / 2 + 200, 0)):
+        g = Grammar((W, H))
+        run(g, hold(one, 0.5, origin=((x0 + x1) / 2 + 30, y)))  # the index tip sits 200 px above the origin
+        view = ViewState()
+        main.sync_view(g, view, overlay)
+        assert view.scrolling == sign and isinstance(view.scrolling, int), (y, g.state.scroll_rate)
