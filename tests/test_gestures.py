@@ -568,16 +568,46 @@ def test_a_thumbs_up_in_a_review_focus_does_nothing_and_leaving_review_takes_a_s
     assert kinds(events) == ["to_prepare"]
 
 
-def test_a_thumbs_up_held_in_prepare_undoes_an_edit():
+def crossed_fingers(apart=90, angle=40):
+    """Both index fingers up, leaning in so they cross into an X."""
+    return [one(origin=(960 - apart, 600), rotate=angle, label="Right"),
+            one(origin=(960 + apart, 600), rotate=-angle, label="Left")]
+
+
+def test_crossing_two_index_fingers_is_an_x():
+    from palmcards.gestures import HandTrack, crossed
+
+    def tracks(hands):
+        out = []
+        for h in hands:
+            tr = HandTrack()
+            tr.update(h, 0.0, H)
+            out.append(tr)
+        return out
+
+    assert crossed(*tracks(crossed_fingers()))
+    assert not crossed(*tracks(crossed_fingers(apart=200)))  # leaning in, not touching
+    assert not crossed(*tracks(crossed_fingers(angle=0)))  # side by side
+    assert not crossed(*tracks([two(origin=(870, 600), rotate=40), two(origin=(1050, 600), rotate=-40)]))
+
+
+def test_crossed_fingers_held_in_prepare_undo_an_edit_and_a_thumbs_up_does_not():
     m = ModeMachine((W, H))
-    events, t = run(m, hold(thumbs_up, 2.0))
-    assert events == []  # nothing to undo: a thumbs-up does nothing
+    events, t = run(m, [crossed_fingers()] * round(2.0 / DT))
+    assert events == []  # nothing to undo
     m.undo_ready = True
-    events, t = run(m, [None] * 12 + hold(thumbs_up, REHEARSE.start_hold_s + 0.1), t)
+    events, t = run(m, [None] * 12 + hold(thumbs_up, 2.0), t)  # a thumbs-up (or one read as a fist) doesn't undo
+    assert events == [] and m.mode == "prepare"
+    events, t = run(m, [None] * 12 + [crossed_fingers()] * round((REHEARSE.start_hold_s + 0.2) / DT), t)
     assert kinds(events) == ["undo"] and m.mode == "prepare"
-    _, t = run(m, [None] * 12, t)
-    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3), t)  # a focus: the hand is at work
-    events, _ = run(m, hold(thumbs_up, 2.0), t)
+    events, t = run(m, [crossed_fingers()] * round(2.0 / DT), t)  # held on: one undo per crossing
+    assert events == [] and m.undo_progress == 0.0
+    # Crossed fingers that come apart before the second is up don't undo.
+    events, t = run(m, [None] * 12 + [crossed_fingers()] * 18 + [crossed_fingers(apart=200)] * 30, t)
+    assert "undo" not in kinds(events)
+    _, t = run(m, [None] * 12 + hold(one, 0.3) + hold(pinch, 0.3), t)  # a focus: the hands are at work
+    assert m.state.mode == "focus"
+    events, _ = run(m, [crossed_fingers()] * round(2.0 / DT), t)
     assert "undo" not in kinds(events)
 
 

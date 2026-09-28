@@ -79,7 +79,7 @@ HAND_CONNECTIONS = [
 ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", "PINCH", "FIST", "NONE"
 THUMB_UP = "THUMB_UP"  # "done": no finger out, the thumb up (never a fist, so it never starts a take)
 CARRIED = "CARRIED"  # not a pose: HandTrack.first_pose of a hand in view across a mode change
-# Every hold (a fist to start, a thumbs-up for done or undo, an open palm to hear, play, stop,
+# Every hold (a fist to start, a thumbs-up for done, crossed fingers for undo, an open palm to hear, play, stop,
 # open the ring or retry) forgives the same misreadings in the middle and completes only on a
 # frame that reads its pose (or, with the hand lost, none). The thumbs-up reads the raw pose,
 # the others the stable pose: a misread under TIMING.stable_s never reaches the stable pose,
@@ -281,6 +281,26 @@ def features(hand: Hand) -> Features:
         thumb_up_deg=math.degrees(math.atan2(abs(float(thumb_dir[0])), float(-thumb_dir[1]))),
         thumb_height=float(p[INDEX_MCP][1] - p[THUMB_TIP][1]) / palm,
     )
+
+
+def _segments_cross(p1, p2, p3, p4) -> bool:
+    def side(a, b, c) -> float:
+        return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+    return side(p1, p2, p3) * side(p1, p2, p4) < 0 and side(p3, p4, p1) * side(p3, p4, p2) < 0
+
+
+def crossed(a: HandTrack, b: HandTrack) -> bool:
+    """Two index fingers crossed into an X (Prepare's undo): both hands pointing
+    (the index out, the other three curled; the thumb either way), their
+    knuckle-to-tip segments crossing at OPS.cross_min_deg or more."""
+    for tr in (a, b):
+        if tr.hand is None or tr.feat is None or not tr.feat.extended[0] or any(tr.feat.extended[1:]):
+            return False
+    (p1, p2), (p3, p4) = ((tr.hand.points[INDEX_MCP], tr.hand.points[INDEX_TIP]) for tr in (a, b))
+    if not _segments_cross(p1, p2, p3, p4):
+        return False
+    angle = _angle_deg(np.asarray(p2) - np.asarray(p1), np.asarray(p4) - np.asarray(p3))
+    return min(angle, 180.0 - angle) >= OPS.cross_min_deg
 
 
 def is_pinch(f: Features, was_pinching: bool) -> bool:
@@ -1218,9 +1238,13 @@ class ModeMachine:
         self._back_to = "prepare"
         self._fist_since: float | None = None
         self._fist_last = -math.inf
-        # Set by the app each frame: an edit to undo (Prepare: a thumbs-up held undoes it), and
-        # failed analysis to retry (Review: an open palm held, no focus, retries it).
+        # Set by the app each frame: an edit to undo (Prepare: two index fingers crossed, held,
+        # undo it), and failed analysis to retry (Review: an open palm held, no focus, retries it).
         self.undo_ready = False
+        self.undo_progress = 0.0
+        self._x_since: float | None = None
+        self._x_last = -math.inf
+        self._x_spent = False  # the X that undid, held on: it must come apart before it undoes again
         self.retry_ready = False
         self.retry_progress = 0.0
         self._retry_since: float | None = None
@@ -1246,13 +1270,8 @@ class ModeMachine:
                 self._enter("count_in", t)
                 return events
         if self.mode == "prepare":
-            # A thumbs-up is "back" everywhere: in Prepare, with an edit made, it undoes the edit
-            # (held as long as a fist to start a take). Not in a focus, where the hand is at work.
-            present = {k: self.grammar.tracks[k] for k in track_events}
-            if not self.undo_ready or self.grammar.state.mode == "focus":
-                self.done.reset(release=any(tr.raw == THUMB_UP for tr in present.values()))
-            elif self.done.update(present, t, REHEARSE.start_hold_s):
-                self.log(t, "done", mode=self.mode)
+            if self._undo_held(t, [self.grammar.tracks[k] for k in track_events]):
+                self.log(t, "undo")
                 events.append(GestureEvent("undo", t))
             return events
 
@@ -1339,6 +1358,34 @@ class ModeMachine:
             self._fist_since = t
         self.start_progress = min(1.0, (t - self._fist_since) / REHEARSE.start_hold_s)
         return self.start_progress >= 1.0
+
+    def _undo_held(self, t: float, present: list[HandTrack]) -> bool:
+        """Prepare, an edit made (undo_ready), no focus: the two index fingers
+        crossed into an X (`crossed`), held as long as a fist to start a take.
+        Misreads forgiven like every hold (HOLD_GRACE_S: crossed fingers hide
+        each other); it completes only on a frame that reads the X. Once per
+        X: held on, it doesn't undo again (one undo per crossing)."""
+        g = self.grammar.state
+        x = self.undo_ready and g.mode != "focus" and len(present) >= 2 \
+            and any(crossed(a, b) for i, a in enumerate(present) for b in present[i + 1:])
+        if self._x_spent:
+            if x:
+                self._x_last = t
+            elif t - self._x_last > HOLD_GRACE_S:
+                self._x_spent = False
+            self.undo_progress = 0.0
+            return False
+        if not x:
+            if self._x_since is None or t - self._x_last > HOLD_GRACE_S or not self.undo_ready or g.mode == "focus":
+                self._x_since, self.undo_progress = None, 0.0
+            return False
+        self._x_last = t
+        self._x_since = t if self._x_since is None else self._x_since
+        self.undo_progress = min(1.0, (t - self._x_since) / REHEARSE.start_hold_s)
+        if self.undo_progress >= 1.0:
+            self._x_since, self.undo_progress, self._x_spent = None, 0.0, True
+            return True
+        return False
 
     def _retry_held(self, t: float) -> bool:
         """Review, failed analysis (retry_ready), no focus: an open palm held as long

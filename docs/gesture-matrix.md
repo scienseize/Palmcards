@@ -18,7 +18,7 @@ Count-in and Rehearse don't run the grammar: only the thumbs-up hold, and every 
 (pinch + lift: wrist up 15% of the frame height within 0.6 s, from a pinch started after the hand
 opened in the focus).
 
-**Every hold** (a fist to start, a thumbs-up for done or undo, an open palm to hear, play, stop,
+**Every hold** (a fist to start, a thumbs-up for done, crossed fingers for undo, an open palm to hear, play, stop,
 open the ring or retry) forgives 0.3 s of other readings in the middle (`gestures.HOLD_GRACE_S`
 on the stable pose, `REHEARSE.done_grace_s` on the thumbs-up's raw pose). It completes only on a
 frame that reads its pose, or one where tracking has lost the hand, never on another pose. A pose
@@ -33,8 +33,8 @@ that closes into a fist (its first pose is `CARRIED`).
 |---|---|---|---|---|
 | idle | `FIST` raised into view (its first pose) | held 1.0 s | count-in (a take) | `RAISE A FIST: NEW TAKE`; while held `NEW TAKE: HOLD` and a bar |
 | idle, browse | `FIST` formed from another pose, or by a hand up across a mode change | held 0.6 s | nothing; a hint (at most every 6 s) | `NEW TAKE: DROP THE HAND, RAISE A FIST` |
-| idle, browse, an edit made | `THUMB_UP` | held 1.0 s | undo the last edit | idle: `THUMB UP: UNDO`; after an edit `… / THUMB UP: UNDO`; `UNDO: HOLD` + bar |
-| idle, browse, no edit | `THUMB_UP` | – | nothing | – |
+| idle, browse, an edit made | the two index fingers crossed into an X (both hands pointing, crossing at 35° or more) | held 1.0 s, once per crossing | undo the last edit | idle: `CROSS TWO FINGERS: UNDO`; after an edit `… / CROSS TWO FINGERS: UNDO`; `UNDO: HOLD` + bar |
+| idle, browse | `THUMB_UP` | – | nothing | – |
 | idle, browse | `ONE` / `TWO` / `FLAT` | 0.15 s | browse by word / sentence / paragraph (a change of shape changes the level) | idle: `FINGER UP: BROWSE`; browse: the other levels' shapes |
 | browse | index tip moving in the hand box | shape of the level held | the highlight follows it | – (implicit) |
 | browse | index tip in the hand box's top or bottom 10% | – | the notes scroll (up to 6 rows/s) | a chevron in each band; while scrolling `SCROLLING UP` / `DOWN` / `MOVE TO THE MIDDLE: STOP` |
@@ -115,7 +115,7 @@ that closes into a fist (its first pose is `CARRIED`).
 | `p` | Review → Prepare | thumbs-up held |
 | `n` / `b` | next / previous section (Rehearse) | none: in a take only the thumbs-up is a command (the voice moves on) |
 | `space` / `j`, `k` | next / previous sentence, or scroll a panel | none in Rehearse (as above); browsing elsewhere |
-| `u` | undo the last edit (Prepare) | thumbs-up held |
+| `u` | undo the last edit (Prepare) | two index fingers crossed, held |
 | `r` | retry failed analysis or a failed preview | open palm held (Review); pinch + lift (a preview) |
 | `e` | calibrate the eyes again at the next count-in | none (a setting) |
 | `m` | flip a replayed video | none (a setting) |
@@ -128,7 +128,7 @@ that closes into a fist (its first pose is `CARRIED`).
 | Action | Gesture | Hold |
 |---|---|---|
 | start a take | fist (first pose) | 1.0 s |
-| back to Prepare (Review), undo (Prepare), retry analysis (Review) | thumbs-up; thumbs-up; open palm | 1.0 s (as long as a fist: nobody is speaking) |
+| back to Prepare (Review), undo (Prepare), retry analysis (Review) | thumbs-up; crossed fingers; open palm | 1.0 s (as long as a fist: nobody is speaking) |
 | stop a take / cancel the count-in | thumbs-up | 1.5 s (clear of gestures made while speaking) |
 | hear it / play / open the options ring | open palm on a focus | 0.6 s |
 | stop playback | new open palm | 0.3 s (stopping is quick) |
@@ -183,10 +183,11 @@ the reason.
 - **S, kept. A wrong section jump during a take: `n` / `b` only.** Since 2026-09-27, gestures during
   a take are never commands except the thumbs-up (the user's rule). The voice follow moves on by
   itself when the next section's opening is said.
-- **S, fixed. Undo: `u` only.** In Prepare, with an edit made and nothing focused, a thumbs-up held
-  1.0 s undoes it (an `undo` event). The thumbs-up is "back" everywhere: cancel, stop, back to
-  Prepare, and here, take back the last change. The note after an edit and the idle hint say
-  `THUMB UP: UNDO`.
+- **S, fixed. Undo: `u` only.** In Prepare, with an edit made and nothing focused, the two index
+  fingers crossed into an X and held 1.0 s undo it (`gestures.crossed`, an `undo` event; once per
+  crossing). It was a thumbs-up at first; the user asked for the X because a thumbs-up is sometimes
+  read as a fist (which, raised as one, starts a take). An X takes two hands and is no pose a single
+  hand makes. The note after an edit and the idle hint say `CROSS TWO FINGERS: UNDO`.
 - **N, kept. A tutorial step the camera can't see done: `Enter` only.** If the camera can't see the
   hand, no gesture can skip it either.
 - **N, kept. `e` (recalibrate) and `m` (flip a replay).** These are settings, not ways out.

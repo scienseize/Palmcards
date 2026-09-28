@@ -119,7 +119,7 @@ from palmcards.preview import Previews
 from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
     meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
-    FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
+    UNDO_HINT, FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_replay_hint,
     draw_stats,
 )
@@ -592,7 +592,7 @@ class Takes:
             return True, "ORIGINAL KEPT: NO CHANGE"
         error = self._save_edit(replace_text(self.notes, list(unit), op.displayed_candidate),
                                 f"{op.kind} preview committed", op=op.kind, sentences=list(unit))
-        return (False, error) if error else (True, "EDIT SAVED  /  THUMB UP: UNDO")
+        return (False, error) if error else (True, f"EDIT SAVED  /  {UNDO_HINT}")
 
     def ask_rewrite(self, kind: str, unit: tuple[int, ...], amount: float) -> str:
         what = "TONE" if kind == "tone" else "LENGTH"
@@ -678,13 +678,13 @@ class Takes:
         old = self.notes.sentences[sentence].words[word].text
         note = self._save_edit(replace_word(self.notes, sentence, word, text), f'"{old}" -> "{text}"',
                                op="alternative", sentence=sentence, word=word, text=text)
-        return note or f'"{old.upper()}" → "{text.upper()}"  /  THUMB UP: UNDO'
+        return note or f'"{old.upper()}" → "{text.upper()}"  /  {UNDO_HINT}'
 
     def use_proposal(self, unit: tuple[int, ...]) -> str:
         kind, value, _ = self.proposals.pop(unit)
         note = self._save_edit(replace_text(self.notes, list(unit), value), f"{kind} proposal used", op=kind,
                                sentences=list(unit))
-        return note or f"{kind.upper()} PROPOSAL USED  /  THUMB UP: UNDO"
+        return note or f"{kind.upper()} PROPOSAL USED  /  {UNDO_HINT}"
 
     def can_undo(self) -> bool:
         """An edit to undo: the current notes revision has a parent."""
@@ -1475,7 +1475,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "drill" and ev.sentence is None:
                 ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
-            if ev.kind == "undo":  # a thumbs-up held in Prepare after an edit
+            if ev.kind == "undo":  # two index fingers crossed, held, in Prepare after an edit
                 view.note, until = takes.undo(), start + NOTE_S
             elif ev.kind == "retry":  # an open palm held in Review with failed analysis
                 view.note, until = takes.retry(), start + NOTE_S
@@ -1499,6 +1499,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if takes.vision is not None and modes.mode == "count_in" else None
         view.hold_progress = modes.done.progress
         view.retry_progress, view.undo_ready = modes.retry_progress, modes.mode == "prepare" and takes.can_undo()
+        view.undo_progress = modes.undo_progress if modes.mode == "prepare" else 0.0
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
         if modes.mode in ("prepare", "review") and result is not None:
             sync_view(grammar, view, overlay)

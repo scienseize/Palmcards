@@ -155,6 +155,10 @@ class Ops:
     # While it plays, a new open palm (the hand has left the palm or the frame
     # since playback started) held this long stops it.
     stop_hold_s: float = 0.3
+    # Undo in Prepare: the two index fingers crossed into an X (both hands pointing, the
+    # knuckle-to-tip segments crossing at this angle or more), held REHEARSE.start_hold_s.
+    # Two hands, and no pose a single hand makes: a thumbs-up read as a fist can't undo.
+    cross_min_deg: float = 35.0
 
 
 @dataclass(frozen=True)

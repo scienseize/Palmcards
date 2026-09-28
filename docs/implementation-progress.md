@@ -2204,3 +2204,20 @@ Tests: pytest (full) -> 615 passed. New label, hand-box, hold, low-hand, ring, u
   hold the palm (RING_PALM_S).
 ```
 
+```text
+Date: 2026-09-28
+Phase / issue IDs: undo by crossed index fingers instead of a thumbs-up (user: "turning undo into
+  making an X sign with two pointer fingers. Sometimes thumb up gets recognized as a fist")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: palmcards/gestures.py: crossed(a, b) — both hands pointing (index out, the other three
+  curled, the thumb either way), their index knuckle-to-tip segments crossing at OPS.cross_min_deg
+  (35) or more. ModeMachine._undo_held: in Prepare with an edit made (undo_ready) and no focus, the X
+  held REHEARSE.start_hold_s (1.0 s, misreads forgiven like every hold, completing only on an X
+  frame) is an `undo` event, once per crossing (held on, it must come apart first). A thumbs-up does
+  nothing in Prepare again. render: UNDO_HINT "CROSS TWO FINGERS: UNDO", UNDO: HOLD from
+  ViewState.undo_progress; main: the notes after an edit use it.
+Tests: pytest (full) -> 616 passed. New: crossed() on crossed, apart, parallel and two-finger hands;
+  the X undoes once per crossing, a thumbs-up doesn't, fingers that come apart early don't, a focus
+  doesn't.
+```
+
