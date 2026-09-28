@@ -6,7 +6,8 @@ sessions (which are evidence and never change with your settings).
 
   reach          the hand box's size (0.6 .. 1.4): smaller, less movement to cross the notes
   start_hold_s   how long a fist is held to start a take
-  stop_hold_s    how long a thumbs-up is held for "done" (stop, cancel, back to Prepare)
+  done_hold_s    how long a thumbs-up is held to stop a take or cancel a count-in
+                 (was stop_hold_s: an old prefs.json with it still works)
   high_contrast  brighter dimmed text and a darker backing (key c in the app)
   show_hand_box  the hand box drawn faintly while a hand is up
   reduced_motion nothing moves or scales, things fade (true / false; auto: as macOS's
@@ -42,13 +43,13 @@ class Prefs:
     replay_mirrored: bool = False  # Review replays a take's video mirrored (key m); else as others see you
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
-    stop_hold_s: float = REHEARSE.done_hold_s
+    done_hold_s: float = REHEARSE.done_hold_s
 
     def checked(self) -> "Prefs":
         """Values clamped to what the app can use."""
         return replace(self, reach=min(max(float(self.reach), 0.6), 1.4),
                        start_hold_s=min(max(float(self.start_hold_s), 0.3), 3.0),
-                       stop_hold_s=min(max(float(self.stop_hold_s), 0.5), 4.0))
+                       done_hold_s=min(max(float(self.done_hold_s), 0.5), 4.0))
 
 
 def path() -> Path:
@@ -65,6 +66,8 @@ def load(where: Path | None = None) -> Prefs:
         print(f"warning: ignoring {where}: {exc}", file=sys.stderr)
         return Prefs()
     known = {f.name for f in fields(Prefs)}
+    if "stop_hold_s" in data and "done_hold_s" not in data:  # its old name (it clashed with OPS.stop_hold_s)
+        data["done_hold_s"] = data["stop_hold_s"]
     return Prefs(**{k: v for k, v in data.items() if k in known}).checked()
 
 
@@ -90,7 +93,7 @@ def apply(prefs: Prefs) -> None:
     prefs = prefs.checked()
     # Only the fields preferences own; the rest of each setting stays as it is.
     gestures.CURSOR = replace(gestures.CURSOR, hand_box=hand_box(prefs.reach))
-    gestures.REHEARSE = replace(gestures.REHEARSE, start_hold_s=prefs.start_hold_s, done_hold_s=prefs.stop_hold_s)
+    gestures.REHEARSE = replace(gestures.REHEARSE, start_hold_s=prefs.start_hold_s, done_hold_s=prefs.done_hold_s)
     render.set_contrast(prefs.high_contrast)
     render.set_reduced_motion(system_reduce_motion() if prefs.reduced_motion is None else prefs.reduced_motion)
 

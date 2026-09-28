@@ -27,6 +27,56 @@ def span_center(ov, ri, word, scroll=0.0):
     return x, y
 
 
+def test_hints_follow_what_the_state_machine_does():
+    # The gesture matrix's findings (docs/gesture-matrix.md): each hint names what really acts now.
+    from types import SimpleNamespace
+
+    ov = overlay()
+    # Review, one finger browsing sentences: a pinch closes it, not a fold.
+    one = ViewState(app="review", mode="browse", level="sentence", shape="ONE")
+    assert ov.label_lines(one)[1].endswith("PINCH: DETAILS · THUMB UP: PREPARE")
+    assert ov.label_lines(replace(one, shape="TWO"))[1].endswith("FOLD: DETAILS · THUMB UP: PREPARE")
+    # Playing: the palm that started it must leave first; browsing, moving on stops it.
+    playing = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), playing=True,
+                        palm_spent=True, status="TAKE 1")
+    assert "LOWER HAND, THEN" in ov.label_lines(playing)[1]
+    assert ov.label_lines(replace(playing, palm_spent=False))[1] == "TAKE 1  /  OPEN PALM: STOP"
+    hear = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None), playing=True, palm_spent=True)
+    assert ov.label_lines(hear)[1] == "LOWER HAND, THEN OPEN PALM: STOP"
+    browsing = ViewState(app="review", mode="browse", level="sentence", playing=True)
+    assert "MOVE TO ANOTHER SENTENCE · A: STOP" in ov.label_lines(browsing)[1]
+    # The hand box's edges scroll: the label says so.
+    scrolling = ViewState(mode="browse", level="word", scrolling=1)
+    assert ov.label_lines(scrolling)[1] == "SCROLLING DOWN  /  MOVE TO THE MIDDLE: STOP"
+    # An edit to undo: the idle hint offers the thumbs-up; while held, a bar.
+    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("RAISE A FIST: NEW TAKE · THUMB UP: UNDO")
+    assert ov.label_lines(ViewState(hold_progress=0.5))[1] == "UNDO: HOLD"
+    assert ov.label_lines(ViewState(app="review", hold_progress=0.5))[1] == "BACK TO PREPARE: HOLD"
+    assert ov.label_lines(ViewState(app="review", retry_progress=0.5))[1] == "RETRY ANALYSIS: HOLD"
+    # A preview: heard as shown; with no provider, nothing to retry.
+    p = SimpleNamespace(kind="tone", target_label="WARM", requested_target=1.0, actual_words=9, target_words=9,
+                        error="", loading=False, original=False)
+    assert ov._preview_line(p).endswith("PINCH + LIFT: USE IT · DROP HAND: BACK · HOLD OPEN PALM: HEAR IT")
+    p.error = "PROVIDER UNAVAILABLE: SET UP --llm (SEE README)"
+    line = ov._preview_line(p, llm=False)
+    assert "RETRY" not in line and line == "TONE: WARM · PREVIEW ONLY  /  NEEDS THE OPTIONAL AI · DROP HAND: BACK"
+
+
+def test_the_hand_box_marks_its_scroll_bands():
+    from palmcards.gestures import RelativeCursor
+
+    cursor = RelativeCursor((1280, 720))
+    frame = np.full((720, 1280, 3), 128, np.uint8)
+    render.draw_hand_area(frame, cursor)
+    x0, y0, x1, y1 = (int(v) for v in cursor.box)
+    band = int((y1 - y0) * 0.1)
+    cx = (x0 + x1) // 2
+    top = frame[y0:y0 + band, cx - 20:cx + 20]
+    bottom = frame[y1 - band:y1, cx - 20:cx + 20]
+    assert (top != 128).any() and (bottom != 128).any()  # a chevron in each band
+    assert (frame[y0 + band + 5:y1 - band - 5, cx - 20:cx + 20] == 128).all()  # nothing in between
+
+
 def test_units_are_the_words_and_punctuation():
     first, second = parse_text(TEXT).sentences[:2]
     flat = [" ".join("".join(sp.text for sp in u) for u in sentence_units(s)) for s in (first, second)]
@@ -119,7 +169,7 @@ def test_label_lines_follow_mode_and_operation():
     focus.ops.picked = 0
     assert ov.label_lines(focus)[1] == "ORIGINAL WORD: NO CHANGE  /  DROP HAND: BACK"
     focus.ops = OpsView()
-    assert ov.label_lines(focus)[1].startswith("OPEN PALM: ALTERNATIVES")
+    assert ov.label_lines(focus)[1].startswith("HOLD OPEN PALM: ALTERNATIVES")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
     assert ov.label_lines(tone) == ("FOCUS BY SENTENCE",
                                     "TONE: WARM  /  PREVIEW ONLY: NEED THE OPTIONAL AI · DROP HAND: BACK")
@@ -130,16 +180,18 @@ def test_label_lines_follow_mode_and_operation():
 
 
 def test_labels_promise_a_rewrite_only_when_an_llm_is_on():
+    # With the LLM, the rewrite is a live preview (the next frame's label says what it shows):
+    # nothing to ask for with a pinch + lift, which only uses a preview already shown.
     ov = overlay()
     for llm in ("cloud", "local"):
         tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=-0.6),
                          llm=llm)
-        assert ov.label_lines(tone)[1] == "TONE: FORMAL  /  PINCH + LIFT: ASK FOR A REWRITE · DROP HAND: BACK"
+        assert ov.label_lines(tone)[1] == "TONE: FORMAL  /  DROP HAND: BACK"
         stretch = ViewState(mode="focus", level="paragraph", focus=Hit(4, None), ops=OpsView(kind="stretch", stretch=1.5),
                             llm=llm)
-        assert ov.label_lines(stretch)[1] == "LENGTH: FULLER +50%  /  PINCH + LIFT: ASK FOR A REWRITE · DROP HAND: BACK"
+        assert ov.label_lines(stretch)[1] == "LENGTH: FULLER +50%  /  DROP HAND: BACK"
         word = ViewState(mode="focus", level="word", focus=Hit(0, 1), llm=llm)
-        assert ov.label_lines(word)[1].startswith("OPEN PALM: ALTERNATIVES")
+        assert ov.label_lines(word)[1].startswith("HOLD OPEN PALM: ALTERNATIVES")
     stretch.llm = ""
     assert "PREVIEW ONLY: NEED THE OPTIONAL AI" in ov.label_lines(stretch)[1]
 

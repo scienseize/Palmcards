@@ -79,6 +79,12 @@ HAND_CONNECTIONS = [
 ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", "PINCH", "FIST", "NONE"
 THUMB_UP = "THUMB_UP"  # "done": no finger out, the thumb up (never a fist, so it never starts a take)
 CARRIED = "CARRIED"  # not a pose: HandTrack.first_pose of a hand in view across a mode change
+# Every hold (a fist to start, a thumbs-up for done or undo, an open palm to hear, play, stop,
+# open the ring or retry) forgives the same misreadings in the middle and completes only on a
+# frame that reads its pose (or, with the hand lost, none). The thumbs-up reads the raw pose,
+# the others the stable pose: a misread under TIMING.stable_s never reaches the stable pose,
+# and a longer one lasts about as long there, so the grace is the same 0.3 s for all.
+HOLD_GRACE_S = REHEARSE.done_grace_s
 LEVEL_OF_SHAPE = {ONE: "word", TWO: "sentence", FLAT: "paragraph"}
 # Review has nothing to do with a word: one finger browses sentences there, so
 # no hand shape leads to a dead end.
@@ -539,6 +545,12 @@ class GestureState:
     stretch_ends: tuple[tuple[float, float], tuple[float, float]] | None = None
     drop_progress: float = 0.0  # 0..1 while backing out
     palm_progress: float = 0.0  # 0..1 while an open palm is held toward stopping playback
+    # The shape that set the browse level (ONE, TWO, FLAT): Review's sentences are
+    # closed by a pinch from one finger and by a fold from two, and the hint says which.
+    shape: str | None = None
+    # An open palm up that has done its part (it started or ended what plays): it must
+    # leave the palm or the frame before it acts again, and the hint says so.
+    palm_spent: bool = False
     primary: HandTrack | None = None
     secondary: HandTrack | None = None
 
@@ -559,7 +571,10 @@ class Grammar:
         self.palm_levels: tuple[str, ...] = ("sentence",)  # levels a held open palm acts on
         self._browse_shape: str | None = None  # the shape that set the browse level
         self._palm_since: float | None = None  # focus: open palm held since
+        self._palm_last = -math.inf  # focus: an open palm last read (HOLD_GRACE_S)
         self._palm_done = False  # focus: this hold has acted
+        self._ring_since: float | None = None  # word focus: open palm held toward the ring
+        self._ring_last = -math.inf
         # Set by the app each frame (set_focus_hold): why the focus must not be
         # dropped ("play": audio plays for the focused unit), or None.
         self.focus_hold: str | None = None
@@ -712,7 +727,7 @@ class Grammar:
 
         if p.stable in self.shape_levels:
             level = self.shape_levels[p.stable]
-            self._browse_shape = p.stable
+            self._browse_shape = s.shape = p.stable
             if s.mode != "browse" or s.level != level:
                 s.mode, s.level = "browse", level
                 self.log(t, "browse", level=level)
@@ -778,6 +793,7 @@ class Grammar:
         self._tilt0 = self._d0 = self._p0 = None
         self._point_held = False
         self._palm_since, self._palm_done = None, False
+        self._ring_since = None
         self._dial_hist.clear()
         self._point_hist.clear()
         s.closing = False
@@ -803,8 +819,11 @@ class Grammar:
     def _update_focus(self, t: float, track_events: dict[str, list[str]], events: list[GestureEvent]) -> None:
         s, p = self.state, self.state.primary
         gone = "no hand" if p is None else "low" if p.hand.points[:, 1].min() > TIMING.drop_band * self.h else None
+        if gone == "low" and self._working(p):
+            gone = None  # a hand low in the frame but working a control, or holding a palm, isn't dropped
         if gone:
             self._palm_since, self._palm_done, s.palm_progress = None, False, 0.0  # a palm after this is new
+            s.palm_spent = False
             if self.focus_hold is not None:  # held: the focus waits for the hand
                 self._gone_since, s.drop_progress = None, 0.0
                 return
@@ -825,6 +844,13 @@ class Grammar:
             for key, evs in track_events.items():
                 tr = self.tracks[key]
                 if "commit" in evs and tr.pinch_start is not None and tr.pinch_start >= self._commit_armed_t:
+                    if (s.op is None and self.operations) or (not self.operations and s.level != "sentence"):
+                        # Nothing to commit (Prepare: no operation yet; Review: only a sentence
+                        # drills): the focus stays, and the app says what to do first.
+                        events.append(GestureEvent("commit_ignored", t, s.level, s.op))
+                        self.log(t, "commit_ignored", level=s.level, op=s.op)
+                        self._commit_armed_t = None
+                        return
                     value = s.tone if s.op == "tone" else s.stretch if s.op == "stretch" else None
                     if self.defer_edit_commit and self.operations and s.op in ("tone", "stretch"):
                         events.append(GestureEvent("commit", t, s.level, s.op, value=value))
@@ -850,9 +876,17 @@ class Grammar:
         Once per hold: letting go, leaving the frame or a new focus arms it again."""
         s = self.state
         playing = self.focus_hold == "play"
-        if p.stable != OPEN or (s.level not in self.palm_levels and not playing):
-            self._palm_since, self._palm_done, s.palm_progress = None, False, 0.0
+        if s.level not in self.palm_levels and not playing:
+            self._palm_since, self._palm_done, s.palm_progress, s.palm_spent = None, False, 0.0, False
             return
+        if p.stable != OPEN:
+            # A palm that has done its part has left the moment another pose is read: the next
+            # palm is new. A hold still on its way forgives a misread (HOLD_GRACE_S), and doesn't act.
+            if self._palm_done or t - self._palm_last > HOLD_GRACE_S:
+                self._palm_since, self._palm_done, s.palm_progress, s.palm_spent = None, False, 0.0, False
+            return
+        self._palm_last = t
+        s.palm_spent = self._palm_done
         if self._palm_since is None:
             self._palm_since = t
         held = t - self._palm_since
@@ -867,6 +901,15 @@ class Grammar:
             self._palm_done = True
             events.append(GestureEvent("palm_hold", t, s.level))
             self.log(t, "palm_hold", level=s.level)
+
+    def _working(self, p: HandTrack) -> bool:
+        """The hand is working a control (a dial, the ring's knob, the pointer) or
+        holding an open palm toward hear it or play: being low in the frame doesn't
+        back it out then. A pinch or a fist, low, still does (a thumb near the index
+        tip is no control), and so does a palm that has done its part."""
+        s = self.state
+        return bool(s.dialing or s.turning or s.pointing
+                    or (p.stable == OPEN and self._palm_since is not None and not self._palm_done))
 
     # -- dials and pinches: curling the index to pinch must not turn a dial --
 
@@ -1050,10 +1093,17 @@ class Grammar:
     def _operate(self, t: float, events: list[GestureEvent]) -> None:
         s, p, q = self.state, self.state.primary, self.state.secondary
         if s.level == "word":
-            if p.stable == OPEN and s.op != "ring":
-                s.op = "ring"
-                self.log(t, "op", op="ring")
-                self._reset_ring()
+            if s.op != "ring":  # an open palm held (OPS.play_hold_s, as hear it): a palm passing through
+                #                 on its way to another shape doesn't open the ring (and ask the LLM)
+                if p.stable == OPEN:
+                    self._ring_last = t
+                    self._ring_since = t if self._ring_since is None else self._ring_since
+                elif t - self._ring_last > HOLD_GRACE_S:
+                    self._ring_since = None
+                if p.stable == OPEN and self._ring_since is not None and t - self._ring_since >= OPS.play_hold_s:
+                    s.op = "ring"
+                    self.log(t, "op", op="ring")
+                    self._reset_ring()
             if s.op == "ring":
                 self._turn_ring(t, p)
         elif s.level == "sentence":
@@ -1114,8 +1164,10 @@ class DoneHold:
         self._last = -math.inf
         self._waiting = release  # for the thumb to come down
 
-    def update(self, tracks: dict[str, HandTrack], t: float) -> bool:
-        """True once, when the hold completes."""
+    def update(self, tracks: dict[str, HandTrack], t: float, hold_s: float | None = None) -> bool:
+        """True once, when the hold (`hold_s`, default REHEARSE.done_hold_s) completes:
+        on a frame that reads a thumbs-up, or one with no hand at all (tracking often
+        loses a thumbs-up for a moment), never on one that reads another pose."""
         up = any(tr.raw == THUMB_UP for tr in tracks.values())
         if self._waiting:
             if up:
@@ -1133,8 +1185,8 @@ class DoneHold:
         if self._since is None:
             self.progress = 0.0
             return False
-        self.progress = min(1.0, (t - self._since) / REHEARSE.done_hold_s)
-        if self.progress >= 1.0:
+        self.progress = min(1.0, (t - self._since) / (hold_s or REHEARSE.done_hold_s))
+        if self.progress >= 1.0 and (up or not tracks):
             self._since, self.progress = None, 0.0
             return True
         return False
@@ -1165,6 +1217,14 @@ class ModeMachine:
         self.drill = False  # the count-in or take is a drill
         self._back_to = "prepare"
         self._fist_since: float | None = None
+        self._fist_last = -math.inf
+        # Set by the app each frame: an edit to undo (Prepare: a thumbs-up held undoes it), and
+        # failed analysis to retry (Review: an open palm held, no focus, retries it).
+        self.undo_ready = False
+        self.retry_ready = False
+        self.retry_progress = 0.0
+        self._retry_since: float | None = None
+        self._retry_last = -math.inf
 
     @property
     def state(self) -> GestureState:
@@ -1186,9 +1246,27 @@ class ModeMachine:
                 self._enter("count_in", t)
                 return events
         if self.mode == "prepare":
+            # A thumbs-up is "back" everywhere: in Prepare, with an edit made, it undoes the edit
+            # (held as long as a fist to start a take). Not in a focus, where the hand is at work.
+            present = {k: self.grammar.tracks[k] for k in track_events}
+            if not self.undo_ready or self.grammar.state.mode == "focus":
+                self.done.reset(release=any(tr.raw == THUMB_UP for tr in present.values()))
+            elif self.done.update(present, t, REHEARSE.start_hold_s):
+                self.log(t, "done", mode=self.mode)
+                events.append(GestureEvent("undo", t))
             return events
 
-        if self.done.update({k: self.grammar.tracks[k] for k in track_events}, t):
+        if self.mode == "review" and self._retry_held(t):
+            events.append(GestureEvent("retry", t))
+            self.log(t, "retry")
+        if self.mode == "review" and self.grammar.state.mode == "focus":
+            # In a focus the hand is at work: a thumbs-up there isn't "back to Prepare" (drop
+            # the hand, then give it). One up as the focus ends must come down first.
+            self.done.reset(release=any(self.grammar.tracks[k].raw == THUMB_UP for k in track_events))
+            return events
+        # Leaving Review nobody is speaking: the thumbs-up is held as long as a fist to start a take.
+        hold_s = REHEARSE.start_hold_s if self.mode == "review" else None
+        if self.done.update({k: self.grammar.tracks[k] for k in track_events}, t, hold_s):
             self.log(t, "done", mode=self.mode)
             if self.mode == "rehearse":
                 events.append(GestureEvent("take_stop", t))
@@ -1248,13 +1326,38 @@ class ModeMachine:
         (a slow pinch, a flat hand curling, a hand resting closed between
         gestures) doesn't count: those started takes by mistake."""
         p = self.grammar.state.primary
-        if p is None or p.stable != FIST or p.first_pose != FIST or self.grammar.state.mode == "focus":
-            self._fist_since, self.start_progress = None, 0.0
-            return False
+        fist = p is not None and p.stable == FIST and p.first_pose == FIST and self.grammar.state.mode != "focus"
+        if not fist:  # a misread frame or two (HOLD_GRACE_S) doesn't start the hold over
+            if self._fist_since is None or t - self._fist_last > HOLD_GRACE_S \
+                    or self.grammar.state.mode == "focus" or (p is not None and p.first_pose != FIST):
+                self._fist_since, self.start_progress = None, 0.0
+                return False
+            self.start_progress = min(1.0, (t - self._fist_since) / REHEARSE.start_hold_s)
+            return p is None and self.start_progress >= 1.0  # completes with the hand lost, never on another pose
+        self._fist_last = t
         if self._fist_since is None:
             self._fist_since = t
         self.start_progress = min(1.0, (t - self._fist_since) / REHEARSE.start_hold_s)
         return self.start_progress >= 1.0
+
+    def _retry_held(self, t: float) -> bool:
+        """Review, failed analysis (retry_ready), no focus: an open palm held as long
+        as a fist to start a take retries it (the key r does too)."""
+        p, g = self.grammar.state.primary, self.grammar.state
+        palm = self.retry_ready and g.mode != "focus" and p is not None and p.stable == OPEN
+        if not palm:
+            if self._retry_since is None or t - self._retry_last > HOLD_GRACE_S or not self.retry_ready \
+                    or g.mode == "focus":
+                self._retry_since, self.retry_progress = None, 0.0
+            return False
+        self._retry_last = t
+        self._retry_since = t if self._retry_since is None else self._retry_since
+        self.retry_progress = min(1.0, (t - self._retry_since) / REHEARSE.start_hold_s)
+        if self.retry_progress >= 1.0:
+            self._retry_since, self.retry_progress = None, 0.0
+            self.retry_ready = False  # done: it arms again only once the app says something failed
+            return True
+        return False
 
     def _enter(self, mode: str, t: float) -> None:
         if mode == "count_in":

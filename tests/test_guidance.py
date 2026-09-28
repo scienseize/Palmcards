@@ -34,6 +34,9 @@ def test_preferences_load_save_and_clamp(tmp_path, capsys):
     assert prefs.load(path).reach == 0.8  # unknown keys ignored
     path.write_text("{broken")
     assert prefs.load(path) == prefs.Prefs() and "ignoring" in capsys.readouterr().err
+    # The thumbs-up's hold was called stop_hold_s (it clashed with OPS.stop_hold_s): still read.
+    path.write_text(json.dumps({"stop_hold_s": 2.0}))
+    assert prefs.load(path).done_hold_s == 2.0
 
 
 def test_reach_scales_the_hand_box_about_its_centre():
@@ -44,7 +47,7 @@ def test_reach_scales_the_hand_box_about_its_centre():
 
 
 def test_apply_changes_only_what_preferences_own(restore):
-    prefs.apply(prefs.Prefs(reach=0.7, start_hold_s=0.5, stop_hold_s=2.0, high_contrast=True))
+    prefs.apply(prefs.Prefs(reach=0.7, start_hold_s=0.5, done_hold_s=2.0, high_contrast=True))
     assert gestures.CURSOR.hand_box == pytest.approx(prefs.hand_box(0.7))
     assert gestures.CURSOR.edge_band == CURSOR.edge_band
     assert (gestures.REHEARSE.start_hold_s, gestures.REHEARSE.done_hold_s) == (0.5, 2.0)

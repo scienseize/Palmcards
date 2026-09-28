@@ -114,7 +114,9 @@ FROM_REPLAY = {
                                   "295.23 and back word at 298.07; the replay has the sentence at the same times",
     # The relaxed open palm (2026-09-27: spread 0.30, thumb 0.47 palms; it was 0.45 and 0.9) reads the
     # palm as the hand opens, before it is spread wide:
-    "word-ring-commit": "relaxed open palm: the ring opens at 5.75 s, live 6.18 s",
+    # and since 2026-09-28 the ring's palm is held OPS.play_hold_s, as hear it (a palm passing through
+    # no longer opens it and asks the LLM):
+    "word-ring-commit": "relaxed open palm, held 0.6 s: the ring opens at 6.38 s, live 6.18 s",
     "play-fresh-palm-stops": "relaxed open palm: the sentence plays from 4.94 s, live 5.21 s",
     "review-paragraph-play": "relaxed open palm: the paragraph plays from 6.01 s, live 6.47 s",
     "play-drop-hand-keeps-focus": "relaxed open palm: the hand comes back at 9.88 s already open (spread "
@@ -129,7 +131,8 @@ REPLAYED_WHOLE = {
     "rehearse-swipes-do-nothing": "the command zone and its flick were removed on 2026-09-27",
     "thumbs-up-is-not-a-take": "recorded before the thumbs-up pose, which is never a fist",
     "thumbs-up-stops-take": "recorded before the thumbs-up was a command (live, a take had just started)",
-    "thumbs-up-back-to-prepare": "recorded in a take, before the thumbs-up was a command",
+    "thumbs-up-back-to-prepare": "recorded in a take, before the thumbs-up was a command; since 2026-09-28 "
+                                 "Review's thumbs-up is held as long as a fist to start a take (1 s)",
 }
 GRAMMAR_KINDS = ("focus", "back", "commit", "op", "palm_hold", "palm_stop")
 

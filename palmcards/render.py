@@ -114,7 +114,7 @@ FOCUS_HINTS = {  # without the optional LLM
     "paragraph": f"TWO L-HANDS: LENGTH (PREVIEW ONLY)  /  {DROP_HINT}",
 }
 FOCUS_HINTS_LLM = {
-    "word": f"OPEN PALM: ALTERNATIVES  /  {DROP_HINT}",
+    "word": f"HOLD OPEN PALM: ALTERNATIVES  /  {DROP_HINT}",  # held OPS.play_hold_s, as hear it
     "sentence": f"HOLD OPEN PALM: HEAR IT  /  L-HAND: TONE · {DROP_HINT}",
     "paragraph": f"TWO L-HANDS: LENGTH  /  {DROP_HINT}",
 }
@@ -127,6 +127,7 @@ BROWSE_HINTS = {
 }
 BROWSE_ENTRY = "FINGER UP: BROWSE"  # nothing up yet: how to start browsing
 NEW_TAKE = "RAISE A FIST: NEW TAKE"
+UNDO_HINT = "THUMB UP: UNDO"  # Prepare, after an edit: a thumbs-up held undoes it (u too)
 NEEDS_LLM = f"PREVIEW ONLY: {NEEDS_AI}"
 TONE_NAMES = {"WARM": "WARM", "COLD": "FORMAL", "ORIGINAL": "ORIGINAL", "NEUTRAL": "ORIGINAL"}  # the gauge's ends
 GROWN = 0.99  # a focus this far grown is drawn as focused (the last step is under 2 px)
@@ -141,10 +142,13 @@ def review_hint(state: "ViewState") -> tuple[str, str]:
     """Review's gesture hints for the label: what acts now, (long, short).
     The short form is used when the long one doesn't fit a row of the text
     column (TextOverlay.label_rows)."""
-    if state.playing:  # an open palm stops it on a focus; a key while browsing
-        return ("OPEN PALM: STOP", "PALM: STOP") if state.mode == "focus" else ("A: STOP", "A: STOP")
-    if state.mode == "browse" and state.level == "sentence":
-        return (f"FOLD: DETAILS · {DONE_HINT}",) * 2
+    if state.playing and state.mode == "focus":  # a new open palm stops it; the one that started it must leave first
+        return ("LOWER HAND, THEN OPEN PALM: STOP", "LOWER HAND, THEN PALM: STOP") if state.palm_spent \
+            else ("OPEN PALM: STOP", "PALM: STOP")
+    if state.playing:  # browsing: moving to another sentence stops it, or the key
+        return "MOVE TO ANOTHER SENTENCE · A: STOP", "MOVE ON · A: STOP"
+    if state.mode == "browse" and state.level == "sentence":  # one finger closes by a pinch, two by a fold
+        return (f"{'PINCH' if state.shape == 'ONE' else 'FOLD'}: DETAILS · {DONE_HINT}",) * 2
     if state.mode == "browse" and state.level == "paragraph":
         return (f"FOLD: SUMMARY · {DONE_HINT}",) * 2
     if state.mode == "focus" and state.level == "paragraph":
@@ -404,12 +408,10 @@ class ViewState:
     # predecessor's last sentence is being said (hides the follow's lag).
     preview_next: bool = False
     # Prepare, the optional LLM: alternatives for the focused word (on the
-    # ring), a request in flight (the word's glyphs scramble), and a proposal
-    # for the focused unit (shown under it; pinch + lift uses it).
+    # ring) and a request in flight (the word's glyphs scramble).
     alternatives: tuple[str, ...] = ()
     meaning: str = ""  # shown on word selection, before opening alternatives
     loading: bool = False
-    proposal: str = ""
     edit_preview: PreviewView | None = None  # immutable snapshot of what this frame presents
     llm: str = ""  # the optional LLM in use: "cloud" (the text asked about leaves the Mac), "local", or ""
     llm_busy: bool = False  # a request is out
@@ -423,6 +425,11 @@ class ViewState:
     playing: bool = False
     play_progress: float | None = None
     palm_progress: float = 0.0
+    palm_spent: bool = False  # the palm up started or ended what plays: it must leave before it acts
+    shape: str | None = None  # the hand shape that set the browse level (Review: a pinch or a fold closes it)
+    scrolling: int = 0  # browsing at the hand box's top (-1) or bottom (+1) band: the notes scroll
+    undo_ready: bool = False  # Prepare: an edit to undo (a thumbs-up held, or u)
+    retry_progress: float = 0.0  # Review: an open palm held toward retrying failed analysis, 0..1
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 
 
@@ -732,13 +739,15 @@ class TextOverlay:
         elif state.start_progress > 0:
             second, progress = "NEW TAKE: HOLD", state.start_progress
         elif state.hold_progress > 0:
-            second, progress = "BACK TO PREPARE: HOLD", state.hold_progress
+            second, progress = ("UNDO: HOLD" if state.app == "prepare" else "BACK TO PREPARE: HOLD"), state.hold_progress
+        elif state.retry_progress > 0:
+            second, progress = "RETRY ANALYSIS: HOLD", state.retry_progress
         elif state.palm_progress > 0:
             second, progress = "STOP: HOLD", state.palm_progress
         elif state.drop_progress > 0 and state.mode == "focus":  # the hand is down: say what happens, and how not to
             second, progress = f"BACKING OUT{HINT_SEP}RAISE HAND TO STAY", state.drop_progress
         elif preview is not None:
-            second = self._preview_line(preview)
+            second = self._preview_line(preview, bool(state.llm))
         elif ops.kind == "ring":
             second = "ALTERNATIVES: LOADING" if state.loading else "L-HAND, THEN TURN: PICK"
             if not state.llm:
@@ -748,30 +757,32 @@ class TextOverlay:
                 second = "ORIGINAL WORD: NO CHANGE" if ops.picked == 0 else \
                     f'PINCH + LIFT: USE "{picked.upper().replace(" ", NBSP)}"'
             second += HINT_SEP + DROP_HINT
-        elif ops.kind == "tone":
+        elif ops.kind == "tone":  # before the preview exists (it shows in its place from the next frame)
             tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "ORIGINAL"
-            act = "PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM
-            second = f"TONE: {TONE_NAMES[tone]}{HINT_SEP}{act}{REVIEW_SEP}{DROP_HINT}"
+            second = f"TONE: {TONE_NAMES[tone]}{HINT_SEP}" + (DROP_HINT if state.llm else f"{NEEDS_LLM}{REVIEW_SEP}{DROP_HINT}")
         elif ops.kind == "stretch":
             pct = round((ops.stretch - 1) * 100)
             change = f"FULLER +{pct}%" if ops.stretch > 1.05 else f"SHORTER −{-pct}%" if ops.stretch < 0.95 else "SAME"
-            act = "PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM
-            second = f"LENGTH: {change}{HINT_SEP}{act}{REVIEW_SEP}{DROP_HINT}"
-        elif state.mode == "focus" and state.app == "prepare" and state.proposal:
-            second = f"PINCH + LIFT: USE THE PROPOSAL{HINT_SEP}{DROP_HINT}"
+            second = f"LENGTH: {change}{HINT_SEP}" + (DROP_HINT if state.llm else f"{NEEDS_LLM}{REVIEW_SEP}{DROP_HINT}")
         elif state.mode == "focus" and state.app == "prepare" and state.playing:
-            second = "OPEN PALM: STOP"
+            second = "LOWER HAND, THEN OPEN PALM: STOP" if state.palm_spent else "OPEN PALM: STOP"
         elif state.mode == "focus" and state.app == "prepare":  # nothing started yet: say what the next shape does
             second = (FOCUS_HINTS_LLM if state.llm else FOCUS_HINTS).get(state.level, DROP_HINT)
+        elif state.app == "review" and state.mode == "browse" and state.scrolling and not state.playing:
+            second = f"SCROLLING {'UP' if state.scrolling < 0 else 'DOWN'}{HINT_SEP}MOVE TO THE MIDDLE: STOP"
         elif state.app == "review":  # what the focus shows, then the gestures that act
             second = f"{state.status}{HINT_SEP}{review_hint(state)[0]}"
         elif state.mode == "focus":
             second = f"{state.status}{HINT_SEP}{DROP_HINT}" if state.status else DROP_HINT
+        elif state.app == "prepare" and state.mode == "browse" and state.scrolling:
+            # The hand at the hand box's top or bottom edge: the notes scroll, not the highlight.
+            second = f"SCROLLING {'UP' if state.scrolling < 0 else 'DOWN'}{HINT_SEP}MOVE TO THE MIDDLE: STOP"
         elif state.app == "prepare" and state.mode == "browse":
             second = BROWSE_HINTS.get(state.level, "")
-        elif state.app == "prepare":  # nothing up: how to begin, and how to take
-            second = f"{state.status}{HINT_SEP}{BROWSE_ENTRY}{REVIEW_SEP}{NEW_TAKE}" if state.status else \
-                f"{BROWSE_ENTRY}{HINT_SEP}{NEW_TAKE}"
+        elif state.app == "prepare":  # nothing up: how to begin, how to take, and an edit to undo
+            undo = f"{REVIEW_SEP}{UNDO_HINT}" if state.undo_ready else ""
+            second = f"{state.status}{HINT_SEP}{BROWSE_ENTRY}{REVIEW_SEP}{NEW_TAKE}{undo}" if state.status else \
+                f"{BROWSE_ENTRY}{HINT_SEP}{NEW_TAKE}{undo}"
         else:
             second = state.status
         return first, second, progress
@@ -790,23 +801,28 @@ class TextOverlay:
         return next((t for t in (f'{first}  "{word}"', f'FOCUS: "{word}"') if len(t) <= cols), first)
 
     @staticmethod
-    def _preview_line(p: PreviewView) -> str:
+    def _preview_line(p: PreviewView, llm: bool = True) -> str:
         """A tone or length preview in the label: what the dial asks for and
-        what the notes show (the operation), then what acts on it."""
+        what the notes show (the operation), then what acts on it: a tone
+        preview can be heard (an open palm held speaks the wording shown); with
+        no provider nothing can be retried."""
         if p.kind == "tone":
             what = f"TONE: {TONE_NAMES.get(p.target_label, p.target_label)}"
             done = f"{what} · NOT SAVED"
         else:
             what = f"LENGTH: {round(p.requested_target * 100)}%"
             done = f"{what} · NOT SAVED, {p.actual_words} OF ~{p.target_words} WORDS".replace(" OF ~", f"{NBSP}OF{NBSP}~")
+        hear = f"{REVIEW_SEP}HOLD OPEN PALM: HEAR IT" if p.kind == "tone" else ""
+        if p.error and not llm:
+            return f"{what} · PREVIEW ONLY{HINT_SEP}{NEEDS_AI.replace('NEED', 'NEEDS')}{REVIEW_SEP}{DROP_HINT}"
         if p.error:
             return f"{p.error.partition(': PINCH')[0]}{HINT_SEP}PINCH + LIFT: RETRY{REVIEW_SEP}{DROP_HINT}"
         if p.loading:
-            return f"{what} · UPDATING…{HINT_SEP}{DROP_HINT}"
+            return f"{what} · UPDATING…{HINT_SEP}{DROP_HINT}{hear}"
         if p.original:
             shown = what if p.kind == "tone" else f"{what} · {p.actual_words} WORDS"
-            return f"{shown}{HINT_SEP}{DROP_HINT}"
-        return f"{done}{HINT_SEP}PINCH + LIFT: USE IT{REVIEW_SEP}{DROP_HINT}"
+            return f"{shown}{HINT_SEP}{DROP_HINT}{hear}"
+        return f"{done}{HINT_SEP}PINCH + LIFT: USE IT{REVIEW_SEP}{DROP_HINT}{hear}"
 
     def ring_words(self, state: ViewState) -> int:
         """Every node is the original word or a replacement."""
@@ -2348,7 +2364,8 @@ def draw_hand_box(frame: np.ndarray, cursor: RelativeCursor) -> None:
 
 def draw_hand_area(frame: np.ndarray, cursor: RelativeCursor, avoid: tuple[int, int, int, int] | None = None) -> None:
     """Where the hand steers the highlight: the hand box's corners, small and
-    faint; never across `avoid` (Review's take table, which a corner met)."""
+    faint, and a chevron in each scroll band (at the box's top and bottom the
+    notes scroll); never across `avoid` (Review's take table, which a corner met)."""
     x0, y0, x1, y1 = (int(v) for v in cursor.box)
     arm = max(HANDS.area_min_arm, int((x1 - x0) * HANDS.area_arm))
     keep = None
@@ -2356,6 +2373,14 @@ def draw_hand_area(frame: np.ndarray, cursor: RelativeCursor, avoid: tuple[int, 
         ax0, ay0, ax1, ay1 = (max(0, int(v)) for v in avoid)
         keep = frame[ay0:ay1, ax0:ax1].copy()
     _corners(frame, (x0, y0, x1, y1), arm, C.hand_area, HANDS.area_stroke, HANDS.area_alpha)
+    # The scroll bands (CURSOR.edge_band): a small chevron in each, pointing the way the notes go.
+    band = (y1 - y0) * CURSOR.edge_band
+    cx, w = (x0 + x1) // 2, max(HANDS.area_min_arm, arm // 2)
+    for mid, d in ((y0 + band / 2, -1), (y1 - band / 2, 1)):
+        tip, base = int(mid + d * w / 3), int(mid - d * w / 3)
+        pts = np.array([(cx - w // 2, base), (cx, tip), (cx + w // 2, base)], np.int32)
+        _poly_blend(frame, pts, C.rim[:3], HANDS.area_stroke + 2, C.rim[3] / 255 * 0.5)
+        _poly_blend(frame, pts, C.hand_area, HANDS.area_stroke, HANDS.area_alpha)
     if keep is not None:
         frame[ay0:ay1, ax0:ax1] = keep
 

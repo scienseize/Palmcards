@@ -2172,3 +2172,35 @@ Tests: pytest (full) -> 606 passed. New: a thumbs-up held on after stopping a ta
   anew does. The three fail on the previous gestures.py. The replay samples are unchanged.
 ```
 
+```text
+Date: 2026-09-28
+Phase / issue IDs: the rest of the gesture matrix's findings (docs/gesture-matrix.md section 3; user:
+  "fix the other gesture matrix findings")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes:
+  palmcards/gestures.py: a hand low in the frame that is working a control or holding a palm toward
+    hear it / play isn't dropped (Grammar._working). The ring's palm is held OPS.play_hold_s, as hear
+    it. One hold rule (HOLD_GRACE_S 0.3 s of misreads forgiven; completes only on a frame with the pose
+    or with the hand lost) for the fist, the thumbs-up, the palm holds, the ring and the retry. A pinch +
+    lift with nothing to commit keeps the focus (commit_ignored). In a Review focus a thumbs-up does
+    nothing; leaving Review is held start_hold_s (1.0 s). Prepare: a thumbs-up held 1.0 s with an edit
+    made is "undo"; Review: an open palm held 1.0 s with failed analysis is "retry" (the app sets
+    ModeMachine.undo_ready / retry_ready). GestureState.shape (the browse shape) and palm_spent.
+  main.py: undo and retry events; hear it speaks a tone preview's wording; commit_ignored notes;
+    HINT_DWELL_S 0.6 for both "did nothing" hints; the alerts (no flick; OPEN PALM, HELD, OR R: RETRY);
+    THUMB UP: UNDO after an edit; Takes.can_undo.
+  palmcards/render.py: PINCH: DETAILS from one finger; LOWER HAND, THEN OPEN PALM: STOP; MOVE TO
+    ANOTHER SENTENCE · A: STOP; SCROLLING UP/DOWN; UNDO: HOLD, RETRY ANALYSIS: HOLD; HOLD OPEN PALM:
+    ALTERNATIVES; a tone preview offers HOLD OPEN PALM: HEAR IT; no RETRY without a provider; the
+    unreachable ASK FOR A REWRITE and proposal hints (and ViewState.proposal) removed; the hand box
+    shows a chevron in each scroll band.
+  palmcards/prefs.py: stop_hold_s is done_hold_s (an old prefs.json still loads).
+  samples/gestures: word-ring-commit (the ring opens at 6.38 s, held) and thumbs-up-back-to-prepare
+    (1.01 s) regenerated with scripts/cut_gesture_samples.py, their reasons in FROM_REPLAY /
+    REPLAYED_WHOLE; the other samples are unchanged.
+  Kept, with reasons (docs/gesture-matrix.md): the primary hand's choice by position (the dots show
+    it), section keys in a take (no commands in a take but the thumbs-up), the tutorial's Enter, e / m.
+Tests: pytest (full) -> 615 passed. New label, hand-box, hold, low-hand, ring, undo, retry and Review-focus tests; the ring tests
+  hold the palm (RING_PALM_S).
+```
+

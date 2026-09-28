@@ -156,11 +156,12 @@ def hear_words(overlay: TextOverlay, sentence: int) -> list[str]:
 
 
 def hear_sentence(sentence: int, overlay: TextOverlay, speaker, log: GestureLog, t: float,
-                  playback: Playback | None = None, player=None) -> str:
+                  playback: Playback | None = None, player=None, words: list[str] | None = None) -> str:
     """Speak a sentence: the speaker's rendered audio played as a clip (its
     progress exact; rendered from when the sentence was focused), or, with a
-    speaker that can't render, `say` live."""
-    words = hear_words(overlay, sentence)
+    speaker that can't render, `say` live. `words`: the wording to speak, if not
+    the sentence's (a tone preview on screen)."""
+    words = words or hear_words(overlay, sentence)
     target = ("prepare", (sentence,), None)
     try:
         if playback is not None and player is not None and hasattr(speaker, "render_async"):
@@ -183,9 +184,12 @@ def play_focus(view: ViewState, overlay: TextOverlay, log: GestureLog, speaker, 
     nothing focused on the current sentence. Returns a label note."""
     sentence = view.focus.sentence if view.focus is not None else view.current
     if view.app == "prepare":
+        # A tone preview on screen is what is heard: the wording shown, not the notes'.
+        preview = view.edit_preview
+        words = preview.text.split() if preview is not None and not preview.original and preview.text else None
         if takes is None:
-            return hear_sentence(sentence, overlay, speaker, log, t)
-        return hear_sentence(sentence, overlay, speaker, log, t, takes.playback, takes.clip_player())
+            return hear_sentence(sentence, overlay, speaker, log, t, words=words)
+        return hear_sentence(sentence, overlay, speaker, log, t, takes.playback, takes.clip_player(), words)
     if takes is None:
         return ""
     if view.mode == "focus" and view.level == "paragraph":
@@ -211,8 +215,10 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
 
 FIST_HINT = "NEW TAKE: DROP THE HAND, RAISE\u00a0A\u00a0FIST"  # it wraps at the comma, not before "A FIST"
 PALM_HINT = {"rehearse": "A PALM DOESN'T STOP A TAKE", "count_in": "A PALM DOESN'T CANCEL"}
-FIST_HINT_S = 0.6  # a fist formed from another pose held this long before its hint: a fold or a slow
-#                    pinch passes through a fist on its way to a focus, and that is no fist at all
+HINT_DWELL_S = 0.6  # a gesture that does nothing held this long before its hint (a fist formed from
+#                     another pose: a fold or a slow pinch passes through a fist on its way to a focus;
+#                     an open palm in a take)
+FIST_HINT_S = HINT_DWELL_S
 
 
 def nonactivation_hint(mode: str, gs, open_s: float, t: float | None = None) -> str:
@@ -226,7 +232,7 @@ def nonactivation_hint(mode: str, gs, open_s: float, t: float | None = None) -> 
     if mode in ("prepare", "review") and p.stable == FIST and p.first_pose != FIST and gs.mode != "focus" \
             and (t is None or p.held(t) >= FIST_HINT_S):
         return FIST_HINT
-    if mode in ("count_in", "rehearse") and p.stable == OPEN and open_s > 0.8:
+    if mode in ("count_in", "rehearse") and p.stable == OPEN and open_s > HINT_DWELL_S:
         return PALM_HINT[mode]
     return ""
 KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("b"): "previous",
@@ -237,6 +243,8 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     """Copy the gesture state into the view after each hand result."""
     gs = grammar.state
     view.mode, view.level, view.drop_progress = gs.mode, gs.level, gs.drop_progress
+    view.shape, view.palm_spent = gs.shape, gs.palm_spent and gs.primary is not None and gs.primary.stable == OPEN
+    view.scrolling = (gs.scroll_rate > 0) - (gs.scroll_rate < 0) if gs.mode == "browse" else 0
     if gs.mode == "browse" and gs.cursor is not None:
         word_level = gs.level == "word"
         hit = overlay.hit_test(*overlay.cursor_to_text(*gs.cursor), overlay.shown_scroll(view), snap=word_level)
@@ -251,6 +259,13 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
     ops.offset = gs.ring_offset
     ops.dialing, ops.tone_over, ops.stretch_raw = gs.dialing, gs.tone_over, gs.stretch_raw
     view.lift = gs.primary.lift_progress(grammar.h) if gs.mode == "focus" and gs.primary is not None else 0.0
+
+
+COMMIT_FIRST = {  # a pinch + lift with nothing to use yet, in Prepare: what comes first
+    ("prepare", "word"): "NOTHING TO USE YET: OPEN PALM, HELD: ALTERNATIVES",
+    ("prepare", "sentence"): "NOTHING TO USE YET: L-HAND: TONE",
+    ("prepare", "paragraph"): "NOTHING TO USE YET: TWO L-HANDS: LENGTH",
+}
 
 
 def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog,
@@ -270,6 +285,10 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         if view.app == "prepare" and ev.level == "sentence" and hasattr(speaker, "render_async"):
             speaker.render_async(hear_words(overlay, view.focus.sentence))  # "hear it" ready by the palm hold
         return None
+    if ev.kind == "commit_ignored":  # nothing to commit yet: the focus stays, and what comes first
+        view.note = COMMIT_FIRST.get((view.app, ev.level), "") if view.app == "prepare" else \
+            "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
+        return time.perf_counter() + NOTE_S if view.note else None
     if ev.kind == "rewind":  # a pinch took the pointer back to before the curl: the pick goes back too
         if takes is not None:
             takes.rewind_pick(ev.value)
@@ -573,7 +592,7 @@ class Takes:
             return True, "ORIGINAL KEPT: NO CHANGE"
         error = self._save_edit(replace_text(self.notes, list(unit), op.displayed_candidate),
                                 f"{op.kind} preview committed", op=op.kind, sentences=list(unit))
-        return (False, error) if error else (True, "PREVIEW COMMITTED / U: UNDO")
+        return (False, error) if error else (True, "EDIT SAVED  /  THUMB UP: UNDO")
 
     def ask_rewrite(self, kind: str, unit: tuple[int, ...], amount: float) -> str:
         what = "TONE" if kind == "tone" else "LENGTH"
@@ -659,13 +678,18 @@ class Takes:
         old = self.notes.sentences[sentence].words[word].text
         note = self._save_edit(replace_word(self.notes, sentence, word, text), f'"{old}" -> "{text}"',
                                op="alternative", sentence=sentence, word=word, text=text)
-        return note or f'"{old.upper()}" → "{text.upper()}"  /  U: UNDO'
+        return note or f'"{old.upper()}" → "{text.upper()}"  /  THUMB UP: UNDO'
 
     def use_proposal(self, unit: tuple[int, ...]) -> str:
         kind, value, _ = self.proposals.pop(unit)
         note = self._save_edit(replace_text(self.notes, list(unit), value), f"{kind} proposal used", op=kind,
                                sentences=list(unit))
-        return note or f"{kind.upper()} PROPOSAL USED  /  U: UNDO"
+        return note or f"{kind.upper()} PROPOSAL USED  /  THUMB UP: UNDO"
+
+    def can_undo(self) -> bool:
+        """An edit to undo: the current notes revision has a parent."""
+        rid = self.session.current_revision
+        return rid is not None and self.session._parsed is None and self.session.revision(rid)["parent"] is not None
 
     def undo(self) -> str:
         if self.session.current_revision is None or self.session._parsed is not None:
@@ -792,9 +816,9 @@ class Takes:
             return self.llm_alert
         if mode in ("count_in", "rehearse") and self.follow is not None and self.follow.state == "failed" \
                 and self.drill is None:
-            return "VOICE FOLLOW OFF (SEE TERMINAL)  /  FLICK OR N: NEXT SECTION"
+            return "VOICE FOLLOW OFF (SEE TERMINAL)  /  N: NEXT SECTION"
         if failed := self.analysis.failed():
-            return f"TAKE {failed[0]}: ANALYSIS FAILED (SEE TERMINAL)  /  R: RETRY"
+            return f"TAKE {failed[0]}: ANALYSIS FAILED (SEE TERMINAL)  /  OPEN PALM, HELD, OR R: RETRY"
         return ""
 
     def sync_review(self, grammar: Grammar, view: ViewState, overlay: "TextOverlay | None" = None,
@@ -1427,6 +1451,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 hands, t_hand = result
                 trace.write(json.dumps({"t": round(t_hand, 3), "hands": [
                     {"label": hd.handedness, "points": hd.points.round(1).tolist()} for hd in hands]}) + "\n")
+            modes.undo_ready = modes.mode == "prepare" and takes.can_undo()
+            modes.retry_ready = modes.mode == "review" and bool(takes.analysis.failed())
             events = modes.update(*result)
             if takes.vision is not None:
                 takes.vision.hands(*result)
@@ -1449,7 +1475,11 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "drill" and ev.sentence is None:
                 ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
-            if ev.kind in ("focus", "commit", "back", "rewind", "palm_hold", "palm_stop"):
+            if ev.kind == "undo":  # a thumbs-up held in Prepare after an edit
+                view.note, until = takes.undo(), start + NOTE_S
+            elif ev.kind == "retry":  # an open palm held in Review with failed analysis
+                view.note, until = takes.retry(), start + NOTE_S
+            elif ev.kind in ("focus", "commit", "commit_ignored", "back", "rewind", "palm_hold", "palm_stop"):
                 until = apply_event(ev, view, overlay, log, speaker, takes, grammar)
             elif note := takes.handle(ev, modes, view, overlay):
                 view.note, until = note, start + NOTE_S
@@ -1468,6 +1498,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         view.calibration = takes.vision.phase(start - t0) \
             if takes.vision is not None and modes.mode == "count_in" else None
         view.hold_progress = modes.done.progress
+        view.retry_progress, view.undo_ready = modes.retry_progress, modes.mode == "prepare" and takes.can_undo()
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
         if modes.mode in ("prepare", "review") and result is not None:
             sync_view(grammar, view, overlay)

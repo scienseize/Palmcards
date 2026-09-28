@@ -272,7 +272,7 @@ def test_word_flow_browse_focus_ring_turn_commit():
     events, t = run(g, lift(0.4, 0.2 * H), t)
     assert events == [] and g.state.mode == "focus"
 
-    events, t = run(g, hold(open_palm, 0.3), t)
+    events, t = run(g, hold(open_palm, RING_PALM_S), t)
     assert g.state.op == "ring"
     g.set_ring_labels(t, RING_NODES)
     _, t = run(g, hold(l_hand, 0.3, rotate=-10), t)  # the knob starts wherever the L is
@@ -290,10 +290,13 @@ def test_word_flow_browse_focus_ring_turn_commit():
 RING_NODES = ("imparted", "stamped", "inflicted", "imposed", "hear it")
 
 
+RING_PALM_S = OPS.play_hold_s + 0.3  # an open palm held until the ring opens (0.15 s to settle, then the hold)
+
+
 def ring_turned(steps_deg=(0.0,)):
     """A focused word, its ring open with RING_NODES, an L turned through the given tilts."""
     g = Grammar((W, H))
-    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, 0.3))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, RING_PALM_S))
     g.set_ring_labels(t, RING_NODES)
     for deg in steps_deg:
         _, t = run(g, hold(l_hand, 0.3, rotate=deg), t)
@@ -314,7 +317,7 @@ def test_turning_back_to_the_start_is_the_original():
 
 def test_alternatives_arriving_mid_turn_keep_the_pick():
     g = Grammar((W, H))
-    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, 0.3))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, RING_PALM_S))
     g.set_ring_labels(t, ("imparted", "imposed", "hear it"))
     _, t = run(g, hold(l_hand, 0.3) + hold(l_hand, 0.3, rotate=16), t)
     assert g.state.ring_pick == "imposed"
@@ -351,7 +354,7 @@ def test_dropping_the_hand_backs_out_of_the_ring():
 def test_a_new_focus_starts_the_ring_again():
     g, t = ring_turned((0.0, 16.0))
     _, t = run(g, [None] * round((TIMING.drop_s + 0.2) / DT), t)
-    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, 0.3), t)
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + lift(0.4, 0.2 * H) + hold(open_palm, RING_PALM_S), t)
     assert g.state.op == "ring" and g.state.ring_pick == "imparted" and g.state.ring_turn == 0
 
 
@@ -390,7 +393,7 @@ def test_a_pointing_thumb_resting_near_the_index_does_not_hold_the_cursor():
 
 def test_pinch_right_after_commit_does_not_refocus():
     g = Grammar((W, H))
-    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.3))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, RING_PALM_S))
     events, t = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
     assert [e.kind for e in events] == ["commit"]
     events, t = run(g, hold(pinch, 0.5, origin=(960, 600 - 0.2 * H)), t)
@@ -401,7 +404,7 @@ def test_pinch_right_after_commit_does_not_refocus():
 
 def ring_focus():
     g = Grammar((W, H))
-    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.3))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, RING_PALM_S))
     assert g.state.op == "ring"
     return g, t
 
@@ -521,6 +524,70 @@ def test_whole_hand_below_bottom_band_counts_as_dropped():
     _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3))
     events, _ = run(g, hold(pinch, 1.1, origin=(960, H + 150)), t)  # fingertips in the band too
     assert [e.kind for e in events] == ["back"]
+
+
+def test_a_hand_low_in_the_frame_working_a_dial_is_not_dropped():
+    # Being in the frame's bottom band means "back out" only for a hand that isn't at work.
+    g, t = prepare_sentence_focus()
+    _, t = run(g, hold(l_hand, 0.3, rotate=-10), t)
+    assert g.state.op == "tone" and g.state.dialing
+    events, t = run(g, hold(l_hand, 1.5, rotate=-10, origin=(960, H + 150)), t)
+    assert events == [] and g.state.mode == "focus" and g.state.drop_progress == 0.0
+    events, _ = run(g, hold(fist, 1.2, origin=(960, H + 150)), t)  # put down: not working any more
+    assert [e.kind for e in events] == ["back"]
+
+
+def test_the_rings_palm_is_held_like_hear_it():
+    # A palm passing through on its way to another shape doesn't open the ring (and ask the LLM).
+    g = Grammar((W, H))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.2))
+    _, t = run(g, hold(open_palm, 0.4) + hold(one, 0.5), t)
+    assert g.state.op is None
+    _, t = run(g, hold(open_palm, RING_PALM_S), t)
+    assert g.state.op == "ring"
+
+
+def test_every_hold_forgives_a_short_misread_but_completes_only_on_its_pose():
+    m = ModeMachine((W, H))
+    frames = hold(fist, 0.6) + hold(one, 0.2) + hold(fist, 0.6)  # a 0.2 s misread in the middle
+    events, t = run(m, frames)
+    assert kinds(events) == ["count_in"]
+    m = ModeMachine((W, H))
+    events, _ = run(m, hold(fist, 0.9) + hold(flat, 0.5))  # opened before the end: no take, grace or not
+    assert events == [] and m.mode == "prepare"
+
+
+def test_a_thumbs_up_in_a_review_focus_does_nothing_and_leaving_review_takes_a_second():
+    m, t = reviewing()
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.2), t)
+    assert m.state.mode == "focus"
+    events, t = run(m, hold(thumbs_up, 2.0), t)
+    assert events == [] and m.mode == "review" and m.done.progress == 0.0
+    events, t = run(m, [None] * round((TIMING.drop_s + 0.3) / DT), t)  # backed out, hand down
+    events, _ = run(m, hold(thumbs_up, REHEARSE.start_hold_s + 0.1), t)
+    assert kinds(events) == ["to_prepare"]
+
+
+def test_a_thumbs_up_held_in_prepare_undoes_an_edit():
+    m = ModeMachine((W, H))
+    events, t = run(m, hold(thumbs_up, 2.0))
+    assert events == []  # nothing to undo: a thumbs-up does nothing
+    m.undo_ready = True
+    events, t = run(m, [None] * 12 + hold(thumbs_up, REHEARSE.start_hold_s + 0.1), t)
+    assert kinds(events) == ["undo"] and m.mode == "prepare"
+    _, t = run(m, [None] * 12, t)
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3), t)  # a focus: the hand is at work
+    events, _ = run(m, hold(thumbs_up, 2.0), t)
+    assert "undo" not in kinds(events)
+
+
+def test_an_open_palm_held_in_review_retries_failed_analysis():
+    m, t = reviewing()
+    events, t = run(m, hold(open_palm, 1.5), t)
+    assert "retry" not in kinds(events)  # nothing failed
+    m.retry_ready = True
+    events, t = run(m, [None] * 12 + hold(open_palm, REHEARSE.start_hold_s + 0.3), t)
+    assert kinds(events) == ["retry"] and not m.retry_ready and m.mode == "review"
 
 
 def test_low_wrist_with_raised_fingers_stays_focused_and_operates():
@@ -674,7 +741,7 @@ def test_a_thumbs_up_goes_from_review_back_to_prepare():
     events, t = run(m, hold(thumbs_up, 1.7), t)
     assert kinds(events) == ["to_prepare"] and m.mode == "prepare" and m.grammar.operations
     # Prepare's operations are back, and a fist starts the next take.
-    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, 0.3), t)
+    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, RING_PALM_S), t)
     assert m.state.op == "ring"
     _, t = run(m, [None] * 40, t)
     events, _ = run(m, hold(fist, 1.3), t)
@@ -909,7 +976,16 @@ def test_paragraph_commit_in_review_is_not_a_drill():
     t = paragraph_focus(m, t)
     _, t = run(m, hold(flat, 0.2), t)
     events, _ = run(m, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
-    assert kinds(events) == ["commit"] and m.mode == "review"
+    # Only a sentence drills: the paragraph stays focused and the app says what does.
+    assert kinds(events) == ["commit_ignored"] and m.mode == "review" and m.state.mode == "focus"
+
+
+def test_a_pinch_and_lift_with_nothing_to_use_keeps_the_focus():
+    g = Grammar((W, H))
+    _, t = run(g, hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.3))  # a word focused, no ring
+    assert g.state.mode == "focus" and g.state.op is None
+    events, _ = run(g, hold(pinch, 0.2) + lift(0.4, 0.2 * H), t)
+    assert kinds(events) == ["commit_ignored"] and g.state.mode == "focus"
 
 
 def test_one_finger_sentence_in_review_drills_with_pinch_and_lift():
