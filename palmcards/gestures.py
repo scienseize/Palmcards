@@ -79,7 +79,7 @@ HAND_CONNECTIONS = [
 ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", "PINCH", "FIST", "NONE"
 THUMB_UP = "THUMB_UP"  # "done": no finger out, the thumb up (never a fist, so it never starts a take)
 CARRIED = "CARRIED"  # not a pose: HandTrack.first_pose of a hand in view across a mode change
-# Every hold (a fist to start, a thumbs-up for done, crossed fingers for undo, an open palm to hear, play, stop,
+# Every hold (a fist to start, a thumbs-up for done, fingers crossed for undo, an open palm to hear, play, stop,
 # open the ring or retry) forgives the same misreadings in the middle and completes only on a
 # frame that reads its pose (or, with the hand lost, none). The thumbs-up reads the raw pose,
 # the others the stable pose: a misread under TIMING.stable_s never reaches the stable pose,
@@ -289,18 +289,22 @@ def _segments_cross(p1, p2, p3, p4) -> bool:
     return side(p1, p2, p3) * side(p1, p2, p4) < 0 and side(p3, p4, p1) * side(p3, p4, p2) < 0
 
 
-def crossed(a: HandTrack, b: HandTrack) -> bool:
-    """Two index fingers crossed into an X (Prepare's undo): both hands pointing
-    (the index out, the other three curled; the thumb either way), their
-    knuckle-to-tip segments crossing at OPS.cross_min_deg or more."""
-    for tr in (a, b):
-        if tr.hand is None or tr.feat is None or not tr.feat.extended[0] or any(tr.feat.extended[1:]):
-            return False
-    (p1, p2), (p3, p4) = ((tr.hand.points[INDEX_MCP], tr.hand.points[INDEX_TIP]) for tr in (a, b))
-    if not _segments_cross(p1, p2, p3, p4):
+def fingers_crossed(hand: Hand, f: Features | None = None) -> bool:
+    """Fingers crossed, index over middle (Prepare's undo): index and middle out,
+    ring and pinky curled, the two knuckle-to-tip lines crossing and the tips
+    swapped across the hand by OPS.crossed_swap palms or more. Two fingers held
+    together (TWO) run side by side and never cross. A crossed hand still reads
+    as TWO to the classifier (it browses sentences meanwhile)."""
+    f = f or features(hand)
+    if not (f.extended[0] and f.extended[1]) or f.extended[2] or f.extended[3]:
         return False
-    angle = _angle_deg(np.asarray(p2) - np.asarray(p1), np.asarray(p4) - np.asarray(p3))
-    return min(angle, 180.0 - angle) >= OPS.cross_min_deg
+    p = hand.points
+    if not _segments_cross(p[INDEX_MCP], p[INDEX_TIP], p[MIDDLE_MCP], p[MIDDLE_TIP]):
+        return False
+    across = np.asarray(p[MIDDLE_MCP], float) - np.asarray(p[INDEX_MCP], float)  # knuckle order across the hand
+    tips = np.asarray(p[MIDDLE_TIP], float) - np.asarray(p[INDEX_TIP], float)
+    order = float(np.dot(tips, across)) / max(float(np.linalg.norm(across)) * hand.size, 1e-9)
+    return order <= -OPS.crossed_swap
 
 
 def is_pinch(f: Features, was_pinching: bool) -> bool:
@@ -1238,13 +1242,12 @@ class ModeMachine:
         self._back_to = "prepare"
         self._fist_since: float | None = None
         self._fist_last = -math.inf
-        # Set by the app each frame: an edit to undo (Prepare: two index fingers crossed, held,
-        # undo it), and failed analysis to retry (Review: an open palm held, no focus, retries it).
+        # Set by the app each frame: an edit to undo (Prepare: fingers crossed, held, undo it), and failed analysis to retry (Review: an open palm held, no focus, retries it).
         self.undo_ready = False
         self.undo_progress = 0.0
         self._x_since: float | None = None
         self._x_last = -math.inf
-        self._x_spent = False  # the X that undid, held on: it must come apart before it undoes again
+        self._x_spent = False  # the crossed fingers that undid, held on: uncrossed before they undo again
         self.retry_ready = False
         self.retry_progress = 0.0
         self._retry_since: float | None = None
@@ -1360,14 +1363,14 @@ class ModeMachine:
         return self.start_progress >= 1.0
 
     def _undo_held(self, t: float, present: list[HandTrack]) -> bool:
-        """Prepare, an edit made (undo_ready), no focus: the two index fingers
-        crossed into an X (`crossed`), held as long as a fist to start a take.
-        Misreads forgiven like every hold (HOLD_GRACE_S: crossed fingers hide
-        each other); it completes only on a frame that reads the X. Once per
-        X: held on, it doesn't undo again (one undo per crossing)."""
+        """Prepare, an edit made (undo_ready), no focus: fingers crossed
+        (`fingers_crossed`), held as long as a fist to start a take. Misreads
+        forgiven like every hold (HOLD_GRACE_S); it completes only on a frame
+        that reads the fingers crossed. Once per crossing: held on, it doesn't
+        undo again."""
         g = self.grammar.state
-        x = self.undo_ready and g.mode != "focus" and len(present) >= 2 \
-            and any(crossed(a, b) for i, a in enumerate(present) for b in present[i + 1:])
+        x = self.undo_ready and g.mode != "focus" \
+            and any(tr.hand is not None and fingers_crossed(tr.hand, tr.feat) for tr in present)
         if self._x_spent:
             if x:
                 self._x_last = t

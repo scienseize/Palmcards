@@ -2221,3 +2221,22 @@ Tests: pytest (full) -> 616 passed. New: crossed() on crossed, apart, parallel a
   doesn't.
 ```
 
+```text
+Date: 2026-09-28
+Phase / issue IDs: undo by fingers crossed on one hand (user: crossing two index fingers "does not get
+  recognized"; asked whether crossing index and middle of one hand is trackable)
+Status: implemented; automated checks passed; the user's camera check pending
+Finding: the gesture logs of the X attempts show one hand tracked (the second appeared once, as OPEN):
+  MediaPipe merges overlapping hands. The user then recorded a trace of crossed fingers (index over
+  middle) and of two fingers together (20260928-230029.trace.jsonl): crossed, the index and middle
+  knuckle-to-tip lines cross in every frame with the tips swapped by 0.05-0.22 palms; together they
+  never cross and keep their order by +0.10 or more.
+Changes: gestures.fingers_crossed(hand) replaces the two-hand crossed(); OPS.crossed_swap 0.05 replaces
+  cross_min_deg; ModeMachine._undo_held reads any hand's crossed fingers (the hand still reads as TWO
+  and browses sentences meanwhile). UNDO_HINT "CROSS YOUR FINGERS: UNDO". samples/poses/
+  crossed-fingers-20260928.json: 55 crossed and 39 together frames from the trace.
+Tests: pytest (full) -> 615 passed. New: fingers_crossed on the user's frames (>= 95% of the crossed,
+  none of the together), and the undo flow driven by them (once per crossing, not by a thumbs-up, not
+  by two fingers together, not in a focus).
+```
+

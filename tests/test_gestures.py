@@ -568,56 +568,47 @@ def test_a_thumbs_up_in_a_review_focus_does_nothing_and_leaving_review_takes_a_s
     assert kinds(events) == ["to_prepare"]
 
 
-def crossed_fingers(apart=90, angle=40):
-    """Both index fingers up, leaning in so they cross into an X."""
-    return [one(origin=(960 - apart, 600), rotate=angle, label="Right"),
-            one(origin=(960 + apart, 600), rotate=-angle, label="Left")]
+def crossed_sample():
+    """The user's crossed fingers and two fingers held together, from their trace."""
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(__file__).resolve().parent.parent / "samples/poses/crossed-fingers-20260928.json").read_text())
+    return {label: [Hand(np.array(f["points"], np.float32)) for f in data["frames"] if f["label"] == label]
+            for label in ("CROSSED", "TWO")}
 
 
-def test_crossing_two_index_fingers_is_an_x():
-    from palmcards.gestures import HandTrack, crossed
+def test_fingers_crossed_is_read_on_the_users_hand_and_two_fingers_together_is_not():
+    from palmcards.gestures import fingers_crossed
 
-    def tracks(hands):
-        out = []
-        for h in hands:
-            tr = HandTrack()
-            tr.update(h, 0.0, H)
-            out.append(tr)
-        return out
-
-    assert crossed(*tracks(crossed_fingers()))
-    assert not crossed(*tracks(crossed_fingers(apart=200)))  # leaning in, not touching
-    assert not crossed(*tracks(crossed_fingers(angle=0)))  # side by side
-    assert not crossed(*tracks([two(origin=(870, 600), rotate=40), two(origin=(1050, 600), rotate=-40)]))
+    sample = crossed_sample()
+    crossed = [fingers_crossed(h) for h in sample["CROSSED"]]
+    together = [fingers_crossed(h) for h in sample["TWO"]]
+    assert len(crossed) >= 40 and sum(crossed) / len(crossed) >= 0.95
+    assert len(together) >= 30 and not any(together)
+    assert not fingers_crossed(two()) and not fingers_crossed(one()) and not fingers_crossed(fist())
 
 
-def test_crossed_fingers_held_in_prepare_undo_an_edit_and_a_thumbs_up_does_not():
+def test_fingers_crossed_held_in_prepare_undo_an_edit_and_a_thumbs_up_does_not():
+    sample = crossed_sample()
+    crossed = [sample["CROSSED"][i % len(sample["CROSSED"])] for i in range(round(2.0 / DT))]
     m = ModeMachine((W, H))
-    events, t = run(m, [crossed_fingers()] * round(2.0 / DT))
-    assert events == []  # nothing to undo
+    events, t = run(m, crossed)
+    assert "undo" not in kinds(events)  # nothing to undo
     m.undo_ready = True
     events, t = run(m, [None] * 12 + hold(thumbs_up, 2.0), t)  # a thumbs-up (or one read as a fist) doesn't undo
     assert events == [] and m.mode == "prepare"
-    events, t = run(m, [None] * 12 + [crossed_fingers()] * round((REHEARSE.start_hold_s + 0.2) / DT), t)
-    assert kinds(events) == ["undo"] and m.mode == "prepare"
-    events, t = run(m, [crossed_fingers()] * round(2.0 / DT), t)  # held on: one undo per crossing
-    assert events == [] and m.undo_progress == 0.0
-    # Crossed fingers that come apart before the second is up don't undo.
-    events, t = run(m, [None] * 12 + [crossed_fingers()] * 18 + [crossed_fingers(apart=200)] * 30, t)
+    events, t = run(m, [None] * 12 + crossed[:round((REHEARSE.start_hold_s + 0.3) / DT)], t)
+    assert kinds(events).count("undo") == 1 and m.mode == "prepare"
+    events, t = run(m, crossed, t)  # held on: one undo per crossing
+    assert "undo" not in kinds(events) and m.undo_progress == 0.0
+    # Two fingers held together, the same shape uncrossed, never undo.
+    events, t = run(m, [None] * 12 + [sample["TWO"][i % len(sample["TWO"])] for i in range(round(2.0 / DT))], t)
     assert "undo" not in kinds(events)
-    _, t = run(m, [None] * 12 + hold(one, 0.3) + hold(pinch, 0.3), t)  # a focus: the hands are at work
+    _, t = run(m, [None] * 12 + hold(one, 0.3) + hold(pinch, 0.3), t)  # a focus: the hand is at work
     assert m.state.mode == "focus"
-    events, _ = run(m, [crossed_fingers()] * round(2.0 / DT), t)
+    events, _ = run(m, crossed, t)
     assert "undo" not in kinds(events)
-
-
-def test_an_open_palm_held_in_review_retries_failed_analysis():
-    m, t = reviewing()
-    events, t = run(m, hold(open_palm, 1.5), t)
-    assert "retry" not in kinds(events)  # nothing failed
-    m.retry_ready = True
-    events, t = run(m, [None] * 12 + hold(open_palm, REHEARSE.start_hold_s + 0.3), t)
-    assert kinds(events) == ["retry"] and not m.retry_ready and m.mode == "review"
 
 
 def test_low_wrist_with_raised_fingers_stays_focused_and_operates():

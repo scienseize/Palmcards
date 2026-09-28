@@ -127,7 +127,7 @@ BROWSE_HINTS = {
 }
 BROWSE_ENTRY = "FINGER UP: BROWSE"  # nothing up yet: how to start browsing
 NEW_TAKE = "RAISE A FIST: NEW TAKE"
-UNDO_HINT = "CROSS TWO FINGERS: UNDO"  # Prepare, after an edit: the index fingers crossed (an X), held (u too)
+UNDO_HINT = "CROSS YOUR FINGERS: UNDO"  # Prepare, after an edit: index over middle, one hand, held (u too)
 NEEDS_LLM = f"PREVIEW ONLY: {NEEDS_AI}"
 TONE_NAMES = {"WARM": "WARM", "COLD": "FORMAL", "ORIGINAL": "ORIGINAL", "NEUTRAL": "ORIGINAL"}  # the gauge's ends
 GROWN = 0.99  # a focus this far grown is drawn as focused (the last step is under 2 px)
@@ -428,8 +428,8 @@ class ViewState:
     palm_spent: bool = False  # the palm up started or ended what plays: it must leave before it acts
     shape: str | None = None  # the hand shape that set the browse level (Review: a pinch or a fold closes it)
     scrolling: int = 0  # browsing at the hand box's top (-1) or bottom (+1) band: the notes scroll
-    undo_ready: bool = False  # Prepare: an edit to undo (two index fingers crossed, held, or u)
-    undo_progress: float = 0.0  # Prepare: the crossed fingers held toward undo, 0..1
+    undo_ready: bool = False  # Prepare: an edit to undo (fingers crossed, held, or u)
+    undo_progress: float = 0.0  # Prepare: fingers crossed, held toward undo, 0..1
     retry_progress: float = 0.0  # Review: an open palm held toward retrying failed analysis, 0..1
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
 

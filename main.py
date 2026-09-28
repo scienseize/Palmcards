@@ -1475,7 +1475,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "drill" and ev.sentence is None:
                 ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
-            if ev.kind == "undo":  # two index fingers crossed, held, in Prepare after an edit
+            if ev.kind == "undo":  # fingers crossed, held, in Prepare after an edit
                 view.note, until = takes.undo(), start + NOTE_S
             elif ev.kind == "retry":  # an open palm held in Review with failed analysis
                 view.note, until = takes.retry(), start + NOTE_S

@@ -49,7 +49,7 @@ def test_hints_follow_what_the_state_machine_does():
     scrolling = ViewState(mode="browse", level="word", scrolling=1)
     assert ov.label_lines(scrolling)[1] == "SCROLLING DOWN  /  MOVE TO THE MIDDLE: STOP"
     # An edit to undo: the idle hint offers the thumbs-up; while held, a bar.
-    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("RAISE A FIST: NEW TAKE · CROSS TWO FINGERS: UNDO")
+    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("RAISE A FIST: NEW TAKE · CROSS YOUR FINGERS: UNDO")
     assert ov.label_lines(ViewState(undo_progress=0.5))[1] == "UNDO: HOLD"
     assert ov.label_lines(ViewState(app="review", hold_progress=0.5))[1] == "BACK TO PREPARE: HOLD"
     assert ov.label_lines(ViewState(app="review", retry_progress=0.5))[1] == "RETRY ANALYSIS: HOLD"

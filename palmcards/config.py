@@ -155,10 +155,13 @@ class Ops:
     # While it plays, a new open palm (the hand has left the palm or the frame
     # since playback started) held this long stops it.
     stop_hold_s: float = 0.3
-    # Undo in Prepare: the two index fingers crossed into an X (both hands pointing, the
-    # knuckle-to-tip segments crossing at this angle or more), held REHEARSE.start_hold_s.
-    # Two hands, and no pose a single hand makes: a thumbs-up read as a fist can't undo.
-    cross_min_deg: float = 35.0
+    # Undo in Prepare: fingers crossed (index over middle, one hand), held REHEARSE.start_hold_s.
+    # Crossed, the index and middle knuckle-to-tip lines cross and the tips swap order across
+    # the hand by at least this much (palm widths). On the user's trace (2026-09-28, samples/poses/
+    # crossed-fingers-20260928.json) crossed fingers swapped by 0.05-0.22 in every frame; two fingers
+    # held together normally never crossed and kept their order by +0.10 or more. (Two index
+    # fingers crossed into an X, tried first, never tracked: MediaPipe merges overlapping hands.)
+    crossed_swap: float = 0.05
 
 
 @dataclass(frozen=True)
