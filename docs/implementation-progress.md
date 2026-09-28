@@ -2156,3 +2156,19 @@ Tests: pytest (full) -> 603 passed; label, hint, scramble and take-label tests u
   three samples that differed before still differ, by replay timing).
 ```
 
+```text
+Date: 2026-09-28
+Phase / issue IDs: the thumbs-up that stops a take goes on to leave Review; a fist carried across a
+  mode change starts a take (user report; docs/gesture-matrix.md section 2)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: palmcards/gestures.py: DoneHold.reset(release) — when a thumbs-up is up at a mode change
+  (ModeMachine._enter), no hold begins until none has been seen for longer than done_grace_s; a
+  thumbs-up raised after the change counts at once. _enter marks every tracked hand's first_pose
+  CARRIED, so a hand in view across the change can't start a take by closing into a fist (one
+  raised anew still does; the fist hint explains it).
+Tests: pytest (full) -> 606 passed. New: a thumbs-up held on after stopping a take (and after a
+  cancelled count-in) stays in Review, misread frames don't count as it coming down, a fresh one
+  goes back; a fist formed by a hand kept up across the change doesn't start a take, one raised
+  anew does. The three fail on the previous gestures.py. The replay samples are unchanged.
+```
+

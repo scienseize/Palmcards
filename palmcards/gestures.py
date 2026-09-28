@@ -78,6 +78,7 @@ HAND_CONNECTIONS = [
 # Pose classes.
 ONE, TWO, FLAT, OPEN, L, PINCH, FIST, NONE = "ONE", "TWO", "FLAT", "OPEN", "L", "PINCH", "FIST", "NONE"
 THUMB_UP = "THUMB_UP"  # "done": no finger out, the thumb up (never a fist, so it never starts a take)
+CARRIED = "CARRIED"  # not a pose: HandTrack.first_pose of a hand in view across a mode change
 LEVEL_OF_SHAPE = {ONE: "word", TWO: "sentence", FLAT: "paragraph"}
 # Review has nothing to do with a word: one finger browses sentences there, so
 # no hand shape leads to a dead end.
@@ -327,6 +328,8 @@ class HandTrack:
         self.stable = NONE
         # First stable pose other than NONE since the hand came into view: a
         # take starts only from a fist raised as such, not one formed mid-gesture.
+        # CARRIED once the mode changes with the hand in view (ModeMachine._enter):
+        # that hand came into view for something else, so its fist is formed, not raised.
         self.first_pose: str | None = None
         self.pinching = False
         self.pinch_start: float | None = None
@@ -1095,19 +1098,33 @@ class DoneHold:
     """A thumbs-up held REHEARSE.done_hold_s, by either hand, anywhere in the
     frame: "done" (stop the take, cancel the count-in, back to Prepare). It
     counts the raw pose frame by frame, forgiving short misreads
-    (REHEARSE.done_grace_s), so a blurry frame doesn't restart it."""
+    (REHEARSE.done_grace_s), so a blurry frame doesn't restart it.
+
+    After a mode change it waits for the thumb to come down (no thumbs-up for
+    longer than done_grace_s) before a hold can begin: the thumbs-up that
+    stopped a take, held on, must not go on to leave Review too."""
 
     def __init__(self):
         self.reset()
 
-    def reset(self) -> None:
+    def reset(self, release: bool = False) -> None:
+        """`release`: a thumbs-up is up now; it doesn't count until it has come down."""
         self.progress = 0.0  # 0..1
         self._since: float | None = None
         self._last = -math.inf
+        self._waiting = release  # for the thumb to come down
 
     def update(self, tracks: dict[str, HandTrack], t: float) -> bool:
         """True once, when the hold completes."""
-        if any(tr.raw == THUMB_UP for tr in tracks.values()):
+        up = any(tr.raw == THUMB_UP for tr in tracks.values())
+        if self._waiting:
+            if up:
+                self._last = t
+            elif t - self._last > REHEARSE.done_grace_s:
+                self._waiting, self._last = False, -math.inf
+            self.progress = 0.0
+            return False
+        if up:
             self._last = t
             if self._since is None:
                 self._since = t
@@ -1250,7 +1267,13 @@ class ModeMachine:
         self.grammar.take_dial = mode == "review"
         self.grammar.shape_levels = REVIEW_LEVEL_OF_SHAPE if mode == "review" else LEVEL_OF_SHAPE
         self.grammar.palm_levels = ("sentence", "paragraph") if mode == "review" else ("sentence",)
-        self.done.reset()
+        # What a hand in view was doing carries over: the thumbs-up that ended a mode must come
+        # down before it counts again, and a hand that came into view before the change can't
+        # start a take by closing into a fist (a fist raised anew still can).
+        tracks = self.grammar.tracks.values()
+        self.done.reset(release=any(tr.raw == THUMB_UP and t - tr.last_seen <= TIMING.browse_lost_s for tr in tracks))
+        for track in tracks:
+            track.first_pose = CARRIED
         self._fist_since, self.start_progress = None, 0.0
         self.log(t, "mode", mode=mode)
 

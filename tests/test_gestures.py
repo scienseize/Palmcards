@@ -681,6 +681,43 @@ def test_a_thumbs_up_goes_from_review_back_to_prepare():
     assert kinds(events) == ["count_in"]
 
 
+def test_the_thumbs_up_that_stopped_a_take_held_on_does_not_leave_review():
+    # One thumbs-up kept up: it stopped the take, then went straight on to Prepare
+    # (the hold started again on Review's first frame).
+    m, t = rehearsing()
+    events, t = run(m, hold(thumbs_up, 1.7) + hold(thumbs_up, 3.0), t)
+    assert kinds(events) == ["take_stop"] and m.mode == "review" and m.done.progress == 0.0
+    # Down, then up again: a new hold, which does go back.
+    events, t = run(m, [None] * 12 + hold(thumbs_up, 1.7), t)
+    assert kinds(events) == ["to_prepare"] and m.mode == "prepare"
+    # A misread frame or two while it is still up doesn't count as it coming down.
+    m, t = rehearsing()
+    frames = hold(thumbs_up, 1.7) + [thumbs_up() if i % 7 else fist() for i in range(round(3.0 / DT))]
+    events, _ = run(m, frames, t)
+    assert kinds(events) == ["take_stop"] and m.mode == "review"
+
+
+def test_the_thumbs_up_that_cancelled_a_count_in_does_not_leave_review():
+    m, t = reviewing()
+    events, t = run(m, hold(fist, 1.3), t)
+    assert m.mode == "count_in"
+    events, t = run(m, hold(thumbs_up, 1.7) + hold(thumbs_up, 3.0), t)
+    assert kinds(events) == ["count_in_cancel"] and m.mode == "review"
+
+
+def test_a_fist_formed_by_a_hand_kept_up_across_a_mode_change_does_not_start_a_take():
+    # The fist that started the take, kept in view through it, stopped with a
+    # thumbs-up; folding the thumb back in is a fist formed, not one raised.
+    m, t = rehearsing()
+    events, t = run(m, hold(fist, 1.0) + hold(thumbs_up, 1.7), t)
+    assert kinds(events) == ["take_stop"] and m.mode == "review"
+    events, t = run(m, hold(fist, 2.0), t)
+    assert events == [] and m.mode == "review"
+    # Dropped out of view and raised as a fist: that one starts a take.
+    events, _ = run(m, [None] * 12 + hold(fist, 1.3), t)
+    assert kinds(events) == ["count_in"]
+
+
 def test_a_thumbs_up_never_starts_a_take():
     m = ModeMachine((W, H))
     events, t = run(m, hold(thumbs_up, 3.0))

@@ -59,7 +59,7 @@ The cursor is **relative**, not touch: a comfortable "hand box" on the right hal
 | Sentence | Two fingers together | Fold fingers to thumb | L-hand tilt = **tone dial** (tilt toward screen right = conversational/warm, left = formal/cold), dial is relative to the angle when it appears; stable cold/original/warm targets preview rewritten wording in place (original is exact). Hold an open palm for ~0.6 s: **hear it** speaks the whole selected sentence (macOS `say`, also key `a`); while it speaks the focus is held and a new open palm held ~0.3 s stops it (as in Review); release and hold again to replay | Pinch + lift |
 | Paragraph / section | Flat hand, fingers together | Fold fingers to thumb | Two L-hands: distance between index tips = **length** (apart = fuller, together = shorter), relative to the distance when both hands appear; stable 70%/100%/130% targets preview the wording and show requested versus actual word counts | Pinch + lift (either hand) |
 
-- Closed fist raised into view and held 1 s from Prepare: start a take (enters Rehearse). The fist must be the hand's first pose since it came into view: a fist formed from another pose (a slow pinch, a flat hand curling, a hand resting closed between gestures) never starts a take. To start one while browsing, drop the hand and raise a fist.
+- Closed fist raised into view and held 1 s from Prepare: start a take (enters Rehearse). The fist must be the hand's first pose since it came into view: a fist formed from another pose (a slow pinch, a flat hand curling, a hand resting closed between gestures) never starts a take, nor does a hand that was already in view when the mode changed (its first pose is `CARRIED`: the fist that started a take, kept up through it and a thumbs-up, closing again in Review). To start one while browsing, drop the hand and raise a fist.
 
 ### Rehearse (locked: a thumbs-up held is the one command)
 - Closed fist raised and held 1 s: start take after 3-2-1 count-in
@@ -128,7 +128,7 @@ Pose classes:
 | `FIST` | nothing extended, not `pinch`, not `THUMB_UP` |
 | `NONE` | anything else (including a spread V sign), ignored |
 
-A thumbs-up held `REHEARSE.done_hold_s` (1.5 s) is "done" (`gestures.DoneHold`, raw pose frame by frame, `done_grace_s` of misreads forgiven): stops a take or drill, cancels a count-in, goes from Review back to Prepare. The only command in a take.
+A thumbs-up held `REHEARSE.done_hold_s` (1.5 s) is "done" (`gestures.DoneHold`, raw pose frame by frame, `done_grace_s` of misreads forgiven): stops a take or drill, cancels a count-in, goes from Review back to Prepare. The only command in a take. A thumbs-up up when the mode changes must come down (none seen for longer than `done_grace_s`) before a new hold can begin, so the one that stopped a take or cancelled a count-in, held on, never goes on to leave Review.
 
 Temporal rules:
 - A pose must be stable for ~150 ms (about 5 frames) before the state machine acts on it.
