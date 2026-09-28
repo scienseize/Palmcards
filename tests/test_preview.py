@@ -297,7 +297,8 @@ def test_removed_delivery_marks_are_flagged_never_remapped(app):
     view.ops = OpsView(kind="tone", tone=1)
     takes.sync_edit(view, ov, 0)
     assert view.edit_preview.marks_warning
-    assert "LEGACY MARKS" in " ".join(row for _, row in ov.label_rows(view))
+    # Flagged on the preview (and the edit), not in the label: no screen offers a review of marks.
+    assert "LEGACY MARKS" not in " ".join(row for _, row in ov.label_rows(view))
     takes.sync_edit(view, ov, .3)
     a.complete(1, WARM)
     takes.poll_llm()
@@ -441,7 +442,7 @@ def test_long_preview_viewport_reaches_last_line_without_covering_header():
         scroll = ov.panel_max_scroll(view)
         assert scroll > 0
         height = ov.panel_view_h(panel)
-        assert ov._panel_top(height, panel.header_h) >= LABEL.min_top + sum(ov._label_row_h(i) for i, _ in ov.label_rows(view))
+        assert ov._panel_top(height, panel.header_h) >= ov.label_top + sum(ov._label_row_h(i) for i, _ in ov.label_rows(view))
         assert panel.rows[0][1] <= scroll + height
         first, last = np.full((h, w, 3), 80, np.uint8), np.full((h, w, 3), 80, np.uint8)
         ov.draw(first, view)

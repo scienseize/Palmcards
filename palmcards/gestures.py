@@ -341,6 +341,10 @@ class HandTrack:
         self._fold: deque[tuple[float, float]] = deque()
         self._fold_armed = False
 
+    def held(self, t: float) -> float:
+        """How long the stable pose has been the raw pose without a break (0 while another is on its way in)."""
+        return t - self._cand_since if self._cand == self.stable else 0.0
+
     def update(self, hand: Hand, t: float, frame_h: float) -> list[str]:
         """Returns event names: "pose" (stable pose changed), "fold", "commit"."""
         events: list[str] = []

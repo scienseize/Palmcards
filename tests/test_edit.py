@@ -68,7 +68,7 @@ def test_the_app_edits_and_undoes_and_rebuilds_its_board(tmp_path, monkeypatch):
     takes = takes_for(tmp_path, monkeypatch)
     assert takes.undo() == "NOTHING TO UNDO"
     note = takes.use_alternative(0, 5, "today")
-    assert note == '"TONIGHT." -> "TODAY"  /  U: UNDO' and takes.notes_version == 1
+    assert note == '"TONIGHT." → "TODAY"  /  U: UNDO' and takes.notes_version == 1
     assert takes.notes.sentences[0].text.endswith("today.") and takes.board.notes is takes.notes
     assert takes.log.entries[-1]["kind"] == "edit" and takes.log.entries[-1]["op"] == "alternative"
     assert takes.undo() == "UNDONE" and takes.notes.sentences[0].text.endswith("tonight.")

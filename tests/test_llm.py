@@ -343,7 +343,7 @@ def test_alternatives_become_ring_nodes_and_a_revision(tmp_path, monkeypatch):
     takes.ask_alternatives(0, 4)  # asked once only
     poll_until(takes, lambda: (0, 4) in takes.alternatives)
     assert takes.alternatives[(0, 4)] == ("present", "around") and len(provider.calls) == 1
-    assert takes.use_alternative(0, 4, "present").startswith('"HERE" -> "PRESENT"')
+    assert takes.use_alternative(0, 4, "present").startswith('"HERE" → "PRESENT"')
     assert takes.notes.sentences[0].words[4].text == "present" and takes.alternatives == {}
     assert takes.undo() == "UNDONE" and takes.notes.sentences[0].words[4].text == "here"
 
@@ -427,7 +427,7 @@ def test_an_answer_about_notes_that_changed_is_dropped(tmp_path, monkeypatch):
 def test_without_a_provider_nothing_is_sent_and_it_says_so(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, None)
     assert takes.assistant is None
-    assert "NEED THE OPTIONAL LLM" in takes.ask_rewrite("tone", (0,), 0.5)
+    assert "NEED THE OPTIONAL AI" in takes.ask_rewrite("tone", (0,), 0.5)
     takes.ask_alternatives(0, 1)  # silently nothing: the ring just has no alternatives
     assert takes.alternatives == {} and takes.poll_llm() == ""
 
@@ -435,7 +435,7 @@ def test_without_a_provider_nothing_is_sent_and_it_says_so(tmp_path, monkeypatch
 def test_the_cloud_without_a_key_is_off_and_says_so(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, None, make=lambda: llm.get_provider("anthropic"))
     assert takes.assistant is None and takes.llm == "" and "ANTHROPIC_API_KEY" in takes.llm_off
-    assert "NEED THE OPTIONAL LLM (SEE TERMINAL): NOTHING SENT" in takes.ask_rewrite("tone", (0,), 0.5)
+    assert "NEED THE OPTIONAL AI (SEE TERMINAL): NOTHING SENT" in takes.ask_rewrite("tone", (0,), 0.5)
 
 
 def usage_lines(takes):
@@ -509,7 +509,7 @@ def test_a_rejected_key_stays_on_the_alert_line(tmp_path, monkeypatch):
     takes.ask_alternatives(0, 1)
     notes = poll_until(takes, lambda: not takes.assistant.pending)
     assert notes == ["ALTERNATIVES FAILED: API KEY REJECTED, NOTHING CHANGED"]
-    assert takes.alert_line("prepare") == takes.alert_line("review") == "CLOUD LLM: API KEY REJECTED (SEE TERMINAL)"
+    assert takes.alert_line("prepare") == takes.alert_line("review") == "CLOUD AI: API KEY REJECTED (SEE TERMINAL)"
     assert takes.alert_line("rehearse") == ""  # a take has nothing to do with it
 
 

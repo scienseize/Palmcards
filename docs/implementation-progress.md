@@ -2106,3 +2106,53 @@ Changes: the w key and the replay_captions preference are gone: a replay always 
 Tests: pytest (full) -> 601 passed (captions shown with no preference set; the hint drawn top right;
   m saved, no replay_captions preference).
 ```
+
+```text
+Date: 2026-09-28
+Phase / issue IDs: UX review of docs/local/ux (505 replayed screens, white wall and dark room): every
+  finding fixed except the ones listed under "Not changed" (user: "implement all the fixes")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes:
+  Blockers: a gesture hint belongs to its mode (main: hint_note/hint_mode), so the Rehearse palm hint
+    no longer follows a take into Review, where a held thumbs-up leaves it. The fist hint is
+    "NEW TAKE: DROP THE HAND, RAISE A FIST" (it was cut before its instruction), only after the fist is
+    held FIST_HINT_S 0.6 s (HandTrack.held) and cleared by a focus: a fold or slow pinch passes through
+    a fist. A previewed word longer than the room on its row starts the next row (_word_zoom), so it
+    no longer runs 56 px into the face zone.
+  Label: its first row is fixed (LABEL.top, reserve (1, 2, 1) rows); every focus ends in
+    "DROP HAND: BACK"; the drop timer shows "BACKING OUT" + bar + "RAISE HAND TO STAY"; hints are
+    GESTURE: ACTION joined by " · " (the internal "  /  " no longer shows), packed whole onto two rows;
+    browsing says what focuses at that level and the other levels' shapes; nothing up says
+    "FINGER UP: BROWSE / RAISE A FIST: NEW TAKE" (Takes.status returns "" for Prepare); the word title is
+    the word as it is (no scramble, no punctuation, a shorter form rather than "FOCUS BY WORD…");
+    the ring says 'PINCH + LIFT: USE "X"' with the quote kept on one row (NBSP, no hyphen breaks);
+    tone/length previews are three rows (FOCUS BY ..., "TONE: WARM · NOT SAVED" / "LENGTH: 70% · NOT SAVED, 25 OF
+    ~25 WORDS" / "UPDATING…", then the hints; the legacy-marks line is gone from the label,
+    still flagged on the preview); the tone words are FORMAL / ORIGINAL / WARM everywhere (the gauge's
+    ends too). Review: "TAKE 1: 9 OF 9 SENTENCES SAID" (the table has the numbers), "TAKE 2 (2 OF 3)",
+    "TAKE 1" when there is one take in all, "PLAYING TAKE 1", "L, POINT: PICK A TAKE", "ANALYSING",
+    "SAVING…", pitch range in semitones ("PITCH (SEMITONES)" in the table). "CLOUD AI" chip and
+    "OPTIONAL AI" in the UI; "→" in the commit note; "LOOK INTO THE CAMERA LENS",
+    "READ THE ORANGE SENTENCE · 3"; "A PALM DOESN'T STOP A TAKE".
+  Pale wall: the scrim is full to 28% of the width (was 12%); the outline follows the text's opacity
+    (OUTLINE.gamma), so dimmed text is dim, not a dark outline round nothing; the hint row is brighter
+    (label_hint 205, operation 225; high contrast 235/245); the slate fill 215 (white on it 5:1 at the
+    column's edge); a dark rim (Colors.rim) under the hand box corners, fingertip dots, progress
+    tracks, the scrollbar (whose light track no longer reads as the thumb) and the tone knob.
+  Layout: the meaning box is solid; the ring's dimmed text is dimmer (ring_sentence 150, ring_context
+    70) and nodes show the word without punctuation; the gauge's end names sit on dark chips; an edit
+    preview keeps half a line from its context and its new wording is orange; Review's take chips are
+    centred on the sentence and its lines (Panel.block); a paragraph's summary is above it
+    (detail_first); "▲/▼ MORE" sit on the viewport's edge beside the scrollbar; the hand box's corners
+    leave the take table clear (TextOverlay.summary_box).
+  Not changed: the take table stays bottom right (it is wider than the text column; CLAUDE.md said
+    "under the notes", the code and the commit that placed it said bottom right: CLAUDE.md now says so);
+    the count-in digit stays in the hand zone (the text column is full of the section's notes); the
+    tone gauge stays vertical (Kat's reference); an edited word is not marked in the notes after a
+    commit (the label says what changed and U undoes); per-take lines stay in sentence case.
+Tests: pytest (full) -> 603 passed; label, hint, scramble and take-label tests updated to the new
+  wording, new: the label never cuts the focused word or a quoted pick, a single take's status, the fist
+  hint's dwell. Screens: scripts/ux_screens.py --samples 20260926-193557 -> docs/local/ux-fixed (the
+  three samples that differed before still differ, by replay timing).
+```
+

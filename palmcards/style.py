@@ -39,27 +39,34 @@ class Colors:
     text: RGBA = (238, 238, 238, 245)
     unit_fill: RGBA = (255, 140, 0, 235)
     unit_text: RGBA = (20, 20, 20, 255)
-    context_fill: RGBA = (62, 74, 122, 165)
+    context_fill: RGBA = (62, 74, 122, 215)  # white on it holds 5:1 even where the scrim fades on a pale wall
     orange: RGBA = (255, 140, 0, 255)
     # Highlighted text (the current sentence, the focused word): a little
     # deeper than the fills' orange, so it holds up on a bright wall.
     orange_text: RGBA = (240, 112, 0, 255)
     # The label, brightest to dimmest (with weight and size: TYPE.label, operation, hint).
     label_state: RGBA = (255, 140, 0, 255)  # BROWSE BY WORD
-    label_operation: RGBA = (255, 140, 0, 205)  # what the operation is doing
-    label_hint: RGBA = (255, 140, 0, 155)  # the gesture hint
+    label_operation: RGBA = (255, 140, 0, 225)  # what the operation is doing
+    # The gesture hint: smallest, but what tells you what you can do, so not
+    # faint (at 155 it measured 3.6:1 in a dark room, ~1.5:1 on a pale wall).
+    label_hint: RGBA = (255, 140, 0, 205)
     # Dimmed text is white made see-through, not grey: grey vanishes on a pale wall.
     dim: RGBA = (255, 255, 255, 179)  # Rehearse: the section's other sentences; a focused word's sentence
     faint: RGBA = (255, 255, 255, 60)  # context around a focused unit
     focus_text: RGBA = (245, 245, 245, 255)  # enlarged unit in the focus panel
     # While the options ring is open the text stays readable, dimmed, under the bubble map.
-    ring_sentence: RGBA = (255, 255, 255, 179)
-    ring_context: RGBA = (255, 255, 255, 95)
+    ring_sentence: RGBA = (255, 255, 255, 150)
+    ring_context: RGBA = (255, 255, 255, 70)  # what peeks out between the nodes stays in the background
     # A soft dark halo around every glyph instead of a box behind the text:
     # the video stays visible between the lines. Its alpha is the halo's strength.
     shadow: RGBA = (0, 0, 0, 110)
-    # A dark outline round every glyph drawn straight on the video (its width: OUTLINE).
+    # A dark outline round every glyph drawn straight on the video (its width: OUTLINE),
+    # as strong as the text is opaque (OUTLINE.gamma), so dimmed text stays dim on a pale wall.
     outline: RGBA = (0, 0, 0, 150)
+    # A dark rim under the light marks drawn straight on the video (the hand box's
+    # corners, fingertip dots, progress tracks, the scrollbar, the tone knob): on a
+    # pale wall they would vanish, in a dark room it doesn't show.
+    rim: RGBA = (0, 0, 0, 110)
     # Chips and nodes.
     chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node
     chip_text: RGBA = (20, 20, 20, 255)
@@ -75,7 +82,7 @@ class Colors:
     alert_fill: RGBA = (170, 40, 30, 230)
     label_fill: RGBA = (10, 10, 12, 190)  # behind the bottom-left pills
     alert_text: RGBA = (255, 255, 255, 255)
-    scroll_track: RGB = (90, 90, 90)
+    scroll_track: RGB = (160, 160, 160)
     # Every progress bar (BAR): a faint white track, filled in orange.
     bar_track: RGBA = (255, 255, 255, 64)
     bar_fill: RGBA = (255, 140, 0, 255)
@@ -122,14 +129,14 @@ class Scrim:
     so it settles in about a second without flickering. Strong on a white
     wall, faint in a dark room. alpha_max 0 turns it off."""
     alpha_min: float = 0.15  # darkest room: a faint scrim
-    alpha_max: float = 0.72  # white wall
+    alpha_max: float = 0.76  # white wall
     dark: float = 0.20  # brightness 0..1 at or below which the scrim is alpha_min
     bright: float = 0.80  # ... at or above which it is alpha_max
     percentile: float = 75  # of the pixels' brightness: bright patches under the text count
     sample_every: int = 5  # frames
     sample_step: int = 8  # px between sampled pixels
     smooth: float = 0.15  # share of the way to the new level per sample
-    full: float = 0.12  # x frame width
+    full: float = 0.28  # x frame width: most of the text column (it ends at 0.36)
 
 
 @dataclass(frozen=True)
@@ -143,8 +150,11 @@ class Fill:
 @dataclass(frozen=True)
 class Outline:
     """The dark outline round text drawn straight on the video (Pillow's
-    stroke; colour and opacity: Colors.outline). Text on a fill has none."""
+    stroke; colour and opacity: Colors.outline). Text on a fill has none.
+    Its opacity follows the text's: x (text alpha) ** gamma, so faint context
+    is not a dark outline round nothing on a pale wall."""
     width: int = 2  # px; 0 turns it off
+    gamma: float = 0.75
 
 
 @dataclass(frozen=True)
@@ -257,9 +267,18 @@ class Chips:
 class Label:
     """Kat's state label above the text box, no box: the state (TYPE.label),
     the operation (TYPE.operation, dimmer), the gesture hint (TYPE.hint,
-    smallest, dimmest). Each wraps to the text column, up to max_rows rows."""
+    smallest, dimmest). Each wraps to the text column, up to max_rows rows.
+
+    Its first row is always at `top` (x the UI size, from the frame's top
+    edge), whatever follows it: the room reserved under it holds the state,
+    two rows of operation and a row of hint, and a hint's second row fits
+    whenever the operation takes one. A label longer than that pushes a
+    focused unit's panel down (an edit preview) or, anywhere else, starts
+    higher, never above min_top."""
     max_rows: tuple[int, int, int] = (1, 2, 2)
-    min_top: int = 4  # px from the frame's top edge
+    reserve: tuple[int, int, int] = (1, 2, 1)  # rows reserved under `top`, per line
+    top: float = 1.0  # x the UI size: 26 px at 720p
+    min_top: int = 4  # px from the frame's top (and the pills' from its bottom)
 
 
 @dataclass(frozen=True)
@@ -355,7 +374,7 @@ class Gauge:
     knob_outline: int = 2
     closing_knob_outline: int = 3  # while the thumb closes into a pinch: the value is held
     rubber_max: float = 0.3  # past an end the knob goes at most this far on, x the half track
-    labels: tuple[str, str] = ("formal", "conversational")
+    labels: tuple[str, str] = ("FORMAL", "WARM")  # the label's words for the same ends (render.TONE_NAMES)
 
 
 @dataclass(frozen=True)
@@ -521,11 +540,11 @@ SHADOW = Shadow()
 OUTLINE = Outline()
 # Preferences > high contrast (key c): dimmed text much brighter, context
 # readable, a stronger halo; the highlight stays orange.
-HIGH_CONTRAST = replace(COLORS, text=(255, 255, 255, 255), context_fill=(50, 62, 115, 215),
+HIGH_CONTRAST = replace(COLORS, text=(255, 255, 255, 255),
                         dim=(255, 255, 255, 215), faint=(255, 255, 255, 130),
                         ring_sentence=(255, 255, 255, 215), ring_context=(255, 255, 255, 55),
                         shadow=(0, 0, 0, 240), outline=(0, 0, 0, 220),
-                        label_operation=(255, 140, 0, 230), label_hint=(255, 140, 0, 205),
+                        label_operation=(255, 140, 0, 245), label_hint=(255, 140, 0, 235), context_fill=(50, 62, 115, 235),
                         bar_track=(255, 255, 255, 110),
                         label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255),
                         node_outline_dim=(245, 245, 245, 160))

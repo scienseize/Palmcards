@@ -74,12 +74,17 @@ def test_the_tutorial_moves_on_as_each_gesture_is_done():
 
 def test_hints_say_why_a_gesture_did_nothing():
     formed = state(FIST, first=PINCH, mode="browse")
-    assert "RAISED CLOSED" in main.nonactivation_hint("prepare", formed, 0.0)
+    assert main.nonactivation_hint("prepare", formed, 0.0) == main.FIST_HINT
     assert main.nonactivation_hint("prepare", state(FIST, first=FIST), 0.0) == ""  # a real start
+    # A fold or a slow pinch passes through a fist on its way to a focus: only a fist held says so.
+    formed.primary.held = lambda t: t
+    assert main.nonactivation_hint("prepare", formed, 0.0, t=0.3) == ""
+    assert main.nonactivation_hint("prepare", formed, 0.0, t=main.FIST_HINT_S) == main.FIST_HINT
     assert main.nonactivation_hint("rehearse", state(OPEN, first=OPEN), 0.5) == ""  # not held long yet
-    # An open palm stopped takes before the thumbs-up did: held on, it says what does.
-    assert main.nonactivation_hint("rehearse", state(OPEN, first=OPEN), 1.0) == "TO STOP: THUMB UP, HELD"
-    assert main.nonactivation_hint("count_in", state(OPEN, first=OPEN), 1.0) == "TO CANCEL: THUMB UP, HELD"
+    # An open palm stopped takes before the thumbs-up did: held on, it says it no longer does
+    # (the hint row under it says what does).
+    assert main.nonactivation_hint("rehearse", state(OPEN, first=OPEN), 1.0) == main.PALM_HINT["rehearse"]
+    assert main.nonactivation_hint("count_in", state(OPEN, first=OPEN), 1.0) == main.PALM_HINT["count_in"]
 
 
 def test_contrast_tutorial_card_and_hand_area_are_drawn(restore):

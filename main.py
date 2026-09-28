@@ -126,7 +126,6 @@ from palmcards.render import (
 from palmcards.motion import Spring
 from palmcards.review import Board
 from palmcards.sounds import Cues
-from palmcards.metrics import summary as metrics_summary
 from palmcards.pick import Picker
 from palmcards.playback import ClipPlayer, Playback, clip_marks, clip_span, replay_words, span_clip
 from palmcards.video import VideoReader, VideoWriter
@@ -210,17 +209,25 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
     return "review", (sentence,), board.shown(sentence)
 
 
-def nonactivation_hint(mode: str, gs, open_s: float) -> str:
+FIST_HINT = "NEW TAKE: DROP THE HAND, RAISE\u00a0A\u00a0FIST"  # it wraps at the comma, not before "A FIST"
+PALM_HINT = {"rehearse": "A PALM DOESN'T STOP A TAKE", "count_in": "A PALM DOESN'T CANCEL"}
+FIST_HINT_S = 0.6  # a fist formed from another pose held this long before its hint: a fold or a slow
+#                    pinch passes through a fist on its way to a focus, and that is no fist at all
+
+
+def nonactivation_hint(mode: str, gs, open_s: float, t: float | None = None) -> str:
     """Why a gesture the camera sees is not doing anything, when that's likely
-    to puzzle: a fist formed from another pose, an open palm held during a take
-    (it stopped takes before the thumbs-up did)."""
+    to puzzle: a fist formed from another pose and held, an open palm held
+    during a take (it stopped takes before the thumbs-up did; the label's hint
+    row already says what does)."""
     p = gs.primary
     if p is None:
         return ""
-    if mode in ("prepare", "review") and p.stable == FIST and p.first_pose != FIST and gs.mode != "focus":
-        return "A FIST STARTS A TAKE ONLY WHEN RAISED CLOSED: DROP THE HAND, THEN RAISE A FIST"
+    if mode in ("prepare", "review") and p.stable == FIST and p.first_pose != FIST and gs.mode != "focus" \
+            and (t is None or p.held(t) >= FIST_HINT_S):
+        return FIST_HINT
     if mode in ("count_in", "rehearse") and p.stable == OPEN and open_s > 0.8:
-        return "TO STOP: THUMB UP, HELD" if mode == "rehearse" else "TO CANCEL: THUMB UP, HELD"
+        return PALM_HINT[mode]
     return ""
 KEY_COMMANDS = {ord("t"): "start", ord("x"): "stop", ord("n"): "next", ord("b"): "previous",
                 ord("p"): "prepare"}  # ModeMachine.command
@@ -293,7 +300,7 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         elif ev.op is None and takes is not None and unit in takes.proposals:
             view.note = takes.use_proposal(unit)
         elif ev.op in ("tone", "stretch"):
-            view.note = "PREVIEW NOT READY: SET UP THE OPTIONAL LLM"
+            view.note = "PREVIEW NOT READY: SET UP THE OPTIONAL AI"
             return time.perf_counter() + NOTE_S
         else:
             view.note = "NO CHANGE"
@@ -396,19 +403,21 @@ class Takes:
             said = self.board.said_in(view.focus.sentence)
             if len(said) > 1:
                 return self.board.take_label(view.focus.sentence)
+            if said and len(self.board.rows) == 1:  # one take in all: nothing to compare it with
+                return self.board.take_name(said[0])
             return f"ONLY TAKE {said[0]} SAID THIS SENTENCE" if said else "NO TAKE SAID THIS SENTENCE"
         if mode == "review" and view.mode == "focus" and view.level == "paragraph" and view.focus is not None:
             n = self.board.paragraph_shown(self.paragraph(view.focus.sentence))
             return self.board.take_name(n) if n is not None else "NO TAKE SAID THIS PARAGRAPH"
         if self.finalizing:
-            return f"TAKE {self.finalizing[0].number}: SAVING..."
+            return f"TAKE {self.finalizing[0].number}: SAVING…"
         if self.analysis.pending or self.deferred:
             dots = "." * (int(time.perf_counter() * 2) % 4)
             take = (self.analysis.pending or self.deferred)[0]
-            return f"TAKE {take}: TRANSCRIBING{dots:<3}"
+            return f"TAKE {take}: ANALYSING{dots:<3}"
         if mode == "review":
             return self.last_saved
-        return "RAISE A FIST: START A TAKE"
+        return ""  # Prepare: the renderer says how to begin (render.BROWSE_ENTRY, NEW_TAKE)
 
     def paragraph(self, sentence: int) -> list[int]:
         """The sentences (current notes' indices) of the sentence's paragraph."""
@@ -455,7 +464,7 @@ class Takes:
 
     @property
     def no_llm(self) -> str:
-        return f"NEED THE OPTIONAL LLM ({'SEE TERMINAL' if self.llm_off else 'NOT SET UP, SEE README'}): NOTHING SENT"
+        return f"NEED THE OPTIONAL AI ({'SEE TERMINAL' if self.llm_off else 'NOT SET UP, SEE README'}): NOTHING SENT"
 
     @property
     def llm(self) -> str:
@@ -594,7 +603,7 @@ class Takes:
         note = ""
         for a in answers:
             if a.reason == "API KEY REJECTED":
-                self.llm_alert = "CLOUD LLM: API KEY REJECTED (SEE TERMINAL)"
+                self.llm_alert = "CLOUD AI: API KEY REJECTED (SEE TERMINAL)"
             if self.previews.accept(a, self._llm_revision()):
                 continue
             if a.revision != self._llm_revision():
@@ -603,7 +612,7 @@ class Takes:
             if a.error:
                 print(f"LLM {a.kind}: {a.error}", file=sys.stderr)
                 if a.reason == "API KEY REJECTED":
-                    self.llm_alert = "CLOUD LLM: API KEY REJECTED (SEE TERMINAL)"
+                    self.llm_alert = "CLOUD AI: API KEY REJECTED (SEE TERMINAL)"
                 note = f"{self.LLM_WHAT.get(a.kind, a.kind.upper())} FAILED: {a.reason}, NOTHING CHANGED"
                 self.llm_failed.add((a.kind, a.key))
                 continue
@@ -650,7 +659,7 @@ class Takes:
         old = self.notes.sentences[sentence].words[word].text
         note = self._save_edit(replace_word(self.notes, sentence, word, text), f'"{old}" -> "{text}"',
                                op="alternative", sentence=sentence, word=word, text=text)
-        return note or f'"{old.upper()}" -> "{text.upper()}"  /  U: UNDO'
+        return note or f'"{old.upper()}" → "{text.upper()}"  /  U: UNDO'
 
     def use_proposal(self, unit: tuple[int, ...]) -> str:
         kind, value, _ = self.proposals.pop(unit)
@@ -676,7 +685,7 @@ class Takes:
         if not self._play(n, [sentence]):
             return self._play_error or f"TAKE {n}: SENTENCE NOT SAID"
         self.log(time.perf_counter() - self.t0, "play", take=n, sentence=sentence)
-        return f"PLAYING TAKE {n}, SENTENCE {sentence + 1}"
+        return f"PLAYING TAKE {n}"
 
     def play_paragraph(self, sentences: list[int]) -> str:
         """Play a paragraph (current notes' indices) from the take Review shows for it:
@@ -687,7 +696,7 @@ class Takes:
         if not self._play(n, sentences):
             return self._play_error or f"TAKE {n}: PARAGRAPH NOT SAID"
         self.log(time.perf_counter() - self.t0, "play", take=n, sentences=list(sentences))
-        return f"PLAYING TAKE {n}, PARAGRAPH"
+        return f"PLAYING TAKE {n}"
 
     def _play(self, n: int, sentences: list[int]) -> bool:
         """Play take n's audio for these sentences (current notes' indices;
@@ -840,12 +849,9 @@ class Takes:
             pace = f"{row['wpm']:.0f} WPM" if row.get("wpm") is not None else "NOT SAID"
             self.last_saved = f"TAKE {n} (DRILL): {pace}"
             return ""
+        # The take table beside the notes has the measures; the label only says the take is in.
         c = counts(result["alignment"])
-        parts = [f"{c['spoken']}/{len(result['alignment']['sentences'])} SPOKEN"]
-        if result.get("metrics") and (said := metrics_summary(result["metrics"])):
-            parts.append(said)
-        parts += [f"{c[k]} {k.upper()}" for k in ("fillers", "restarts") if c[k]]
-        self.last_saved = f"TAKE {n}: {', '.join(parts)}"
+        self.last_saved = f"TAKE {n}: {c['spoken']} OF {len(result['alignment']['sentences'])} SENTENCES SAID"
         return ""
 
     def handle(self, ev: GestureEvent, modes: ModeMachine, view: ViewState, overlay: TextOverlay) -> str:
@@ -1394,6 +1400,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
     hint_after, rehearse_open_since = 0.0, None
+    hint_note, hint_mode = "", ""  # the gesture hint shown, and the mode it was about
     notes_seen = takes.notes_version
     frame_index = 0
 
@@ -1494,9 +1501,16 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         p = grammar.state.primary
         opened = modes.mode in ("count_in", "rehearse") and p is not None and p.stable == OPEN
         rehearse_open_since = (rehearse_open_since or start) if opened else None
-        hint = nonactivation_hint(modes.mode, grammar.state, start - rehearse_open_since if rehearse_open_since else 0.0)
+        hint = nonactivation_hint(modes.mode, grammar.state, start - rehearse_open_since if rehearse_open_since else 0.0,
+                                  start - t0)
         if hint and start >= hint_after and not view.note:
             view.note, note_until, hint_after = hint, start + 2 * NOTE_S, start + HINT_EVERY_S
+            hint_note, hint_mode = hint, modes.mode
+        # A gesture hint belongs to the mode it was about: a take stopping (the palm hint)
+        # or a focus (a fist seen on the way into it) takes it away at once.
+        focused = view.mode == "focus" or any(ev.kind == "focus" for ev in events)
+        if hint_note and view.note == hint_note and (modes.mode != hint_mode or hint_note == FIST_HINT and focused):
+            view.note, note_until, hint_note = "", None, ""
         if takes.notes_version != notes_seen:  # an edit or undo: lay the new notes out
             notes_seen = takes.notes_version
             sentences = takes.notes.sentences
@@ -1537,7 +1551,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         else:
             overlay.draw(frame, view)
             if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
-                draw_hand_area(frame, grammar.cursor)
+                draw_hand_area(frame, grammar.cursor, overlay.summary_box)
             if show_debug:
                 if view.app in ("prepare", "review"):
                     draw_hand_box(frame, grammar.cursor)

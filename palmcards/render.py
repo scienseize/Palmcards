@@ -23,7 +23,7 @@ the options ring (the original word and alternatives when the optional LLM is on
 knob, the picked node at 12 o'clock, its word scrambling into the sentence),
 and the tone gauge and stretch line; without the LLM these two only preview,
 and say so. While the
-cloud LLM is on, a CLOUD LLM chip sits at the bottom left ("SENDING" while a
+cloud LLM is on, a CLOUD AI chip sits at the bottom left ("SENDING" while a
 request is out).
 
 In Rehearse the current section is shown in the focus panel, the current
@@ -104,21 +104,37 @@ BAND_SLACK_ROWS = 6  # rows rendered beyond the window on each side
 CHIP_CACHE_MAX = 256  # the recording clock makes a new chip every second
 HINT_SEP = "  /  "  # in the label's second line: the operation, then the gesture hints
 SCRAMBLE = "abcdefghijklmnopqrstuvwxyz#%&@$"
+# One name per gesture and action everywhere: GESTURE: ACTION, hints joined by
+# REVIEW_SEP on the hint row, "DROP HAND: BACK" the way out of every focus.
+DROP_HINT = "DROP HAND: BACK"
+NEEDS_AI = "NEED THE OPTIONAL AI"
 FOCUS_HINTS = {  # without the optional LLM
-    "word": "MEANING AND ALTERNATIVES NEED THE OPTIONAL LLM  /  DROP HAND: BACK",
-    "sentence": "HOLD OPEN PALM: HEAR IT  /  L-HAND: TONE (PREVIEW ONLY)  /  DROP HAND: BACK",
-    "paragraph": "TWO L-HANDS: LENGTH (PREVIEW ONLY)  /  DROP HAND: BACK",
+    "word": f"MEANING AND ALTERNATIVES {NEEDS_AI}  /  {DROP_HINT}",
+    "sentence": f"HOLD OPEN PALM: HEAR IT  /  L-HAND: TONE (PREVIEW ONLY) · {DROP_HINT}",
+    "paragraph": f"TWO L-HANDS: LENGTH (PREVIEW ONLY)  /  {DROP_HINT}",
 }
 FOCUS_HINTS_LLM = {
-    "word": "OPEN PALM: ALTERNATIVES  /  DROP HAND: BACK",
-    "sentence": "HOLD OPEN PALM: HEAR IT  /  L-HAND: TONE  /  DROP HAND: BACK",
-    "paragraph": "TWO L-HANDS: LENGTH  /  DROP HAND: BACK",
+    "word": f"OPEN PALM: ALTERNATIVES  /  {DROP_HINT}",
+    "sentence": f"HOLD OPEN PALM: HEAR IT  /  L-HAND: TONE · {DROP_HINT}",
+    "paragraph": f"TWO L-HANDS: LENGTH  /  {DROP_HINT}",
 }
-NEEDS_LLM = "(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)"
+# Prepare, browsing: the gesture that focuses what is under the hand, then the other levels' shapes.
+# (No fist here: a fist formed from a browsing hand never starts a take; the idle hint says how.)
+BROWSE_HINTS = {
+    "word": "PINCH: FOCUS  /  TWO FINGERS: SENTENCES · FLAT HAND: PARAGRAPHS",
+    "sentence": "FOLD: FOCUS, THEN HEAR IT  /  ONE FINGER: WORDS · FLAT HAND: PARAGRAPHS",
+    "paragraph": "FOLD: FOCUS  /  ONE FINGER: WORDS · TWO FINGERS: SENTENCES",
+}
+BROWSE_ENTRY = "FINGER UP: BROWSE"  # nothing up yet: how to start browsing
+NEW_TAKE = "RAISE A FIST: NEW TAKE"
+NEEDS_LLM = f"PREVIEW ONLY: {NEEDS_AI}"
+TONE_NAMES = {"WARM": "WARM", "COLD": "FORMAL", "ORIGINAL": "ORIGINAL", "NEUTRAL": "ORIGINAL"}  # the gauge's ends
 GROWN = 0.99  # a focus this far grown is drawn as focused (the last step is under 2 px)
-REVIEW_SEP = " · "  # between Review's gesture hints (narrower than HINT_SEP: they share a row)
+REVIEW_SEP = " · "  # between gesture hints on the hint row (narrower than HINT_SEP: they share a row)
 DONE_HINT = "THUMB UP: PREPARE"  # Review: a thumbs-up held goes back to Prepare
-FIST_HINT = (f"RAISE A FIST: NEW TAKE · {DONE_HINT}", f"FIST: NEW TAKE · {DONE_HINT}")
+FIST_HINT = (f"{BROWSE_ENTRY} · {NEW_TAKE} · {DONE_HINT}", f"{BROWSE_ENTRY} · FIST: NEW TAKE · {DONE_HINT}")
+NBSP = "\u00a0"  # keeps a quoted word on one row of the label
+LABEL_PUNCT = ".,;:!?\"'“”‘’()[]…"  # left off a word quoted in the label
 
 
 def review_hint(state: "ViewState") -> tuple[str, str]:
@@ -128,24 +144,23 @@ def review_hint(state: "ViewState") -> tuple[str, str]:
     if state.playing:  # an open palm stops it on a focus; a key while browsing
         return ("OPEN PALM: STOP", "PALM: STOP") if state.mode == "focus" else ("A: STOP", "A: STOP")
     if state.mode == "browse" and state.level == "sentence":
-        return (f"FOLD: DETAILS · FIST: NEW TAKE · {DONE_HINT}",) * 2
+        return (f"FOLD: DETAILS · {DONE_HINT}",) * 2
     if state.mode == "browse" and state.level == "paragraph":
-        return (f"FOLD: SUMMARY · FIST: NEW TAKE · {DONE_HINT}",) * 2
+        return (f"FOLD: SUMMARY · {DONE_HINT}",) * 2
     if state.mode == "focus" and state.level == "paragraph":
         if not state.playable:
-            return "DROP HAND: BACK", "DROP: BACK"
-        return "OPEN PALM: PLAY PARAGRAPH · DROP HAND: BACK", "PALM: PLAY PARAGRAPH · DROP: BACK"
+            return DROP_HINT, DROP_HINT
+        return f"OPEN PALM: PLAY · {DROP_HINT}", f"PALM: PLAY · {DROP_HINT}"
     if state.mode == "focus":
         long, short = [], []
         if state.playable:
             long.append("OPEN PALM: PLAY")
             short.append("PALM: PLAY")
         if len(state.takes) > 1:
-            n, m = state.take_shown + 1, len(state.takes)
-            long.append(f"L, POINT: TAKE {n} OF {m}")
-            short.append(f"L: {n}/{m}")
-        long.append("PINCH + LIFT: DRILL")
-        short.append("PINCH+LIFT: DRILL")
+            long.append("L, POINT: PICK A TAKE")
+            short.append("L: PICK A TAKE")
+        long += ["PINCH + LIFT: DRILL", DROP_HINT]
+        short += ["PINCH + LIFT: DRILL", DROP_HINT]
         return REVIEW_SEP.join(long), REVIEW_SEP.join(short)
     return FIST_HINT
 KEYS_HELP = (
@@ -420,6 +435,7 @@ class Panel:
     rows: dict[int, tuple[int, int]]  # sentence -> (top, bottom) of its enlarged rows, px into the content
     header_h: int = 0  # extra room for the edit target, status and gestures
     scale: float = 1.0  # the unit's text size over the notes' (TEXT.focus_scales)
+    block: tuple[int, int] = (0, 0)  # the unit and its detail lines: (top, bottom), px into the content
 
 
 @dataclass(frozen=True)
@@ -556,7 +572,7 @@ class TextOverlay:
         # given, as many rows as fit above the pills at the bottom (Kat's
         # block runs down the whole left side).
         self.x = self.col_x0
-        self.y = LABEL.min_top + self.label_h + self.pad // 2
+        self.y = self.label_top + self.label_h + self.pad // 2
         if visible_rows is None:
             pill = self._face(TYPE.small)
             low = h - LABEL.min_top - (pill.line_h + 2 * max(CHIPS.pad_y[0], pill.size // CHIPS.pad_y[1]) + 2)
@@ -567,6 +583,7 @@ class TextOverlay:
             self.y = max(0, (h - self.box_h) // 2)
 
         self._count: tuple[int, float] | None = None  # the count-in's digit and when it came up
+        self.summary_box: tuple[int, int, int, int] | None = None  # the take table as last drawn (bottom right)
         self._scrim: np.ndarray | None = None  # its shape across the columns, 1 at full strength
         self._scrim_alpha: float | None = None  # its strength, following the room's brightness
         self._scrim_frames = 0
@@ -690,9 +707,9 @@ class TextOverlay:
             elif state.note:
                 second = state.note
             elif state.calibration == "camera":
-                second = "LOOK INTO THE CAMERA ABOVE THE SCREEN"
+                second = "LOOK INTO THE CAMERA LENS"
             elif state.calibration == "notes":
-                second = f"NOW READ THE ORANGE SENTENCE  {state.count_in}"
+                second = f"READ THE ORANGE SENTENCE{NBSP}·{NBSP}{state.count_in}"  # the digit never alone on a row
             elif state.app == "count_in":
                 second = f"STARTING IN {state.count_in}"
             else:
@@ -703,53 +720,93 @@ class TextOverlay:
 
         level = (state.level or "").upper()
         if state.mode == "focus":
-            first = f"FOCUS BY {level}"
-            if state.level == "word" and state.focus is not None and state.focus.word is not None:
-                first += f'  "{self.focus_word(state)}"'
+            first = self._focus_title(state, level)
         elif state.mode == "browse":
             first = f"BROWSE BY {level}"
         else:
             first = state.app.upper()
         ops, progress = state.ops, None
+        preview = state.edit_preview if state.app == "prepare" and state.mode == "focus" else None
         if state.note:
             second = state.note
         elif state.start_progress > 0:
-            second, progress = "START A TAKE: HOLD FIST", state.start_progress
+            second, progress = "NEW TAKE: HOLD", state.start_progress
         elif state.hold_progress > 0:
             second, progress = "BACK TO PREPARE: HOLD", state.hold_progress
         elif state.palm_progress > 0:
             second, progress = "STOP: HOLD", state.palm_progress
-        elif state.drop_progress > 0:
-            second = "DROP HAND TO BACK OUT"
+        elif state.drop_progress > 0 and state.mode == "focus":  # the hand is down: say what happens, and how not to
+            second, progress = f"BACKING OUT{HINT_SEP}RAISE HAND TO STAY", state.drop_progress
+        elif preview is not None:
+            second = self._preview_line(preview)
         elif ops.kind == "ring":
-            second = "EXPLORE ALTERNATIVES: LOADING" if state.loading else "L-HAND, THEN TURN TO PICK"
+            second = "ALTERNATIVES: LOADING" if state.loading else "L-HAND, THEN TURN: PICK"
             if not state.llm:
-                second = "ALTERNATIVES NEED THE OPTIONAL LLM  /  DROP HAND: BACK"
+                second = f"ALTERNATIVES {NEEDS_AI}"
             if ops.pointing or ops.picked:
-                picked = self.ring_labels(state)[ops.picked]
-                second = "KEEP THE WORD (NO CHANGE)" if ops.picked == 0 else f'PINCH + LIFT: USE "{picked.upper()}"'
+                picked = self.ring_labels(state)[ops.picked].strip(LABEL_PUNCT)
+                second = "ORIGINAL WORD: NO CHANGE" if ops.picked == 0 else \
+                    f'PINCH + LIFT: USE "{picked.upper().replace(" ", NBSP)}"'
+            second += HINT_SEP + DROP_HINT
         elif ops.kind == "tone":
-            tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "NEUTRAL"
-            second = f"SENTENCE TONE: {tone}  " + ("/  PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM)
+            tone = "WARM" if ops.tone > 0.15 else "COLD" if ops.tone < -0.15 else "ORIGINAL"
+            act = "PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM
+            second = f"TONE: {TONE_NAMES[tone]}{HINT_SEP}{act}{REVIEW_SEP}{DROP_HINT}"
         elif ops.kind == "stretch":
             pct = round((ops.stretch - 1) * 100)
             change = f"FULLER +{pct}%" if ops.stretch > 1.05 else f"SHORTER −{-pct}%" if ops.stretch < 0.95 else "SAME"
-            second = f"PARAGRAPH LENGTH: {change}  " + ("/  PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM)
+            act = "PINCH + LIFT: ASK FOR A REWRITE" if state.llm else NEEDS_LLM
+            second = f"LENGTH: {change}{HINT_SEP}{act}{REVIEW_SEP}{DROP_HINT}"
         elif state.mode == "focus" and state.app == "prepare" and state.proposal:
-            second = "PINCH + LIFT: USE THE PROPOSAL  /  DROP HAND: DISCARD IT"
+            second = f"PINCH + LIFT: USE THE PROPOSAL{HINT_SEP}{DROP_HINT}"
         elif state.mode == "focus" and state.app == "prepare" and state.playing:
             second = "OPEN PALM: STOP"
         elif state.mode == "focus" and state.app == "prepare":  # nothing started yet: say what the next shape does
-            second = (FOCUS_HINTS_LLM if state.llm else FOCUS_HINTS).get(state.level, "")
+            second = (FOCUS_HINTS_LLM if state.llm else FOCUS_HINTS).get(state.level, DROP_HINT)
         elif state.app == "review":  # what the focus shows, then the gestures that act
             second = f"{state.status}{HINT_SEP}{review_hint(state)[0]}"
         elif state.mode == "focus":
-            second = state.status or "DROP HAND: BACK"
-        elif state.app == "prepare" and state.mode == "browse" and state.level == "sentence":
-            second = "FOLD TO SELECT  /  THEN HOLD OPEN PALM: HEAR IT"
+            second = f"{state.status}{HINT_SEP}{DROP_HINT}" if state.status else DROP_HINT
+        elif state.app == "prepare" and state.mode == "browse":
+            second = BROWSE_HINTS.get(state.level, "")
+        elif state.app == "prepare":  # nothing up: how to begin, and how to take
+            second = f"{state.status}{HINT_SEP}{BROWSE_ENTRY}{REVIEW_SEP}{NEW_TAKE}" if state.status else \
+                f"{BROWSE_ENTRY}{HINT_SEP}{NEW_TAKE}"
         else:
             second = state.status
         return first, second, progress
+
+    def _focus_title(self, state: ViewState, level: str) -> str:
+        """FOCUS BY WORD  "beside": the word as it is in the notes (never the
+        ring's pick or its scramble: the label says where you are, the notes
+        show the preview), without its punctuation; a shorter form when it
+        doesn't fit a row, never an ellipsis in place of the word."""
+        first = f"FOCUS BY {level}"
+        if state.level != "word" or state.focus is None or state.focus.word is None:
+            return first
+        word = self.word_text(state.focus).strip(LABEL_PUNCT) or self.word_text(state.focus)
+        f = self._label_face(0)
+        cols = max(4, int((self.col_x1 - self.x - self.pad + f.tracking) / f.advance))
+        return next((t for t in (f'{first}  "{word}"', f'FOCUS: "{word}"') if len(t) <= cols), first)
+
+    @staticmethod
+    def _preview_line(p: PreviewView) -> str:
+        """A tone or length preview in the label: what the dial asks for and
+        what the notes show (the operation), then what acts on it."""
+        if p.kind == "tone":
+            what = f"TONE: {TONE_NAMES.get(p.target_label, p.target_label)}"
+            done = f"{what} · NOT SAVED"
+        else:
+            what = f"LENGTH: {round(p.requested_target * 100)}%"
+            done = f"{what} · NOT SAVED, {p.actual_words} OF ~{p.target_words} WORDS".replace(" OF ~", f"{NBSP}OF{NBSP}~")
+        if p.error:
+            return f"{p.error.partition(': PINCH')[0]}{HINT_SEP}PINCH + LIFT: RETRY{REVIEW_SEP}{DROP_HINT}"
+        if p.loading:
+            return f"{what} · UPDATING…{HINT_SEP}{DROP_HINT}"
+        if p.original:
+            shown = what if p.kind == "tone" else f"{what} · {p.actual_words} WORDS"
+            return f"{shown}{HINT_SEP}{DROP_HINT}"
+        return f"{done}{HINT_SEP}PINCH + LIFT: USE IT{REVIEW_SEP}{DROP_HINT}"
 
     def ring_words(self, state: ViewState) -> int:
         """Every node is the original word or a replacement."""
@@ -854,7 +911,7 @@ class TextOverlay:
         """A word or punctuation, its top of ascent at xy (`tracking` px
         between letters); its outline on `under` (text on a fill has none)."""
         if under is not None:
-            _outline(under, xy, sp.text, font, tracking)
+            _outline(under, xy, sp.text, font, tracking, color[3] if len(color) > 3 else 255)
         _text(draw, xy, sp.text, font, tracking, fill=color)
 
     def _zoom_face(self, weight: str | None = None) -> Face:
@@ -928,21 +985,30 @@ class TextOverlay:
         word_row, word_col, word_len = next(
             ((ri, c, len(sp.text)) for ri, r in enumerate(rows) for c, sp in r.spans
              if sp.sentence == focus.sentence and sp.word == focus.word), (0, 0, shown))
-        # The text where it wraps; the word's row in the middle of the box.
+        # The text where it wraps; the word's row in the middle of the box. A
+        # preview longer than the room left on its row starts the next row
+        # instead (what came before it on the row moves up one), so nothing
+        # runs past the text column into the face zone (LAYOUT).
         x0, shift = self.col_x0 + self.pad, shown - word_len
-        word_x, word_y = x0 + word_col * cw, (self.box_h - lh) / 2
+        right = self.col_x1 - self.pad
+        wrap = word_col > 0 and x0 + (word_col + shown) * cw > right
+        word_col_shown = 0 if wrap else word_col
+        word_x, word_y = x0 + word_col_shown * cw, (self.box_h - lh) / 2
         img, under = (Image.new("RGBA", (self.col_x1, self.box_h), CLEAR) for _ in range(2))
         draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
-        above, below = int(word_y // lh) + 1, int((self.box_h - word_y) // lh) + 1
+        above, below = int(word_y // lh) + 2, int((self.box_h - word_y) // lh) + 1
         dy = zf.dy
         for ri in range(max(0, word_row - above), min(len(rows), word_row + below)):
-            y, after = word_y + (ri - word_row) * lh, False
+            before = wrap and ri < word_row  # rows above the word move up with its row's start
+            after = False
             for c, sp in rows[ri].spans:
                 if sp.sentence == focus.sentence and sp.word == focus.word:
                     after = ri == word_row
                     continue
-                x = x0 + (c + (shift if after else 0)) * cw
-                if x + len(sp.text) * cw > 0 and x < self.col_x1:
+                up = before or (wrap and ri == word_row and not after)
+                y = word_y + (ri - word_row - (1 if up else 0)) * lh
+                x = x0 + ((c - word_col + word_col_shown + shift) if after else c) * cw
+                if x + len(sp.text) * cw > 0 and x + len(sp.text) * cw <= self.col_x1:
                     color = (C.ring_sentence if ring else C.dim) if sp.sentence == focus.sentence else \
                         (C.ring_context if ring else C.faint)
                     self._draw_span(draw, (x, y + dy), sp, font, color, ud, zf.tracking)
@@ -1003,7 +1069,8 @@ class TextOverlay:
 
     def _focus_panel(self, unit: tuple[int, ...], detail: tuple[str, ...] = (),
                      current: int | None = None, preview_from: int | None = None, width: int | None = None,
-                     replacement: str | None = None, editing: bool = False, header_h: int = 0) -> Panel:
+                     replacement: str | None = None, editing: bool = False, header_h: int = 0,
+                     detail_first: bool = False) -> Panel:
         """The unit's sentences enlarged, then the detail lines (Review: a line
         per take that said the sentence), faint context rows around them when
         there is room.
@@ -1012,9 +1079,12 @@ class TextOverlay:
         scrolled part of it. With `current`, that sentence is orange and the
         rest of the unit dimmed (Rehearse); sentences from `preview_from` on
         (the next section, previewed) are faint. `width` narrows it (Review's
-        take chips beside it), and then it has no context rows."""
+        take chips beside it), and then it has no context rows. A `replacement`
+        (an edit preview) is orange, as a word's preview is: not the notes yet.
+        `detail_first` puts the detail lines above the unit (Review's paragraph
+        summary: a long paragraph would push it out of view)."""
         width = width or self.box_w
-        key = (unit, detail, current, preview_from, width, replacement, editing, header_h)
+        key = (unit, detail, current, preview_from, width, replacement, editing, header_h, detail_first)
         if self._panel_key == key:
             return self._panel
         sents = [parse_sentence(replacement)] if replacement is not None else [self.sentences[i] for i in unit]
@@ -1048,15 +1118,19 @@ class TextOverlay:
             above, below = [], []
         content = (len(above) + len(below)) * self.line_h + big_h + detail_h
         y = self.pad + max(0, (panel_h - 2 * self.pad - content) // 2)
+        gap = 0
         if editing:
             # A fixed starting row for the selected unit: incoming wording grows down,
             # instead of recentering the entire passage whenever its length changes.
+            # Half a line between it and the context each side (the enlarged rows
+            # met the context's, and the gauge's labels sat on both).
+            gap = self.pad // 2
             anchor = self.pad + round(box_h * TEXT.preview_anchor)
-            count = max(0, (anchor - self.pad) // self.line_h)
+            count = max(0, (anchor - self.pad - gap) // self.line_h)
             above = above[-count:] if count else []
-            below = below[:max(0, (box_h - anchor - big_h - detail_h - self.pad) // self.line_h)]
-            y = anchor - len(above) * self.line_h
-            panel_h = max(box_h, anchor + big_h + detail_h + self.pad)
+            below = below[:max(0, (box_h - anchor - big_h - detail_h - self.pad - gap) // self.line_h)]
+            y = anchor - len(above) * self.line_h - (gap if above else 0)
+            panel_h = max(box_h, anchor + big_h + detail_h + self.pad + gap)
 
         img, under = (Image.new("RGBA", (width, panel_h), CLEAR) for _ in range(2))
         draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
@@ -1073,6 +1147,8 @@ class TextOverlay:
             return y_
 
         def unit_colors(si):
+            if replacement is not None:  # a preview of new wording, not yet the notes
+                return C.orange_text
             if current is not None and si == current:  # orange, even in the previewed section
                 return C.orange_text
             if preview_from is not None and si >= preview_from:
@@ -1084,19 +1160,26 @@ class TextOverlay:
         def unit_strong(si):  # semibold: the current sentence, or the focused unit
             return si == current if current is not None else preview_from is None or si < preview_from
 
-        y = draw_rows(above, self.notes, lambda si: C.faint, y)
+        def draw_detail(y_):
+            for piece in dlines:
+                _outline(ud, (self.pad, y_ + df.dy), piece, df.font, df.tracking, C.detail_text[3])
+                _text(draw, (self.pad, y_ + df.dy), piece, df.font, df.tracking, fill=C.detail_text)
+                y_ += dlh
+            return y_
+
+        y = draw_rows(above, self.notes, lambda si: C.faint, y) + (gap if above else 0)
         where.clear()  # context rows are not the unit
+        block_top = y
+        if dlines and detail_first:
+            y = draw_detail(y) + self.pad
         y = draw_rows(rows, ff, unit_colors, y, load_font(ff.size, "semibold"), unit_strong)
         rows_y = dict(where)
-        if dlines:
-            y += self.pad
-            for piece in dlines:
-                _outline(ud, (self.pad, y + df.dy), piece, df.font, df.tracking)
-                _text(draw, (self.pad, y + df.dy), piece, df.font, df.tracking, fill=C.detail_text)
-                y += dlh
-        draw_rows(below, self.notes, lambda si: C.faint, y)
+        if dlines and not detail_first:
+            y = draw_detail(y + self.pad)
+        block = (block_top, y)
+        draw_rows(below, self.notes, lambda si: C.faint, y + gap)
         color, inv = _premultiply(_halo(img, self.halo_r, under))
-        self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y, scale=scale)
+        self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y, scale=scale, block=block)
         return self._panel
 
     # --- the panel's viewport ------------------------------------------------
@@ -1113,13 +1196,18 @@ class TextOverlay:
 
     @property
     def label_h(self) -> int:
-        """Height reserved for the label above the text: each line at its most rows."""
-        return sum(n * self._label_row_h(i) for i, n in enumerate(LABEL.max_rows))
+        """Height reserved for the label above the text (LABEL.reserve rows of each line)."""
+        return sum(n * self._label_row_h(i) for i, n in enumerate(LABEL.reserve))
+
+    @property
+    def label_top(self) -> int:
+        """Where the label's first row starts, always (LABEL.top)."""
+        return max(LABEL.min_top, round(LABEL.top * self.ui_size))
 
     @property
     def max_panel_h(self) -> int:
         """Tallest the panel's viewport gets: below the label, above the alert line."""
-        room = self.frame_h - (LABEL.min_top + self.label_h + self.pad // 2) - self.line_h - self.pad
+        room = self.frame_h - (self.label_top + self.label_h + self.pad // 2) - self.line_h - self.pad
         return max(self.box_h, min(int(self.frame_h * TEXT.panel_max_h), room))
 
     def panel(self, state: ViewState) -> Panel | None:
@@ -1132,7 +1220,8 @@ class TextOverlay:
         header_h = max(0, sum(self._label_row_h(i) for i, _ in self.label_rows(state)) - self.label_h) if preview else 0
         panel = self._focus_panel(unit, state.detail, self._panel_current(state, unit),
                                  self._preview_from(state, unit), width,
-                                 preview.text if preview and not preview.original else None, preview is not None, header_h)
+                                 preview.text if preview and not preview.original else None, preview is not None, header_h,
+                                 detail_first=state.app == "review" and state.level == "paragraph")
         panel.header_h = header_h
         return panel
 
@@ -1358,7 +1447,7 @@ class TextOverlay:
 
     def _panel_top(self, view_h: int, extra_header: int = 0) -> int:
         box_top = self.y + self.margin
-        reserved = LABEL.min_top + self.label_h + self.pad // 2 + extra_header
+        reserved = self.label_top + self.label_h + self.pad // 2 + extra_header
         top = max(reserved, box_top + (self.box_h - view_h) // 2)
         return max(reserved, min(top, self.frame_h - self.line_h - self.pad - view_h))
 
@@ -1380,17 +1469,26 @@ class TextOverlay:
     def _draw_scrollbar(self, frame: np.ndarray, top: int, view_h: int, scroll: float, height: int,
                         width: int, left: bool = False) -> None:
         x = int(self.x + self.margin + (self.pad // 3 if left else width - self.pad // 3))
-        cv2.line(frame, (x, top + self.pad), (x, top + view_h - self.pad), bgr(C.scroll_track), 2, cv2.LINE_AA)
+        x = max(self.col_x0 + 5, min(x, self.col_x1 - 5))  # its rim inside the text column too
+        # A faint light track and a light thumb, each on a dark rim: on a pale
+        # wall the rim shows them, in a dark room the light does (a dark track
+        # under a light thumb read the wrong way round on a pale wall).
+        _line_blend(frame, (x, top + self.pad), (x, top + view_h - self.pad), C.rim[:3], 4, C.rim[3] / 255)
+        _line_blend(frame, (x, top + self.pad), (x, top + view_h - self.pad), C.scroll_track, 2, 0.8)
         span = view_h - 2 * self.pad
         y0 = top + self.pad + int(span * scroll / height)
         y1 = top + self.pad + int(span * (scroll + view_h) / height)
+        cv2.line(frame, (x, y0), (x, y1), bgr(C.knob_fill), 6, cv2.LINE_AA)
         cv2.line(frame, (x, y0), (x, y1), bgr(C.scroll_thumb), 4, cv2.LINE_AA)
+        # More above or below: a chip on the viewport's edge (where the text fades
+        # out) beside the scrollbar, not in the middle of a row of text.
         f = self._face(TYPE.small, SMALL_ON_FILL)
-        cx = self.x + self.margin + width / 2
-        if scroll > 0:
-            self._blend_centered(frame, self._chip("▲ MORE", f, C.node_text, C.dark_fill), cx, top)
-        if scroll + view_h < height:
-            self._blend_centered(frame, self._chip("▼ MORE", f, C.node_text, C.dark_fill), cx, top + view_h)
+        for show, text, at in ((scroll > 0, "▲ MORE", top), (scroll + view_h < height, "▼ MORE", top + view_h)):
+            if show:
+                chip = self._chip(text, f, C.node_text, C.dark_fill)
+                cw = chip[0].shape[1]
+                cx = x + cw / 2 + self.pad // 3 if left else x - cw / 2 - self.pad // 3
+                self._blend_centered(frame, chip, cx, at)
 
     def _chip(self, text: str, f: Face, fg, bg, outline=None) -> tuple[np.ndarray, np.ndarray]:
         """A row of text in face `f` on a rounded rectangle, cached."""
@@ -1441,7 +1539,7 @@ class TextOverlay:
             m = math.ceil(3 * r) + OUTLINE.width
             img, under = (Image.new("RGBA", (int(_text_w(f.font, text, f.tracking)) + 2 * m + 1, f.line_h + 2 * m),
                                     CLEAR) for _ in range(2))
-            _outline(ImageDraw.Draw(under), (m, m + f.dy), text, f.font, f.tracking)
+            _outline(ImageDraw.Draw(under), (m, m + f.dy), text, f.font, f.tracking, fg[3] if len(fg) > 3 else 255)
             _text(ImageDraw.Draw(img), (m, m + f.dy), text, f.font, f.tracking, fill=fg)
             self._chips[key] = (*_premultiply(_halo(img, r, under)), m)
         return self._chips[key]
@@ -1466,7 +1564,7 @@ class TextOverlay:
     def _wrap(self, text: str, f: Face, width: float, max_rows: int | None = None) -> list[str]:
         """`text` wrapped to `width` px in face `f`; past max_rows the last row ends in "…"."""
         cols = max(4, int((width + f.tracking) / f.advance))
-        rows = textwrap.wrap(text, cols) or [text]
+        rows = textwrap.wrap(text, cols, break_on_hyphens=False) or [text]
         if max_rows is not None and len(rows) > max_rows:
             rows = rows[:max_rows]
             rows[-1] = rows[-1][:cols - 1].rstrip() + "…"
@@ -1476,20 +1574,10 @@ class TextOverlay:
 
     def label_rows(self, state: ViewState) -> list[tuple[int, str]]:
         """The label as drawn, Kat's style: (line, text) per row. Line 0 is
-        the state, 1 the operation, 2 the gesture hint (label_lines' second
-        line after its first HINT_SEP); each wrapped to the text column."""
-        if (preview := state.edit_preview) is not None and state.app == "prepare" and state.mode == "focus":
-            title = "TONE PREVIEW" if preview.kind == "tone" else "LENGTH PREVIEW"
-            status = preview.error.partition(": PINCH")[0] if preview.error else ("UPDATING PREVIEW..." if preview.loading else
-                                      "ORIGINAL UNCHANGED" if preview.original else "PREVIEW - NOT SAVED")
-            hint = "PINCH + LIFT: RETRY" if preview.error else "PINCH + LIFT: COMMIT"
-            lines = [(0, title), (1, f"TARGET: {preview.target_label}"),
-                     (2, f"SHOWING {preview.shown_label}: {preview.actual_words} WORDS"),
-                     (2, state.note or status), (2, hint), (2, "DROP HAND: CANCEL")]
-            if preview.marks_warning:
-                lines.append((2, "LEGACY MARKS NEED REVIEW; PREVIEW IS PLAIN TEXT"))
-            width = self.col_x1 - self.x - self.pad
-            return [(level, row) for level, line in lines for row in self._label_wrap(line, level, width)]
+        the state, 1 the operation, 2 the gesture hints (label_lines' second
+        line after its first HINT_SEP), joined by REVIEW_SEP; each wrapped to
+        the text column, the hints packed whole onto their rows (a hint is
+        never broken in two unless it is wider than a row by itself)."""
         first, second, progress = self._label(state)
         operation, _, hint = second.partition(HINT_SEP)
         width = self.col_x1 - self.x - self.pad
@@ -1497,40 +1585,40 @@ class TextOverlay:
         room = (BAR.label_min_em + BAR.gap_em) * self._label_face(1).size if progress is not None else 0
         rows = [(i, row) for i, text in enumerate((first, operation)) if text
                 for row in self._label_wrap(text, i, width - (room if i == 1 else 0), LABEL.max_rows[i])]
-        if state.app == "review" and hint == (forms := review_hint(state))[0]:
-            # Review's hints: the short form when the long one needs two rows;
-            # if even that is too wide, its hints packed whole onto the rows.
-            if len(self._label_wrap(hint, 2, width)) > 1:
-                hint = forms[1]
-            packed: list[str] = []
-            for part in hint.split(REVIEW_SEP):
-                joined = f"{packed[-1]}{REVIEW_SEP}{part}" if packed else part
-                if packed and len(self._label_wrap(joined, 2, width)) == 1:
-                    packed[-1] = joined
-                else:
-                    packed += self._label_wrap(part, 2, width)
-            return rows + [(2, row) for row in packed[:LABEL.max_rows[2]]]
-        if hint:  # too long for a row: a row per hint rather than breaking one in two
-            hint_rows = self._label_wrap(hint, 2, width)
-            if len(hint_rows) > 1:
-                hint_rows = [row for part in hint.split(HINT_SEP) for row in self._label_wrap(part, 2, width)]
-            if len(hint_rows) > LABEL.max_rows[2]:
-                hint_rows = self._label_wrap(" ".join(hint_rows), 2, width, LABEL.max_rows[2])
-            rows += [(2, row) for row in hint_rows]
-        return rows
+        if not hint:
+            return rows
+        if state.app == "review" and hint == (forms := review_hint(state))[0] \
+                and len(self._label_wrap(hint, 2, width)) > 1:
+            hint = forms[1]  # Review's short form when the long one needs two rows
+        packed: list[str] = []
+        for part in hint.replace(HINT_SEP, REVIEW_SEP).split(REVIEW_SEP):
+            joined = f"{packed[-1]}{REVIEW_SEP}{part}" if packed else part
+            if packed and len(self._label_wrap(joined, 2, width)) == 1:
+                packed[-1] = joined
+            else:
+                packed += self._label_wrap(part, 2, width)
+        if len(packed) > LABEL.max_rows[2]:  # more than fits: the last row ends in "…"
+            packed = packed[:LABEL.max_rows[2] - 1] + self._label_wrap(
+                " ".join(packed[LABEL.max_rows[2] - 1:]), 2, width, 1)
+        return rows + [(2, row) for row in packed]
 
     def _draw_label(self, frame: np.ndarray, state: ViewState, top: int) -> None:
         """No box: orange on a halo, the state brightest and in semibold, the
         operation dimmer, the hint smallest and dimmest (TYPE.label,
-        operation, hint; Colors.label_*), ending above `top`; a hold's bar
-        after the operation. Its first row stays put while a hint comes and
-        goes; only a label wrapped past three rows grows upward."""
+        operation, hint; Colors.label_*), from LABEL.top down; a hold's bar
+        after the operation. Its first row never moves (`top`, the text's
+        top, is only the old anchor); a label longer than the room kept for
+        it starts higher, except over an edit preview, whose panel moves down
+        instead (panel.header_h)."""
         rows = self.label_rows(state)
         progress = self.label_progress(state)
         last_op = max((k for k, (line, _) in enumerate(rows) if line == 1), default=None)
         colors = (C.label_state, C.label_operation, C.label_hint)
-        h = max(sum(self._label_row_h(i) for i in range(3)), sum(self._label_row_h(i) for i, _ in rows))
-        y = max(LABEL.min_top, top - self.pad // 2 - h)
+        h = sum(self._label_row_h(i) for i, _ in rows)
+        y = self.label_top
+        preview = state.edit_preview is not None and state.app == "prepare" and state.mode == "focus"
+        if h > self.label_h and not preview:  # too long even for the room kept for it: it starts higher
+            y = max(LABEL.min_top, y - (h - self.label_h))
         for k, (line, text) in enumerate(rows):
             f = self._label_face(line)
             box = self._blend_ink(frame, self._ink(text, f, colors[line]), self.x + self.pad, y)
@@ -1639,20 +1727,24 @@ class TextOverlay:
 
     def _take_chips(self, state: ViewState) -> list[tuple[tuple[np.ndarray, np.ndarray], float, float]]:
         """Review: the focused sentence's takes as chips in a column at the
-        text column's right, beside the (narrowed) panel, from its top, a
-        fixed pitch apart: (chip, centre x, centre y) each."""
+        text column's right, beside the (narrowed) panel, a fixed pitch
+        apart (pointing at them depends on it), the column centred on the
+        sentence and its takes' lines (not the viewport's top: they belong
+        together), kept inside the viewport: (chip, centre x, centre y) each."""
         got = self._panel_origin(state) if state.takes else None
         if got is None:
             return []
+        panel, _, content_y, top = got
         f, shown = self._face(TYPE.small, SMALL_ON_FILL), self._face(TYPE.small, "semibold")
-        x0, y = self.col_x1 - (self._takes_w(state) - RING.take_gap), got[3] + self.pad
-        out = []
-        for i, label in enumerate(state.takes):
-            chip = self._chip(label, shown, C.chip_text, C.chip_fill) if i == state.take_shown \
-                else self._chip(label, f, C.node_text, C.dark_fill, C.node_outline)
-            h, w = chip[0].shape[:2]
-            out.append((chip, x0 + w / 2, y + h / 2 + i * RING.take_pitch * self.box_h))
-        return out
+        x0 = self.col_x1 - (self._takes_w(state) - RING.take_gap)
+        chips = [self._chip(label, shown, C.chip_text, C.chip_fill) if i == state.take_shown
+                 else self._chip(label, f, C.node_text, C.dark_fill, C.node_outline) for i, label in enumerate(state.takes)]
+        pitch, h = RING.take_pitch * self.box_h, chips[0][0].shape[0]
+        span = (len(chips) - 1) * pitch
+        first = content_y + sum(panel.block) / 2 - span / 2
+        low, high = top + self.pad + h / 2, top + self.panel_view_h(panel) - self.pad - h / 2 - span
+        first = max(low, min(first, high)) if high >= low else low
+        return [(chip, x0 + chip[0].shape[1] / 2, first + i * pitch) for i, chip in enumerate(chips)]
 
     def take_points(self, state: ViewState) -> list[tuple[float, float]]:
         return [(x, y) for _, x, y in self._take_chips(state)]
@@ -1686,10 +1778,11 @@ class TextOverlay:
         held = None
         for i, (label, (nx, ny)) in enumerate(zip(labels, nodes)):
             nx, ny = cx + (nx - cx) * spread, cy + (ny - cy) * spread
+            shown = label.strip(LABEL_PUNCT) or label  # the word, not its sentence's punctuation
             if i == picked:
-                chip = self._node(label, C.chip_text, C.chip_fill, None, "semibold")
+                chip = self._node(shown, C.chip_text, C.chip_fill, None, "semibold")
             else:
-                chip = self._node(label, C.node_text, C.node_fill, C.node_outline)
+                chip = self._node(shown, C.node_text, C.node_fill, C.node_outline)
             h, w = chip[0].shape[:2]
             a = _box_edge((cx, cy), (box[2] - box[0]) / 2 + RING.spoke_gap, (box[3] - box[1]) / 2 + RING.spoke_gap, (nx, ny))
             b = _box_edge((nx, ny), w / 2 + RING.spoke_gap, h / 2 + RING.spoke_gap, (cx, cy))
@@ -1734,7 +1827,7 @@ class TextOverlay:
         the text: cold (blue, "formal") at the top, warm (orange,
         "conversational") at the bottom, each end labelled. Its compact track
         follows the sentence's height and centre, not the surrounding context."""
-        edge = GAUGE.knob_r + GAUGE.closing_knob_outline  # the knob stays inside the text column
+        edge = GAUGE.knob_r + 2 * GAUGE.closing_knob_outline  # the knob and its rim stay inside the text column
         x = int(min(self.x + self.margin + self.box_w - self.pad // 2, self.col_x1 - edge))
         f = self._face(TYPE.small)
         a, b = sentence_bounds or (top, bottom)
@@ -1744,16 +1837,21 @@ class TextOverlay:
                      GAUGE.max_lines * self.line_h, max(1, high - low))
         center = max(low + height / 2, min((a + b) / 2, high - height / 2))
         y0, y1 = round(center - height / 2), round(center + height / 2)
+        # Each end's name on a dark chip: the gauge sits by the notes' context rows,
+        # and a bare label printed over them read as part of the text.
+        fc = self._face(TYPE.small, SMALL_ON_FILL)
         for text, color, above in ((GAUGE.labels[0], C.cold, True), (GAUGE.labels[1], C.warm, False)):
-            ink = self._ink(text, f, (*color, 255))
-            h, w = (n - 2 * ink[2] for n in ink[0].shape[:2])
-            self._blend_ink(frame, ink, min(x + GAUGE.knob_r, self.col_x1 - ink[2]) - w,
-                            y0 - h - GAUGE.knob_r // 2 if above else y1 + GAUGE.knob_r // 2)
+            chip = self._chip(text, fc, (*color, 255), C.dark_fill)
+            h, w = chip[0].shape[:2]
+            cx = min(x + GAUGE.knob_r, self.col_x1) - w / 2
+            self._blend_centered(frame, chip, cx, y0 - h / 2 - GAUGE.knob_r // 2 if above else y1 + h / 2 + GAUGE.knob_r // 2)
         for y in range(y0, y1, GAUGE.step_px):
             k = (y - y0) / max(1, y1 - y0)
             color = tuple(int(c * (1 - k) + w * k) for c, w in zip(bgr(C.cold), bgr(C.warm)))
             cv2.line(frame, (x, y), (x, y + 1), color, GAUGE.width)
         ky = int(y0 + (tone + 1) / 2 * (y1 - y0))
+        ring = GAUGE.closing_knob_outline if closing else GAUGE.knob_outline
+        cv2.circle(frame, (x, ky), GAUGE.knob_r + ring, bgr(C.knob_fill), -1, cv2.LINE_AA)  # a dark rim: one look on any wall
         cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_fill), -1, cv2.LINE_AA)
         cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_outline),
                    GAUGE.closing_knob_outline if closing else GAUGE.knob_outline, cv2.LINE_AA)
@@ -1932,6 +2030,7 @@ class TextOverlay:
         if state.alert:
             self._draw_alert(frame, state.alert, bottom, low)
         # Bottom right: the take table (Review, browsing), the first-run tutorial.
+        self.summary_box = None
         if state.app == "review" and state.summary and state.mode != "focus":
             self._draw_summary(frame, state.summary)
         if state.tutorial is not None:
@@ -1960,7 +2059,7 @@ class TextOverlay:
         if key not in self._chips:
             if len(self._chips) >= CHIP_CACHE_MAX:
                 self._chips.clear()
-            img = Image.new("RGBA", (width, height), C.node_fill)
+            img = Image.new("RGBA", (width, height), (*C.node_fill[:3], 255))  # solid: no row showing through its text
             draw = ImageDraw.Draw(img)
             for i, row in enumerate(rows):
                 _text(draw, (pad, pad + i * f.line_h + f.dy), row, f.font, f.tracking,
@@ -1980,14 +2079,14 @@ class TextOverlay:
         return y + block[0].shape[0]
 
     def _draw_pills(self, frame: np.ndarray, state: ViewState) -> int:
-        """Bottom left (TYPE.small): the CLOUD LLM chip whenever the text
+        """Bottom left (TYPE.small): the CLOUD AI chip whenever the text
         asked about can leave the Mac, then the keys (or the keys help).
         Returns their top."""
         x, low = self.x + self.margin, self.frame_h - LABEL.min_top
         f = self._face(TYPE.small, SMALL_ON_FILL)
         top = low
         if state.llm == "cloud":
-            text, fg = ("CLOUD LLM: SENDING", C.orange) if state.llm_busy else ("CLOUD LLM", C.dim)
+            text, fg = ("CLOUD AI: SENDING", C.orange) if state.llm_busy else ("CLOUD AI", C.dim)
             chip = self._chip(text, f, fg, C.label_fill)
             _blend(frame, x, low - chip[0].shape[0], *chip)
             top = low - chip[0].shape[0]
@@ -2009,7 +2108,9 @@ class TextOverlay:
         colors = tuple(C.orange if i == 0 else C.node_text for i in range(len(lines)))
         color, inv = self._block(tuple(lines), self._face(TYPE.small, SMALL_ON_FILL), colors, C.dark_fill)
         h, w = color.shape[:2]
-        _blend(frame, self.frame_w - SUMMARY.right - w, self.frame_h - SUMMARY.bottom - h, color, inv)
+        x, y = self.frame_w - SUMMARY.right - w, self.frame_h - SUMMARY.bottom - h
+        _blend(frame, x, y, color, inv)
+        self.summary_box = (x, y, x + w, y + h)
 
     def _draw_tutorial(self, frame: np.ndarray, step: int, of: int, text: str) -> None:
         """One gesture at a time, at the bottom right under the hand box (it
@@ -2103,6 +2204,7 @@ def draw_bar(frame: np.ndarray, x0: float, x1: float, y: float, progress: float,
     a, b, y = int(round(x0 + r)), int(round(x1 - r)), int(round(y))
     if b < a:
         return
+    _line_blend(frame, (a, y), (b, y), C.rim[:3], thickness, C.rim[3] / 255 * 0.6)  # a dark track under the light one: seen on any wall
     _line_blend(frame, (a, y), (b, y), C.bar_track[:3], thickness, C.bar_track[3] / 255)
     p = min(max(progress, 0.0), 1.0)
     if p <= 0:
@@ -2207,13 +2309,17 @@ def draw_fingertips(frame: np.ndarray, state: GestureState) -> None:
         f = track.feat
         out = {} if f is None else {THUMB_TIP: f.thumb_out, **dict(zip(FINGER_TIPS, f.extended))}
         pending = track.raw != track.stable
+        rim = C.rim[3] / 255
         for i in TIPS:
             c = tuple(int(v) for v in track.hand.points[i])
-            if i == INDEX_TIP and pending:
+            if i == INDEX_TIP and pending:  # each on a dark rim, so a yellow dot shows on a pale wall
+                cv2.circle(frame, c, HANDS.active_tip_r, bgr(C.rim), HANDS.pending_ring_w + 2, cv2.LINE_AA)
                 cv2.circle(frame, c, HANDS.active_tip_r, bgr(color), HANDS.pending_ring_w, cv2.LINE_AA)
             elif not out.get(i, True):
+                _dot_blend(frame, c, HANDS.curled_tip_r + 1, C.rim[:3], rim * HANDS.curled_alpha)
                 _dot_blend(frame, c, HANDS.curled_tip_r, color, HANDS.curled_alpha)
             else:
+                _dot_blend(frame, c, (HANDS.active_tip_r if i == INDEX_TIP else HANDS.tip_r) + 1, C.rim[:3], rim)
                 cv2.circle(frame, c, HANDS.active_tip_r if i == INDEX_TIP else HANDS.tip_r, bgr(color), -1,
                            cv2.LINE_AA)
 
@@ -2240,11 +2346,18 @@ def draw_hand_box(frame: np.ndarray, cursor: RelativeCursor) -> None:
                    HANDS.box_stroke, cv2.LINE_AA)
 
 
-def draw_hand_area(frame: np.ndarray, cursor: RelativeCursor) -> None:
-    """Where the hand steers the highlight: the hand box's corners, small and faint."""
+def draw_hand_area(frame: np.ndarray, cursor: RelativeCursor, avoid: tuple[int, int, int, int] | None = None) -> None:
+    """Where the hand steers the highlight: the hand box's corners, small and
+    faint; never across `avoid` (Review's take table, which a corner met)."""
     x0, y0, x1, y1 = (int(v) for v in cursor.box)
     arm = max(HANDS.area_min_arm, int((x1 - x0) * HANDS.area_arm))
+    keep = None
+    if avoid is not None:
+        ax0, ay0, ax1, ay1 = (max(0, int(v)) for v in avoid)
+        keep = frame[ay0:ay1, ax0:ax1].copy()
     _corners(frame, (x0, y0, x1, y1), arm, C.hand_area, HANDS.area_stroke, HANDS.area_alpha)
+    if keep is not None:
+        frame[ay0:ay1, ax0:ax1] = keep
 
 
 def draw_stats(frame: np.ndarray, text: str) -> None:
@@ -2287,12 +2400,16 @@ def _text_w(font, text: str, tracking: float = 0.0) -> float:
     return font.getlength(text) + tracking * max(0, len(text) - 1)
 
 
-def _outline(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font, tracking: float = 0.0) -> None:
+def _outline(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font, tracking: float = 0.0,
+             alpha: int = 255) -> None:
     """The dark outline of `text`, on its own layer under the text (so a
     neighbouring word's outline never covers a glyph): OUTLINE.width px of
-    Pillow's stroke in Colors.outline."""
+    Pillow's stroke in Colors.outline, as strong as the text (`alpha`, its
+    opacity) is opaque (OUTLINE.gamma)."""
     if OUTLINE.width > 0:
-        _text(draw, xy, text, font, tracking, fill=C.outline, stroke_width=OUTLINE.width, stroke_fill=C.outline)
+        a = round(C.outline[3] * (max(0, min(alpha, 255)) / 255) ** OUTLINE.gamma)
+        ink = (*C.outline[:3], a)
+        _text(draw, xy, text, font, tracking, fill=ink, stroke_width=OUTLINE.width, stroke_fill=ink)
 
 
 def _halo(img: Image.Image, radius: float, under: Image.Image | None = None) -> Image.Image:
@@ -2382,8 +2499,9 @@ def _corners(frame: np.ndarray, box: tuple[int, int, int, int], arm: int, color,
     """A box's four corner marks, blended at `alpha`."""
     x0, y0, x1, y1 = box
     for (x, y), (dx, dy) in (((x0, y0), (1, 1)), ((x1, y0), (-1, 1)), ((x0, y1), (1, -1)), ((x1, y1), (-1, -1))):
-        _line_blend(frame, (x, y), (x + dx * arm, y), color, stroke, alpha)
-        _line_blend(frame, (x, y), (x, y + dy * arm), color, stroke, alpha)
+        for c, s, a in ((C.rim[:3], stroke + 2, C.rim[3] / 255 * 0.5), (color, stroke, alpha)):  # a dark rim first
+            _line_blend(frame, (x, y), (x + dx * arm, y), c, s, a)
+            _line_blend(frame, (x, y), (x, y + dy * arm), c, s, a)
 
 
 def _premultiply(img: Image.Image) -> tuple[np.ndarray, np.ndarray]:

@@ -24,9 +24,9 @@ def test_each_sentence_shows_its_latest_take_until_another_is_picked():
     b.add(3, analysed("Thank you for being here."), drill=1)
     assert [b.shown(i) for i in range(3)] == [2, 3, 1]  # latest take that said each sentence
     assert b.said_in(1) == [1, 2, 3]
-    assert b.take_label(1) == "TAKE 3 (DRILL)  3 OF 3"
+    assert b.take_label(1) == "TAKE 3 (DRILL, 3 OF 3)"
     b.picked[1] = 2  # pointed at take 2's chip
-    assert b.shown(1) == 2 and b.take_label(1) == "TAKE 2  2 OF 3"
+    assert b.shown(1) == 2 and b.take_label(1) == "TAKE 2 (2 OF 3)"
     # A newer take that says the sentence again shows instead of the pick.
     b.add(4, analysed(FULL))
     assert b.shown(1) == 4
@@ -75,7 +75,7 @@ def metrics(sentences, pace=142.4, fillers=1.5, pitch=6.2, posture=True, touches
 def test_the_sentence_lines_carry_pitch_and_gaze_when_measured():
     b = Board(parse_text(TEXT))
     b.add(1, analysed(FULL), metrics([(8, 2, 0), (9, 0, 1), (1, 1, 0)]))
-    assert b.detail(0)[0].endswith("pitch range 4.5 st, on screen 80%")
+    assert b.detail(0)[0].endswith("pitch range 4.5 semitones, on screen 80%")
     assert b.detail(1)[0].endswith("on screen 90%")  # a share of every reading, unclear included
     assert "on screen" not in b.detail(2)[0]  # too few readings (2)
     b.add(2, analysed(FULL), {"version": 4, "gaze": {"value": None, "reason": "no calibration"}})
@@ -111,7 +111,7 @@ def test_the_take_table_sets_the_last_full_takes_side_by_side():
     assert rows["LENGTH"][-3:] == ["1:01", "0:58", "0:40"]
     assert rows["WPM"][-3:] == ["142", "131", "-"]
     assert rows["FILLERS/MIN"][-3:] == ["1.5", "0.5", "-"]
-    assert rows["PITCH RANGE ST"][-3:] == ["6.2", "8", "-"]
+    assert rows["PITCH (SEMITONES)"][-3:] == ["6.2", "8", "-"]
     assert rows["ON SCREEN"][-3:] == ["82%", "50%", "-"]
     assert rows["FACE TOUCHES"][-3:] == ["1", "2", "-"]
     assert rows["SHOULDERS TILTED"][-3:] == ["-", "13%", "-"]
@@ -138,7 +138,7 @@ def test_review_points_at_take_chips_and_says_when_there_is_nothing_to_choose(tm
 
     takes.sync_review(g, view, ov, 0.0)
     assert view.takes == ("TAKE 1", "TAKE 2", "TAKE 3 (DRILL)") and view.take_shown == 2  # the latest said it
-    assert takes.status("review", view) == "TAKE 3 (DRILL)  3 OF 3" and view.playable  # the hints are render's
+    assert takes.status("review", view) == "TAKE 3 (DRILL, 3 OF 3)" and view.playable  # the hints are render's
     assert len(view.detail) == 3 and view.detail[2].startswith("▸ ")
     g.state.op, g.state.point = "take", (0.0, 0.0)  # an L: pointing starts on the take shown
     takes.sync_review(g, view, ov, 0.1)
@@ -158,6 +158,9 @@ def test_review_points_at_take_chips_and_says_when_there_is_nothing_to_choose(tm
     takes.sync_review(g, view, ov, 0.4)
     assert view.takes == () and takes.status("review", view).startswith("NO TAKE SAID THIS SENTENCE")
     assert not view.playable
+    view.focus = Hit(0, None)  # one take in all, and it said the sentence: nothing to compare it with
+    takes.sync_review(g, view, ov, 0.5)
+    assert takes.status("review", view) == "TAKE 1"
 
     view.focus, view.mode = None, "browse"  # browsing: the take table
     takes.sync_review(g, view, ov, 0.5)

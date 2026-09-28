@@ -104,21 +104,29 @@ def test_paragraph_unit_groups_sentences():
 
 def test_label_lines_follow_mode_and_operation():
     ov = overlay()
-    assert ov.label_lines(ViewState(mode="browse", level="word")) == ("BROWSE BY WORD", "")
+    # Browsing: the gesture that focuses, then the other levels' shapes; nothing up: how to begin.
+    assert ov.label_lines(ViewState(mode="browse", level="word")) == (
+        "BROWSE BY WORD", "PINCH: FOCUS  /  TWO FINGERS: SENTENCES · FLAT HAND: PARAGRAPHS")
+    assert ov.label_lines(ViewState(mode="browse", level="sentence"))[1].startswith("FOLD: FOCUS, THEN HEAR IT  /  ")
+    assert ov.label_lines(ViewState()) == ("PREPARE", "FINGER UP: BROWSE  /  RAISE A FIST: NEW TAKE")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), llm="local")
-    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "L-HAND, THEN TURN TO PICK")
+    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "L-HAND, THEN TURN: PICK  /  DROP HAND: BACK")
     assert ov.ring_labels(focus) == ("being",)
     focus.alternatives = ("present",)
     focus.ops.pointing, focus.ops.picked = True, 1
-    assert ov.label_lines(focus)[1] == 'PINCH + LIFT: USE "PRESENT"'
+    assert ov.label_lines(focus)[1] == 'PINCH + LIFT: USE "PRESENT"  /  DROP HAND: BACK'
+    assert ov.label_lines(focus)[0] == 'FOCUS BY WORD  "being"'  # the word as it is, not the pick
     focus.ops.picked = 0
-    assert ov.label_lines(focus)[1] == "KEEP THE WORD (NO CHANGE)"
+    assert ov.label_lines(focus)[1] == "ORIGINAL WORD: NO CHANGE  /  DROP HAND: BACK"
     focus.ops = OpsView()
     assert ov.label_lines(focus)[1].startswith("OPEN PALM: ALTERNATIVES")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
-    assert ov.label_lines(tone) == ("FOCUS BY SENTENCE", "SENTENCE TONE: WARM  (PREVIEW ONLY: NEEDS THE OPTIONAL LLM)")
+    assert ov.label_lines(tone) == ("FOCUS BY SENTENCE",
+                                    "TONE: WARM  /  PREVIEW ONLY: NEED THE OPTIONAL AI · DROP HAND: BACK")
+    # The hand is down: what is happening, and how to stay, with the drop timer as a bar.
     tone.drop_progress = 0.4
-    assert ov.label_lines(tone)[1] == "DROP HAND TO BACK OUT"
+    assert ov.label_lines(tone)[1] == "BACKING OUT  /  RAISE HAND TO STAY"
+    assert ov.label_progress(tone) == 0.4
 
 
 def test_labels_promise_a_rewrite_only_when_an_llm_is_on():
@@ -126,14 +134,14 @@ def test_labels_promise_a_rewrite_only_when_an_llm_is_on():
     for llm in ("cloud", "local"):
         tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=-0.6),
                          llm=llm)
-        assert ov.label_lines(tone)[1] == "SENTENCE TONE: COLD  /  PINCH + LIFT: ASK FOR A REWRITE"
+        assert ov.label_lines(tone)[1] == "TONE: FORMAL  /  PINCH + LIFT: ASK FOR A REWRITE · DROP HAND: BACK"
         stretch = ViewState(mode="focus", level="paragraph", focus=Hit(4, None), ops=OpsView(kind="stretch", stretch=1.5),
                             llm=llm)
-        assert ov.label_lines(stretch)[1] == "PARAGRAPH LENGTH: FULLER +50%  /  PINCH + LIFT: ASK FOR A REWRITE"
+        assert ov.label_lines(stretch)[1] == "LENGTH: FULLER +50%  /  PINCH + LIFT: ASK FOR A REWRITE · DROP HAND: BACK"
         word = ViewState(mode="focus", level="word", focus=Hit(0, 1), llm=llm)
         assert ov.label_lines(word)[1].startswith("OPEN PALM: ALTERNATIVES")
     stretch.llm = ""
-    assert ov.label_lines(stretch)[1].endswith("(PREVIEW ONLY: NEEDS THE OPTIONAL LLM)")
+    assert "PREVIEW ONLY: NEED THE OPTIONAL AI" in ov.label_lines(stretch)[1]
 
 
 def test_the_cloud_chip_shows_while_the_cloud_llm_is_on():
@@ -187,10 +195,11 @@ def test_section_unit_and_rehearse_panel_shows_the_section():
 
 def test_label_lines_for_takes():
     ov = overlay()
-    assert ov.label_lines(ViewState(status="HOLD FIST: START A TAKE")) == ("PREPARE", "HOLD FIST: START A TAKE")
-    assert ov.label_lines(ViewState(start_progress=0.5))[1] == "START A TAKE: HOLD FIST"
+    assert ov.label_lines(ViewState(status="TAKE 1: SAVING…")) == (
+        "PREPARE", "TAKE 1: SAVING…  /  FINGER UP: BROWSE · RAISE A FIST: NEW TAKE")
+    assert ov.label_lines(ViewState(start_progress=0.5))[1] == "NEW TAKE: HOLD"
     assert ov.label_progress(ViewState(start_progress=0.5)) == 0.5  # drawn as a bar after the text
-    assert ov.label_progress(ViewState(status="HOLD FIST: START A TAKE")) is None
+    assert ov.label_progress(ViewState(status="TAKE 1: SAVING…")) is None
     # In a take the only command is a thumbs-up: the hint line says so.
     assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2  /  THUMB UP: CANCEL")
     assert ov.label_lines(ViewState(app="count_in", hold_progress=0.3))[1] == "CANCEL: HOLD"
@@ -202,26 +211,27 @@ def test_label_lines_for_takes():
     rehearse.note, rehearse.hold_progress = "", 0.5
     assert ov.label_lines(rehearse)[1] == "STOP: HOLD" and ov.label_progress(rehearse) == 0.5
     review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None))
-    assert ov.label_lines(review)[1] == "  /  PINCH + LIFT: DRILL"  # no Prepare operations in Review
+    assert ov.label_lines(review)[1] == "  /  PINCH + LIFT: DRILL · DROP HAND: BACK"  # no Prepare operations in Review
     assert ov.label_lines(ViewState(app="review"))[0] == "REVIEW"
 
 
 def test_review_labels_list_the_gestures_that_act():
     ov = overlay()
     browse = ViewState(app="review", mode="browse", level="sentence", status="TAKE 2 SAVED (0:41)")
-    assert ov.label_lines(browse) == ("BROWSE BY SENTENCE",
-                                      "TAKE 2 SAVED (0:41)  /  FOLD: DETAILS · FIST: NEW TAKE · THUMB UP: PREPARE")
+    assert ov.label_lines(browse) == ("BROWSE BY SENTENCE", "TAKE 2 SAVED (0:41)  /  FOLD: DETAILS · THUMB UP: PREPARE")
     browse.level = "paragraph"
-    assert ov.label_lines(browse)[1].endswith("FOLD: SUMMARY · FIST: NEW TAKE · THUMB UP: PREPARE")
-    focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2  2 OF 3",
+    assert ov.label_lines(browse)[1].endswith("FOLD: SUMMARY · THUMB UP: PREPARE")
+    assert ov.label_lines(ViewState(app="review"))[1] == \
+        "  /  FINGER UP: BROWSE · RAISE A FIST: NEW TAKE · THUMB UP: PREPARE"
+    focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2 (2 OF 3)",
                       takes=("TAKE 1", "TAKE 2", "TAKE 3"), take_shown=1, playable=True)
     assert ov.label_lines(focus)[1] == \
-        "TAKE 2  2 OF 3  /  OPEN PALM: PLAY · L, POINT: TAKE 2 OF 3 · PINCH + LIFT: DRILL"
+        "TAKE 2 (2 OF 3)  /  OPEN PALM: PLAY · L, POINT: PICK A TAKE · PINCH + LIFT: DRILL · DROP HAND: BACK"
     focus.takes, focus.take_shown = ("TAKE 1",), 0
-    assert ov.label_lines(focus)[1].endswith("  /  OPEN PALM: PLAY · PINCH + LIFT: DRILL")  # nothing to choose
+    assert ov.label_lines(focus)[1].endswith("  /  OPEN PALM: PLAY · PINCH + LIFT: DRILL · DROP HAND: BACK")
     paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), status="TAKE 3",
                           playable=True)
-    assert ov.label_lines(paragraph)[1] == "TAKE 3  /  OPEN PALM: PLAY PARAGRAPH · DROP HAND: BACK"
+    assert ov.label_lines(paragraph)[1] == "TAKE 3  /  OPEN PALM: PLAY · DROP HAND: BACK"
     paragraph.playable = False
     assert ov.label_lines(paragraph)[1] == "TAKE 3  /  DROP HAND: BACK"
 
@@ -233,16 +243,17 @@ def hint_rows(ov, view):
 @pytest.mark.parametrize("size", [(1280, 720), (1920, 1080)])
 def test_review_hints_take_the_short_form_when_the_long_one_does_not_fit_a_row(size):
     ov = TextOverlay(parse_text(TEXT).sentences, size)
-    focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2  2 OF 3",
+    focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2 (2 OF 3)",
                       takes=("TAKE 1", "TAKE 2", "TAKE 3"), take_shown=1, playable=True)
-    assert hint_rows(ov, focus) == ["PALM: PLAY · L: 2/3 · PINCH+LIFT: DRILL"]  # the long form needs two rows
-    focus.takes, focus.take_shown = tuple(f"TAKE {n}" for n in range(1, 13)), 10
-    rows = hint_rows(ov, focus)  # too wide even short: its hints packed whole, never split
-    assert 1 <= len(rows) <= 2 and " · ".join(rows) == "PALM: PLAY · L: 11/12 · PINCH+LIFT: DRILL"
+    rows = hint_rows(ov, focus)  # the long form needs more than a row: the short one, its hints packed whole
+    assert 1 <= len(rows) <= 2
+    assert " · ".join(rows) == "PALM: PLAY · L: PICK A TAKE · PINCH + LIFT: DRILL · DROP HAND: BACK"
     browse = ViewState(app="review", mode="browse", level="sentence")
-    assert hint_rows(ov, browse) == ["FOLD: DETAILS · FIST: NEW TAKE", "THUMB UP: PREPARE"]  # packed whole
+    assert " · ".join(hint_rows(ov, browse)) == "FOLD: DETAILS · THUMB UP: PREPARE"
     paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), playable=True)
-    assert hint_rows(ov, paragraph) == ["PALM: PLAY PARAGRAPH · DROP: BACK"]
+    assert hint_rows(ov, paragraph) == ["OPEN PALM: PLAY · DROP HAND: BACK"]
+    assert all(" / " not in row for row in rows + hint_rows(ov, ViewState(mode="focus", level="sentence",
+                                                                      focus=Hit(1, None), llm="local")))
 
 
 def test_while_it_plays_the_hint_is_stop_and_a_held_palm_fills_the_stop_bar():
@@ -303,10 +314,10 @@ def test_review_draws_the_take_table_and_the_focused_sentences_takes():
     assert len(changed) and changed[:, 1].min() > ov.col_x1  # bottom right, clear of the text column
     assert changed[:, 0].min() > 720 / 2
 
-    detail = ("  Take 1: 140 wpm, no fillers, pitch range 4.5 st, on screen 80%",
-              "▸ Take 2: 131 wpm, 1 filler, pitch range 5 st, on screen 75%")
+    detail = ("  Take 1: 140 wpm, no fillers, pitch range 4.5 semitones, on screen 80%",
+              "▸ Take 2: 131 wpm, 1 filler, pitch range 5 semitones, on screen 75%")
     view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), detail=detail,
-                     status="TAKE 2  2 OF 2  /  L-HAND, THEN POINT: TAKES  /  PINCH + LIFT: DRILL")
+                     status="TAKE 2 (2 OF 2)")
     inv_with = ov._focus_panel(ov._panel_unit(view), detail).inv
     inv_without = ov._focus_panel(ov._panel_unit(view)).inv
     assert (1 - inv_with).sum() > (1 - inv_without).sum() * 1.3  # the takes' lines are drawn
@@ -324,7 +335,7 @@ def test_a_drill_shows_only_its_sentence():
 # --- everything reachable (review finding F2) -------------------------------------
 
 LONG_SECTION = "# Long\n\n" + " ".join(f"This is sentence number {i} of the long section." for i in range(1, 61))
-LABEL_RESERVE = lambda ov: LABEL.min_top + ov.label_h + ov.pad // 2
+LABEL_RESERVE = lambda ov: ov.label_top + ov.label_h + ov.pad // 2
 
 
 @pytest.mark.parametrize("size", [(640, 480), (1280, 720), (1920, 1080)])
@@ -395,9 +406,9 @@ def test_the_alert_line_and_keys_help_are_drawn():
 def test_the_calibration_steps_in_the_count_in():
     ov = overlay()
     view = ViewState(app="count_in", count_in=5, calibration="camera", current=0)
-    assert ov.label_lines(view) == ("REHEARSE", "LOOK INTO THE CAMERA ABOVE THE SCREEN  /  THUMB UP: CANCEL")
+    assert ov.label_lines(view) == ("REHEARSE", "LOOK INTO THE CAMERA LENS  /  THUMB UP: CANCEL")
     view = ViewState(app="count_in", count_in=2, calibration="notes", current=0)
-    assert ov.label_lines(view)[1] == "NOW READ THE ORANGE SENTENCE  2  /  THUMB UP: CANCEL"
+    assert ov.label_lines(view)[1] == "READ THE ORANGE SENTENCE\u00a0·\u00a02  /  THUMB UP: CANCEL"
     # No big count digit while calibrating: it would pull the eyes away.
     calibrating, counting = (np.full((720, 1280, 3), 128, np.uint8) for _ in range(2))
     ov.draw(calibrating, view)
@@ -541,7 +552,9 @@ def test_turning_back_past_the_word_wraps_the_short_way():
     assert (view.ops.picked, view.ops.rot_to) == (2, -1.0)
 
 
-def test_a_new_word_scrambles_into_the_sentence_and_the_label():
+def test_a_new_word_scrambles_into_the_sentence_but_never_the_label():
+    # The label says where you are: the word as it is in the notes. The pick is
+    # in its operation line; the scramble is only in the sentence.
     from palmcards.config import KNOB
 
     ov = overlay()
@@ -549,15 +562,29 @@ def test_a_new_word_scrambles_into_the_sentence_and_the_label():
     ov.follow_ring(view, "being", 0)
     assert ov.label_lines(view)[0] == 'FOCUS BY WORD  "being"'
     ov.follow_ring(view, "present", 1)
-    during = ov.label_lines(replace(view, now=3.0 + KNOB.scramble_s / 3))[0]
-    assert during != 'FOCUS BY WORD  "present"' and len(during) == len('FOCUS BY WORD  "present"')
+    mid = replace(view, now=3.0 + KNOB.scramble_s / 3)
+    assert ov.label_lines(mid)[0] == 'FOCUS BY WORD  "being"'
+    assert ov.focus_word(mid) != "present" and len(ov.focus_word(mid)) == len("present")
     view.now = 3.0 + KNOB.scramble_s + 0.001
-    assert ov.label_lines(view) == ('FOCUS BY WORD  "present"', 'PINCH + LIFT: USE "PRESENT"')
+    assert ov.focus_word(view) == "present"
+    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', 'PINCH + LIFT: USE "PRESENT"  /  DROP HAND: BACK')
     # Returning to the original word restores it as a live preview.
     ov.follow_ring(view, "being", 3)
     view.ops.pointing = True
     view.now += KNOB.scramble_s + 0.001
-    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "KEEP THE WORD (NO CHANGE)")
+    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "ORIGINAL WORD: NO CHANGE  /  DROP HAND: BACK")
+
+
+def test_the_label_never_cuts_the_focused_word_or_a_quoted_pick():
+    ov = TextOverlay(parse_text("It was forgiving, remarkably so.").sentences, (1280, 720))
+    view = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), llm="local",
+                     alternatives=("stand-in number two",))
+    assert "…" not in ov.label_lines(view)[0] and '"remarkably"' in ov.label_lines(view)[0]
+    view.focus = Hit(0, 2)
+    assert ov.label_lines(view)[0].endswith('"forgiving"')  # its punctuation left off
+    view.ops.pointing, view.ops.picked = True, 1
+    rows = [text for line, text in ov.label_rows(view) if line == 1]
+    assert any('"STAND-IN\u00a0NUMBER\u00a0TWO"' in row for row in rows)  # the quote kept whole on a row
 
 
 def test_the_picked_node_is_highlighted_at_once_and_while_turning():
@@ -642,9 +669,9 @@ def test_nothing_is_drawn_over_the_face():
         ViewState(app="count_in", count_in=2),
         ViewState(app="rehearse", current=1, rec_s=4.0, status="SECTION 1/1: THE ONLY ONE", hold_progress=0.5),
         ViewState(app="review", mode="browse", level="sentence", hover=Hit(2, None), summary=table,
-                  status="TAKE 1: 9/9 SPOKEN, 216 WPM, 0 FILLERS/MIN  /  RAISE A FIST: NEW TAKE"),
+                  status="TAKE 1: 9 OF 9 SENTENCES SAID"),
         ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), takes=("TAKE 1", "TAKE 2 (DRILL)"),
-                  detail=("  Take 1: 140 wpm, no fillers, pitch range 4.5 st, on screen 80%",)),
+                  detail=("  Take 1: 140 wpm, no fillers, pitch range 4.5 semitones, on screen 80%",)),
         ViewState(alert="ANALYSIS FAILED FOR TAKE 2: SOMETHING WENT WRONG, PRESS R", keys_help=True,
                   tutorial=(2, 6, "HOLD UP ONE FINGER: BROWSE BY WORD")),
     ]

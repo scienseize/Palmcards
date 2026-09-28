@@ -98,7 +98,7 @@ def test_unavailable_edits_never_claim_a_commit(op, level, what):
     view = focused(OpsView(kind=op), level=level, hit=Hit(0, None))
     log = GestureLog()
     main.apply_event(GestureEvent("commit", 1.0, level, op, value=0.4), view, ov, log, FakeSpeaker())
-    assert view.note == "PREVIEW NOT READY: SET UP THE OPTIONAL LLM"
+    assert view.note == "PREVIEW NOT READY: SET UP THE OPTIONAL AI"
     assert view.focus is not None and view.mode == "focus"
     assert "COMMITTED" not in view.note and not log.entries
 

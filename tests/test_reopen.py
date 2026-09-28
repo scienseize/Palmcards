@@ -83,7 +83,7 @@ def test_a_focused_paragraph_plays_from_the_take_it_shows(tmp_path, monkeypatch)
     takes = main.Takes(session.current_notes(), session, GestureLog(), main.Devices(player=FakePlayer), follow=False)
     takes._fill_board()
     assert takes.paragraph(1) == [0, 1] and takes.paragraph(2) == [2]
-    assert takes.play_paragraph([0, 1]) == "PLAYING TAKE 1, PARAGRAPH"
+    assert takes.play_paragraph([0, 1]) == "PLAYING TAKE 1"
     assert FakePlayer.played == [(int(3.5 * 16000), 16000)]
     assert takes.play_paragraph([2]) == "NO TAKE TO PLAY"
     takes.close()

@@ -86,17 +86,15 @@ class Board:
         return f"TAKE {number}" + (" (DRILL)" if number in self.drills else "")
 
     def take_label(self, sentence: int) -> str:
-        """ "TAKE 3 (DRILL)  2 OF 3" for the label while a sentence is focused."""
+        """ "TAKE 3 (2 OF 3)", "TAKE 3 (DRILL, 2 OF 3)" for the label while a sentence is focused."""
         n = self.shown(sentence)
         if n is None:
             return "NO TAKE ANALYSED YET"
-        label = self.take_name(n)
         said = self.said_in(sentence)
         if n in said and len(said) > 1:
-            label += f"  {said.index(n) + 1} OF {len(said)}"
-        elif n not in said:
-            label += ": NOT SAID"
-        return label
+            drill = "DRILL, " if n in self.drills else ""
+            return f"TAKE {n} ({drill}{said.index(n) + 1} OF {len(said)})"
+        return self.take_name(n) + ("" if n in said else ": NOT SAID")
 
     def detail(self, sentence: int) -> tuple[str, ...]:
         """The focus panel's lines: the sentence in every take that said it,
@@ -113,7 +111,7 @@ class Board:
         n = len(row["fillers"])
         parts.append(f"{n} filler{'s' if n != 1 else ''}" if n else "no fillers")
         if row["pitch_range_st"] is not None:
-            parts.append(f"pitch range {row['pitch_range_st']:g} st")
+            parts.append(f"pitch range {row['pitch_range_st']:g} semitones")
         parts.append(self._gaze_part(number, row["gaze"]))
         partly = " (partly said)" if row["status"] == "partial" else ""
         return f"{self.take_name(number).capitalize()}{partly}: {', '.join(p for p in parts if p)}"
@@ -204,5 +202,5 @@ class Board:
         ]
 
 
-METRIC_ROWS = ("LENGTH", "WPM", "FILLERS/MIN", "LONG PAUSES", "RESTARTS", "PITCH RANGE ST", "ON SCREEN",
+METRIC_ROWS = ("LENGTH", "WPM", "FILLERS/MIN", "LONG PAUSES", "RESTARTS", "PITCH (SEMITONES)", "ON SCREEN",
                "FACE TOUCHES", "SHOULDERS TILTED")
