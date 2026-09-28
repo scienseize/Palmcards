@@ -28,5 +28,6 @@ docs/local/
 *.mkv
 
 # Local agent setup
-.claude/skills/
+.claude/skills/*
+!.claude/skills/session-files/
 AGENTS.md
