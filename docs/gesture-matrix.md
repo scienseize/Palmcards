@@ -18,7 +18,7 @@ Count-in and Rehearse don't run the grammar: only the thumbs-up hold, and every 
 (pinch + lift: wrist up 15% of the frame height within 0.6 s, from a pinch started after the hand
 opened in the focus).
 
-**Every hold** (a fist to start, a thumbs-up for done, crossed fingers for undo, an open palm to hear, play, stop,
+**Every hold** (a fist to start, a thumbs-up for done, a thumbs-down for undo, a V sign for back, an open palm to hear, play, stop,
 open the ring or retry) forgives 0.3 s of other readings in the middle (`gestures.HOLD_GRACE_S`
 on the stable pose, `REHEARSE.done_grace_s` on the thumbs-up's raw pose). It completes only on a
 frame that reads its pose, or one where tracking has lost the hand, never on another pose. A pose
@@ -33,7 +33,7 @@ that closes into a fist (its first pose is `CARRIED`).
 |---|---|---|---|---|
 | idle | `FIST` raised into view (its first pose) | held 1.0 s | count-in (a take) | `RAISE A FIST: NEW TAKE`; while held `NEW TAKE: HOLD` and a bar |
 | idle, browse | `FIST` formed from another pose, or by a hand up across a mode change | held 0.6 s | nothing; a hint (at most every 6 s) | `NEW TAKE: DROP THE HAND, RAISE A FIST` |
-| idle, browse, an edit made | fingers crossed, index over middle (one hand; it reads as `TWO` and browses sentences meanwhile) | held 1.0 s, once per crossing | undo the last edit | idle: `CROSS YOUR FINGERS: UNDO`; after an edit `… / CROSS YOUR FINGERS: UNDO`; `UNDO: HOLD` + bar |
+| idle, browse, an edit made | `THUMB_DOWN` | held 1.0 s, once per hold | undo the last edit | idle: `THUMB DOWN: UNDO`; after an edit `… / THUMB DOWN: UNDO`; `UNDO: HOLD` + bar |
 | idle, browse | `THUMB_UP` | – | nothing | – |
 | idle, browse | `ONE` / `TWO` / `FLAT` | 0.15 s | browse by word / sentence / paragraph (a change of shape changes the level) | idle: `FINGER UP: BROWSE`; browse: the other levels' shapes |
 | browse | index tip moving in the hand box | shape of the level held | the highlight follows it | – (implicit) |
@@ -86,8 +86,9 @@ that closes into a fist (its first pose is `CARRIED`).
 |---|---|---|---|---|
 | idle | `FIST` raised into view (its first pose) | held 1.0 s | count-in (a new full take) | `RAISE A FIST: NEW TAKE` (short `FIST: NEW TAKE`); `NEW TAKE: HOLD` |
 | idle, browse | `FIST` formed from another pose, or by a hand up across a mode change | held 0.6 s | nothing; a hint | `NEW TAKE: DROP THE HAND, RAISE A FIST` |
-| idle, browse | `THUMB_UP`, either hand, anywhere | held 1.0 s | back to Prepare | `THUMB UP: PREPARE`; `BACK TO PREPARE: HOLD` + bar |
-| focus | `THUMB_UP` | – | nothing (drop the hand first) | – |
+| idle, browse | `VICTORY` (a V sign), either hand, anywhere | held 1.0 s | back to Prepare | `V SIGN: PREPARE`; `BACK TO PREPARE: HOLD` + bar |
+| focus | `VICTORY` | – | nothing (drop the hand first) | – |
+| any | `THUMB_UP` | – | nothing (it is "stop" in a take; one read as a fist could start a take) | – |
 | idle, browse, analysis failed | `OPEN` | held 1.0 s | retry the analysis | alert `… ANALYSIS FAILED … / OPEN PALM, HELD, OR R: RETRY`; `RETRY ANALYSIS: HOLD` + bar |
 | idle, browse | `ONE` or `TWO` / `FLAT` | 0.15 s | browse sentences / paragraphs | idle: `FINGER UP: BROWSE` |
 | browse | index tip in the hand box's top or bottom 10% | – | the notes scroll | chevrons; `SCROLLING UP` / `DOWN` |
@@ -112,10 +113,10 @@ that closes into a fist (its first pose is `CARRIED`).
 | `t` | start a take (Prepare, Review) | fist held |
 | `x` | stop any playback; else stop the take or cancel the count-in | new palm; thumbs-up |
 | `a` | play or stop (Prepare: hear it; Review: the focused unit) | palm held; new palm |
-| `p` | Review → Prepare | thumbs-up held |
+| `p` | Review → Prepare | V sign held |
 | `n` / `b` | next / previous section (Rehearse) | none: in a take only the thumbs-up is a command (the voice moves on) |
 | `space` / `j`, `k` | next / previous sentence, or scroll a panel | none in Rehearse (as above); browsing elsewhere |
-| `u` | undo the last edit (Prepare) | fingers crossed, held |
+| `u` | undo the last edit (Prepare) | thumbs-down held |
 | `r` | retry failed analysis or a failed preview | open palm held (Review); pinch + lift (a preview) |
 | `e` | calibrate the eyes again at the next count-in | none (a setting) |
 | `m` | flip a replayed video | none (a setting) |
@@ -128,7 +129,7 @@ that closes into a fist (its first pose is `CARRIED`).
 | Action | Gesture | Hold |
 |---|---|---|
 | start a take | fist (first pose) | 1.0 s |
-| back to Prepare (Review), undo (Prepare), retry analysis (Review) | thumbs-up; crossed fingers; open palm | 1.0 s (as long as a fist: nobody is speaking) |
+| back to Prepare (Review), undo (Prepare), retry analysis (Review) | V sign; thumbs-down; open palm | 1.0 s (as long as a fist: nobody is speaking) |
 | stop a take / cancel the count-in | thumbs-up | 1.5 s (clear of gestures made while speaking) |
 | hear it / play / open the options ring | open palm on a focus | 0.6 s |
 | stop playback | new open palm | 0.3 s (stopping is quick) |
@@ -183,14 +184,17 @@ the reason.
 - **S, kept. A wrong section jump during a take: `n` / `b` only.** Since 2026-09-27, gestures during
   a take are never commands except the thumbs-up (the user's rule). The voice follow moves on by
   itself when the next section's opening is said.
-- **S, fixed. Undo: `u` only.** In Prepare, with an edit made and nothing focused, fingers crossed
-  (index over middle, one hand) and held 1.0 s undo it (`gestures.fingers_crossed`, an `undo` event;
-  once per crossing). It was a thumbs-up at first; the user asked for another gesture
-  because a thumbs-up is sometimes read as a fist (which, raised as one, starts a take). Two index
-  fingers crossed into an X came next and never tracked: MediaPipe merges overlapping hands into one.
-  Crossed fingers on one hand did: on the user's trace the index and middle lines crossed in every
-  frame, and two fingers held together never did (`samples/poses/crossed-fingers-20260928.json`). The
-  note after an edit and the idle hint say `CROSS YOUR FINGERS: UNDO`.
+- **S, fixed. Undo: `u` only.** In Prepare, with an edit made and nothing focused, a thumbs-down held
+  1.0 s undoes it (`ModeMachine.undo_hold`, an `undo` event; once per hold). The path there: a
+  thumbs-up first; the user asked for another gesture because a thumbs-up is sometimes read as a
+  fist (which, raised as one, starts a take). Two index fingers crossed into an X came next and never
+  tracked (MediaPipe merges overlapping hands into one); fingers crossed on one hand tracked on the
+  user's trace, and then the user chose a thumbs-down. The note after an edit and the idle hint say
+  `THUMB DOWN: UNDO`.
+- **Changed 2026-09-28 (user's choice): back to Prepare from Review is a V sign** (index and middle
+  out and apart, `VICTORY`), held 1.0 s with nothing focused (`ModeMachine.back_hold`). A thumbs-up
+  does nothing in Review: it is "stop" in a take, and one read as a fist from the moment it came into
+  view could start a take. The replay sample `thumbs-up-in-review-does-nothing` pins that down.
 - **N, kept. A tutorial step the camera can't see done: `Enter` only.** If the camera can't see the
   hand, no gesture can skip it either.
 - **N, kept. `e` (recalibrate) and `m` (flip a replay).** These are settings, not ways out.

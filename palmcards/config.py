@@ -85,6 +85,12 @@ class Pose:
     thumb_up_dist: tuple[float, float] = (0.65, 1.35)
     thumb_up_deg: float = 30.0
     thumb_up_height: tuple[float, float] = (0.3, 1.1)
+    # A thumbs-down (undo in Prepare): no finger out, the thumb pointing down, the mirror of the
+    # thumbs-up: within thumb_up_deg of straight down, its tip thumb_up_height below the index knuckle.
+    # A V sign (back to Prepare from Review): index and middle out and apart, their tips at least
+    # this far apart (palm widths); two fingers together (TWO) are under `together`, and the gap
+    # between the two is read as neither.
+    victory_gap: float = 0.45
     l_angle_min: float = 50.0  # degrees between thumb and index
     l_angle_max: float = 130.0
 
@@ -155,13 +161,6 @@ class Ops:
     # While it plays, a new open palm (the hand has left the palm or the frame
     # since playback started) held this long stops it.
     stop_hold_s: float = 0.3
-    # Undo in Prepare: fingers crossed (index over middle, one hand), held REHEARSE.start_hold_s.
-    # Crossed, the index and middle knuckle-to-tip lines cross and the tips swap order across
-    # the hand by at least this much (palm widths). On the user's trace (2026-09-28, samples/poses/
-    # crossed-fingers-20260928.json) crossed fingers swapped by 0.05-0.22 in every frame; two fingers
-    # held together normally never crossed and kept their order by +0.10 or more. (Two index
-    # fingers crossed into an X, tried first, never tracked: MediaPipe merges overlapping hands.)
-    crossed_swap: float = 0.05
 
 
 @dataclass(frozen=True)

@@ -2240,3 +2240,25 @@ Tests: pytest (full) -> 615 passed. New: fingers_crossed on the user's frames (>
   by two fingers together, not in a focus).
 ```
 
+```text
+Date: 2026-09-28
+Phase / issue IDs: undo is a thumbs-down; back to Prepare from Review is a V sign (user: "change undo into
+  thumbs down and change review back to prepare into a victory sign with index and middle finger")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: palmcards/gestures.py: poses THUMB_DOWN (the thumbs-up turned over: no finger out, the thumb
+  within POSE.thumb_up_deg of straight down, its tip thumb_up_height below the index knuckle) and
+  VICTORY (index and middle out and apart, tips POSE.victory_gap 0.45 palms or more; TWO under 0.30,
+  between is NONE; a spread V sign was NONE before). Features.v_gap. PoseHold: a command pose held by
+  any hand (stable pose, HOLD_GRACE_S, completes only on a frame with the pose, once per hold, a pose up
+  at a mode change must come down first); ModeMachine.undo_hold (THUMB_DOWN, Prepare, an edit made, no
+  focus) and back_hold (VICTORY, Review, no focus), both REHEARSE.start_hold_s. A thumbs-up does nothing
+  in Review now (DoneHold only in the count-in and a take). The crossed-fingers reader, OPS.crossed_swap
+  and its pose sample are gone. render: DONE_HINT "V SIGN: PREPARE", UNDO_HINT "THUMB DOWN: UNDO";
+  main: BACK TO PREPARE: HOLD from ModeMachine.back_progress.
+  samples/gestures: thumbs-up-back-to-prepare is now thumbs-up-in-review-does-nothing (regenerated:
+  no entries); the others are unchanged.
+Tests: pytest (full) -> 616 passed. New: THUMB_DOWN and VICTORY classified (and the in-between gap as
+  NONE, an upside-down fist still a fist); undo by a thumbs-down (not a thumbs-up, once per hold,
+  misreads forgiven, not in a focus); back to Prepare by a V sign (not a thumbs-up, not in a focus).
+```
+

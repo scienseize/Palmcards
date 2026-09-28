@@ -74,8 +74,8 @@ SEGMENTS = [
      "thumbs-up pose, the first one started a count-in at 56.7 s).", None),
     ("thumbs-up-stops-take", "20260927-234235", (62.2, 68.0), "rehearse",
      "A thumbs-up held 1.5 s during a take stops it, into Review.", None),
-    ("thumbs-up-back-to-prepare", "20260927-234235", (62.2, 68.0), "review",
-     "The same thumbs-up held in Review goes back to Prepare.", None),
+    ("thumbs-up-in-review-does-nothing", "20260927-234235", (62.2, 68.0), "review",
+     "A thumbs-up held in Review does nothing (a V sign goes back to Prepare since 2026-09-28).", None),
     # Recorded before a held fist started takes (milestone 4). Fists formed
     # mid-gesture here used to start takes by mistake; only a fist raised
     # into view as a fist counts now.
@@ -131,8 +131,8 @@ REPLAYED_WHOLE = {
     "rehearse-swipes-do-nothing": "the command zone and its flick were removed on 2026-09-27",
     "thumbs-up-is-not-a-take": "recorded before the thumbs-up pose, which is never a fist",
     "thumbs-up-stops-take": "recorded before the thumbs-up was a command (live, a take had just started)",
-    "thumbs-up-back-to-prepare": "recorded in a take, before the thumbs-up was a command; since 2026-09-28 "
-                                 "Review's thumbs-up is held as long as a fist to start a take (1 s)",
+    "thumbs-up-in-review-does-nothing": "recorded in a take, before the thumbs-up was a command; since "
+                                        "2026-09-28 a V sign goes back from Review and a thumbs-up does nothing",
 }
 GRAMMAR_KINDS = ("focus", "back", "commit", "op", "palm_hold", "palm_stop")
 

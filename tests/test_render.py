@@ -34,8 +34,8 @@ def test_hints_follow_what_the_state_machine_does():
     ov = overlay()
     # Review, one finger browsing sentences: a pinch closes it, not a fold.
     one = ViewState(app="review", mode="browse", level="sentence", shape="ONE")
-    assert ov.label_lines(one)[1].endswith("PINCH: DETAILS · THUMB UP: PREPARE")
-    assert ov.label_lines(replace(one, shape="TWO"))[1].endswith("FOLD: DETAILS · THUMB UP: PREPARE")
+    assert ov.label_lines(one)[1].endswith("PINCH: DETAILS · V SIGN: PREPARE")
+    assert ov.label_lines(replace(one, shape="TWO"))[1].endswith("FOLD: DETAILS · V SIGN: PREPARE")
     # Playing: the palm that started it must leave first; browsing, moving on stops it.
     playing = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), playing=True,
                         palm_spent=True, status="TAKE 1")
@@ -49,7 +49,7 @@ def test_hints_follow_what_the_state_machine_does():
     scrolling = ViewState(mode="browse", level="word", scrolling=1)
     assert ov.label_lines(scrolling)[1] == "SCROLLING DOWN  /  MOVE TO THE MIDDLE: STOP"
     # An edit to undo: the idle hint offers the thumbs-up; while held, a bar.
-    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("RAISE A FIST: NEW TAKE · CROSS YOUR FINGERS: UNDO")
+    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("RAISE A FIST: NEW TAKE · THUMB DOWN: UNDO")
     assert ov.label_lines(ViewState(undo_progress=0.5))[1] == "UNDO: HOLD"
     assert ov.label_lines(ViewState(app="review", hold_progress=0.5))[1] == "BACK TO PREPARE: HOLD"
     assert ov.label_lines(ViewState(app="review", retry_progress=0.5))[1] == "RETRY ANALYSIS: HOLD"
@@ -270,11 +270,11 @@ def test_label_lines_for_takes():
 def test_review_labels_list_the_gestures_that_act():
     ov = overlay()
     browse = ViewState(app="review", mode="browse", level="sentence", status="TAKE 2 SAVED (0:41)")
-    assert ov.label_lines(browse) == ("BROWSE BY SENTENCE", "TAKE 2 SAVED (0:41)  /  FOLD: DETAILS · THUMB UP: PREPARE")
+    assert ov.label_lines(browse) == ("BROWSE BY SENTENCE", "TAKE 2 SAVED (0:41)  /  FOLD: DETAILS · V SIGN: PREPARE")
     browse.level = "paragraph"
-    assert ov.label_lines(browse)[1].endswith("FOLD: SUMMARY · THUMB UP: PREPARE")
+    assert ov.label_lines(browse)[1].endswith("FOLD: SUMMARY · V SIGN: PREPARE")
     assert ov.label_lines(ViewState(app="review"))[1] == \
-        "  /  FINGER UP: BROWSE · RAISE A FIST: NEW TAKE · THUMB UP: PREPARE"
+        "  /  FINGER UP: BROWSE · RAISE A FIST: NEW TAKE · V SIGN: PREPARE"
     focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2 (2 OF 3)",
                       takes=("TAKE 1", "TAKE 2", "TAKE 3"), take_shown=1, playable=True)
     assert ov.label_lines(focus)[1] == \
@@ -301,7 +301,7 @@ def test_review_hints_take_the_short_form_when_the_long_one_does_not_fit_a_row(s
     assert 1 <= len(rows) <= 2
     assert " · ".join(rows) == "PALM: PLAY · L: PICK A TAKE · PINCH + LIFT: DRILL · DROP HAND: BACK"
     browse = ViewState(app="review", mode="browse", level="sentence")
-    assert " · ".join(hint_rows(ov, browse)) == "FOLD: DETAILS · THUMB UP: PREPARE"
+    assert " · ".join(hint_rows(ov, browse)) == "FOLD: DETAILS · V SIGN: PREPARE"
     paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), playable=True)
     assert hint_rows(ov, paragraph) == ["OPEN PALM: PLAY · DROP HAND: BACK"]
     assert all(" / " not in row for row in rows + hint_rows(ov, ViewState(mode="focus", level="sentence",

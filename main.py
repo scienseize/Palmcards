@@ -1475,7 +1475,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if ev.kind == "drill" and ev.sentence is None:
                 ev.sentence = view.focus.sentence if view.focus else view.current
         for ev in events:
-            if ev.kind == "undo":  # fingers crossed, held, in Prepare after an edit
+            if ev.kind == "undo":  # a thumbs-down held in Prepare after an edit
                 view.note, until = takes.undo(), start + NOTE_S
             elif ev.kind == "retry":  # an open palm held in Review with failed analysis
                 view.note, until = takes.retry(), start + NOTE_S
@@ -1497,7 +1497,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             and takes.drill is None else ""
         view.calibration = takes.vision.phase(start - t0) \
             if takes.vision is not None and modes.mode == "count_in" else None
-        view.hold_progress = modes.done.progress
+        view.hold_progress = modes.back_progress if modes.mode == "review" else modes.done.progress
         view.retry_progress, view.undo_ready = modes.retry_progress, modes.mode == "prepare" and takes.can_undo()
         view.undo_progress = modes.undo_progress if modes.mode == "prepare" else 0.0
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None

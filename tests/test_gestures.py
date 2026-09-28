@@ -5,7 +5,7 @@ import pytest
 
 from palmcards.config import CURSOR, OPS, REHEARSE, TIMING
 from palmcards.gestures import (
-    FIST, FLAT, L, NONE, ONE, OPEN, PINCH, THUMB_UP, TWO,
+    FIST, FLAT, L, NONE, ONE, OPEN, PINCH, THUMB_DOWN, THUMB_UP, TWO, VICTORY,
     Grammar, Hand, HandTrack, ModeMachine, RelativeCursor, classify, features,
 )
 
@@ -66,6 +66,14 @@ def thumbs_up(**kw):
     return hand(thumb=(-60, -170), **kw)  # fingers curled, the thumb straight up above the knuckles
 
 
+def thumbs_down(**kw):
+    return thumbs_up(rotate=180 + kw.pop("rotate", 0), **kw)  # the thumbs-up turned over
+
+
+def victory(**kw):
+    return hand({8: (-60, -200), 12: (30, -200)}, **kw)  # a V sign: index and middle out, apart
+
+
 def relaxed_palm(**kw):
     """Four fingers out, a little apart, the thumb resting clear of the palm: as the
     user's calibration trace had it (spread ~0.36, thumb ~0.57 palms from the index knuckle)."""
@@ -103,7 +111,7 @@ def lerp_frames(make_tips, a, b, n, **kw):
 
 @pytest.mark.parametrize("make, pose", [
     (one, ONE), (two, TWO), (flat, FLAT), (open_palm, OPEN), (relaxed_palm, OPEN), (l_hand, L), (pinch, PINCH),
-    (fist, FIST), (thumbs_up, THUMB_UP),
+    (fist, FIST), (thumbs_up, THUMB_UP), (thumbs_down, THUMB_DOWN), (victory, VICTORY),
 ])
 def test_classify_each_pose(make, pose):
     assert classify(features(make())) == pose
@@ -151,11 +159,15 @@ def test_the_users_calibration_poses_read_as_labelled():
         assert len(frames) >= 50 and share >= 0.95, (label, share)
 
 
-def test_spread_v_sign_and_three_fingers_are_none():
-    v_sign = hand({8: (-60, -200), 12: (30, -200)})
+def test_a_v_sign_is_not_two_fingers_together_and_three_fingers_are_none():
+    assert classify(features(victory())) == VICTORY
+    halfway = hand({8: (-40, -200), 12: (0, -200)})  # between together and a V: neither
+    assert classify(features(halfway)) == NONE
     three = hand({8: (-30, -200), 12: (0, -200), 16: (25, -200)})
-    assert classify(features(v_sign)) == NONE
     assert classify(features(three)) == NONE
+    for rotate in (-20, 20):  # a thumbs-down leaning a little, and never a fist
+        assert classify(features(thumbs_down(rotate=rotate))) == THUMB_DOWN
+    assert classify(features(fist(rotate=180))) == FIST  # a fist upside down stays a fist
 
 
 def test_l_needs_a_right_angle_between_thumb_and_index():
@@ -557,57 +569,37 @@ def test_every_hold_forgives_a_short_misread_but_completes_only_on_its_pose():
     assert events == [] and m.mode == "prepare"
 
 
-def test_a_thumbs_up_in_a_review_focus_does_nothing_and_leaving_review_takes_a_second():
+def test_a_v_sign_leaves_review_but_not_from_a_focus_and_a_thumbs_up_never_does():
     m, t = reviewing()
-    _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.2), t)
+    events, t = run(m, hold(thumbs_up, 3.0), t)
+    assert events == [] and m.mode == "review"  # a thumbs-up is "stop" in a take, nothing here
+    _, t = run(m, [None] * 12 + hold(one, 0.3) + hold(pinch, 0.3) + hold(one, 0.2), t)
     assert m.state.mode == "focus"
-    events, t = run(m, hold(thumbs_up, 2.0), t)
-    assert events == [] and m.mode == "review" and m.done.progress == 0.0
+    events, t = run(m, hold(victory, 2.0), t)
+    assert events == [] and m.mode == "review" and m.back_progress == 0.0
     events, t = run(m, [None] * round((TIMING.drop_s + 0.3) / DT), t)  # backed out, hand down
-    events, _ = run(m, hold(thumbs_up, REHEARSE.start_hold_s + 0.1), t)
-    assert kinds(events) == ["to_prepare"]
+    events, _ = run(m, hold(victory, REHEARSE.start_hold_s + 0.3), t)
+    assert kinds(events) == ["to_prepare"] and m.mode == "prepare"
 
 
-def crossed_sample():
-    """The user's crossed fingers and two fingers held together, from their trace."""
-    import json
-    from pathlib import Path
-
-    data = json.loads((Path(__file__).resolve().parent.parent / "samples/poses/crossed-fingers-20260928.json").read_text())
-    return {label: [Hand(np.array(f["points"], np.float32)) for f in data["frames"] if f["label"] == label]
-            for label in ("CROSSED", "TWO")}
-
-
-def test_fingers_crossed_is_read_on_the_users_hand_and_two_fingers_together_is_not():
-    from palmcards.gestures import fingers_crossed
-
-    sample = crossed_sample()
-    crossed = [fingers_crossed(h) for h in sample["CROSSED"]]
-    together = [fingers_crossed(h) for h in sample["TWO"]]
-    assert len(crossed) >= 40 and sum(crossed) / len(crossed) >= 0.95
-    assert len(together) >= 30 and not any(together)
-    assert not fingers_crossed(two()) and not fingers_crossed(one()) and not fingers_crossed(fist())
-
-
-def test_fingers_crossed_held_in_prepare_undo_an_edit_and_a_thumbs_up_does_not():
-    sample = crossed_sample()
-    crossed = [sample["CROSSED"][i % len(sample["CROSSED"])] for i in range(round(2.0 / DT))]
+def test_a_thumbs_down_held_in_prepare_undoes_an_edit():
     m = ModeMachine((W, H))
-    events, t = run(m, crossed)
+    events, t = run(m, hold(thumbs_down, 2.0))
     assert "undo" not in kinds(events)  # nothing to undo
     m.undo_ready = True
-    events, t = run(m, [None] * 12 + hold(thumbs_up, 2.0), t)  # a thumbs-up (or one read as a fist) doesn't undo
+    events, t = run(m, [None] * 12 + hold(thumbs_up, 2.0), t)  # a thumbs-up doesn't undo
     assert events == [] and m.mode == "prepare"
-    events, t = run(m, [None] * 12 + crossed[:round((REHEARSE.start_hold_s + 0.3) / DT)], t)
-    assert kinds(events).count("undo") == 1 and m.mode == "prepare"
-    events, t = run(m, crossed, t)  # held on: one undo per crossing
-    assert "undo" not in kinds(events) and m.undo_progress == 0.0
-    # Two fingers held together, the same shape uncrossed, never undo.
-    events, t = run(m, [None] * 12 + [sample["TWO"][i % len(sample["TWO"])] for i in range(round(2.0 / DT))], t)
-    assert "undo" not in kinds(events)
+    events, t = run(m, [None] * 12 + hold(thumbs_down, REHEARSE.start_hold_s + 0.3), t)
+    assert kinds(events) == ["undo"] and m.mode == "prepare"
+    events, t = run(m, hold(thumbs_down, 2.0), t)  # held on: one undo per thumbs-down
+    assert events == [] and m.undo_progress == 0.0
+    # A misread frame or two doesn't start it over; the thumbs-down, lowered and raised, undoes again.
+    frames = [thumbs_down() if i % 8 else fist() for i in range(round((REHEARSE.start_hold_s + 0.4) / DT))]
+    events, t = run(m, [None] * 12 + frames, t)
+    assert kinds(events) == ["undo"]
     _, t = run(m, [None] * 12 + hold(one, 0.3) + hold(pinch, 0.3), t)  # a focus: the hand is at work
     assert m.state.mode == "focus"
-    events, _ = run(m, crossed, t)
+    events, _ = run(m, hold(thumbs_down, 2.0), t)
     assert "undo" not in kinds(events)
 
 
@@ -690,9 +682,9 @@ def test_label_flip_is_not_a_new_hand():
 
 def test_a_fist_rising_through_none_still_counts():
     m = ModeMachine((W, H))
-    v_sign = hand({8: (-70, -200), 12: (40, -200)})  # fingers spread: NONE
-    assert classify(features(v_sign)) == NONE
-    events, _ = run(m, [v_sign] * 8 + hold(fist, 1.3))
+    index_and_ring = hand({8: (-30, -200), 16: (25, -200)})  # no pose: NONE
+    assert classify(features(index_and_ring)) == NONE
+    events, _ = run(m, [index_and_ring] * 8 + hold(fist, 1.3))
     assert kinds(events) == ["count_in"]
 
 
@@ -754,12 +746,12 @@ def test_a_thumbs_up_during_the_count_in_cancels():
         assert m.tick(t + REHEARSE.count_in_s) == []
 
 
-def test_a_thumbs_up_goes_from_review_back_to_prepare():
+def test_a_v_sign_goes_from_review_back_to_prepare():
     m, t = rehearsing()
     _, t = run(m, hold(thumbs_up, 1.7), t)
     assert m.mode == "review"
-    _, t = run(m, [None] * 10, t)  # hand down between the two holds
-    events, t = run(m, hold(thumbs_up, 1.7), t)
+    _, t = run(m, [None] * 10, t)  # hand down between the two
+    events, t = run(m, hold(victory, 1.7), t)
     assert kinds(events) == ["to_prepare"] and m.mode == "prepare" and m.grammar.operations
     # Prepare's operations are back, and a fist starts the next take.
     _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3) + hold(open_palm, RING_PALM_S), t)
@@ -775,8 +767,8 @@ def test_the_thumbs_up_that_stopped_a_take_held_on_does_not_leave_review():
     m, t = rehearsing()
     events, t = run(m, hold(thumbs_up, 1.7) + hold(thumbs_up, 3.0), t)
     assert kinds(events) == ["take_stop"] and m.mode == "review" and m.done.progress == 0.0
-    # Down, then up again: a new hold, which does go back.
-    events, t = run(m, [None] * 12 + hold(thumbs_up, 1.7), t)
+    # A V sign is what goes back.
+    events, t = run(m, [None] * 12 + hold(victory, 1.7), t)
     assert kinds(events) == ["to_prepare"] and m.mode == "prepare"
     # A misread frame or two while it is still up doesn't count as it coming down.
     m, t = rehearsing()
@@ -867,7 +859,7 @@ def test_one_finger_in_review_browses_sentences_and_a_pinch_focuses_one():
 
 def test_one_finger_in_prepare_still_browses_words():
     m, t = reviewing()
-    _, t = run(m, hold(thumbs_up, 1.7), t)
+    _, t = run(m, hold(victory, 1.7), t)
     assert m.mode == "prepare"
     _, t = run(m, [None] * 10 + hold(one, 0.4), t)
     assert m.state.level == "word"
