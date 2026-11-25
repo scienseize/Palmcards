@@ -101,7 +101,7 @@ Nothing is judged: Review sets the takes side by side (`palmcards/review.py` `Bo
 - Edits never touch the imported file. Takes keep the revision they were recorded with; Review places older takes on the current notes by sentence id, so an edited sentence starts with no takes. Sentence ids are unique across the whole session, including branches after an undo.
 - The focus panel is a viewport over the whole unit: never under the label, never off the frame; long sections and long lists of takes scroll (scrollbar, more-above/below markers). In Rehearse the current sentence is orange and kept in view. A focused Review panel too tall for the frame pages itself every few seconds.
 - A metric with too little to go on shows as "-" (or is left out of a sentence's line), never as a zero; the reason is kept in `session.json`.
-- Recording and analysis trouble stays on a persistent alert line under the text until dealt with; gesture hints stay in the label.
+- Recording and analysis trouble stays on a persistent alert line under the text until dealt with (a silent take, `TAKE 2 IS SILENT: CHECK MICROPHONE ACCESS`, until the next take starts); gesture hints stay in the label. While takes wait for analysis the label says `TAKE 3: ANALYSING  ·  2 WAITING`.
 
 ### Gesture classification (rules on MediaPipe hand landmarks, no training needed)
 

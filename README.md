@@ -27,7 +27,7 @@ uv pip install --python .venv/bin/python -r requirements.lock.txt   # the exact 
 macOS asks for these on first use; allow them for the terminal app you run PalmCards from (System Settings > Privacy & Security):
 
 - **Camera**, for the mirror and hand tracking.
-- **Microphone**, for takes. Without it, macOS records silence rather than failing; PalmCards warns when a take is silent.
+- **Microphone**, for takes. Without it, macOS records silence rather than failing; PalmCards warns when a take is silent, on the alert line until the next take starts.
 - **Speech Recognition**, only if you switch the speech engine to Apple's recogniser (`SPEECH.backend = "apple"` in `palmcards/config.py`).
 
 ## Use

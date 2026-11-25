@@ -195,3 +195,34 @@ def test_a_paragraph_nobody_said():
     b.add(1, analysed("Good evening everyone."))
     assert b.paragraph_shown([1, 2]) is None
     assert b.paragraph_detail([1, 2]) == ("Not said in any take yet.",)
+
+
+def test_the_label_counts_the_takes_waiting_for_analysis(tmp_path, monkeypatch):
+    from palmcards.render import ViewState
+    from tests.test_llm import takes_with
+
+    takes = takes_with(tmp_path, monkeypatch, None)
+    view = ViewState(app="prepare")
+    takes.analysis.pending = [3]
+    assert takes.status("prepare", view).startswith("TAKE 3: ANALYSING") and "WAITING" not in takes.status("prepare", view)
+    takes.analysis.pending = [3, 4, 5]
+    assert takes.status("prepare", view).endswith(" · 2 WAITING")
+    takes.deferred = [5, 6]  # the queue had no room for 6; 5 is counted once
+    assert takes.status("prepare", view).endswith(" · 3 WAITING")
+
+
+def test_a_silent_take_stays_on_the_alert_line_until_the_next_take_starts(tmp_path, monkeypatch):
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    import numpy as np
+    from tests.test_llm import takes_with
+
+    takes = takes_with(tmp_path, monkeypatch, None)
+    take = takes.session.add_take(np.zeros(800, np.float32), 8000, 1.0, datetime.now(), [(0.0, 0)])
+    assert take.silent
+    monkeypatch.setattr(takes.session, "finish_take", lambda manifest, status: take)
+    writer = SimpleNamespace(number=1, error=None, manifest=lambda: {"samples": 800})
+    assert takes._finish(writer, "saved") == ""
+    assert takes.alert_line("review") == "TAKE 1 IS SILENT: CHECK MICROPHONE ACCESS"
+    assert takes.alert_line("prepare").startswith("TAKE 1 IS SILENT")  # not a note that fades

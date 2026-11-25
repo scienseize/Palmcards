@@ -439,10 +439,12 @@ class Takes:
             return self.board.take_name(n) if n is not None else "NO TAKE SAID THIS PARAGRAPH"
         if self.finalizing:
             return f"TAKE {self.finalizing[0].number}: SAVING…"
-        if self.analysis.pending or self.deferred:
+        queue = list(self.analysis.pending)
+        queue += [n for n in self.deferred if n not in queue]
+        if queue:
             dots = "." * (int(time.perf_counter() * 2) % 4)
-            take = (self.analysis.pending or self.deferred)[0]
-            return f"TAKE {take}: ANALYSING{dots:<3}"
+            waiting = f" · {len(queue) - 1} WAITING" if len(queue) > 1 else ""
+            return f"TAKE {queue[0]}: ANALYSING{dots:<3}{waiting}"
         if mode == "review":
             return self.last_saved
         return ""  # Prepare: the renderer says how to begin (render.BROWSE_ENTRY, NEW_TAKE)
@@ -1170,7 +1172,7 @@ class Takes:
         if take.silent:
             print("warning: the take is silent. On macOS, allow Microphone access for your terminal "
                   "app in System Settings > Privacy & Security > Microphone.", file=sys.stderr)
-            return "TAKE IS SILENT: CHECK MICROPHONE ACCESS"
+            self.alert = f"TAKE {take.number} IS SILENT: CHECK MICROPHONE ACCESS"  # until the next take starts
         return ""
 
     def _submit(self, number: int) -> None:
