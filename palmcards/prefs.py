@@ -6,7 +6,7 @@ sessions (which are evidence and never change with your settings).
 
   reach          the hand box's size (0.6 .. 1.4): smaller, less movement to cross the notes
   start_hold_s   how long a fist is held to start a take
-  done_hold_s    how long a thumbs-up is held to stop a take or cancel a count-in
+  done_hold_s    how long the OK sign is held to stop a take or cancel a count-in
                  (was stop_hold_s: an old prefs.json with it still works)
   high_contrast  brighter dimmed text and a darker backing (key c in the app)
   show_hand_box  the hand box drawn faintly while a hand is up

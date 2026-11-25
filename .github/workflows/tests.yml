@@ -5,10 +5,13 @@ on: [push, pull_request]
 jobs:
   pytest:
     runs-on: macos-14  # Apple silicon, like the target Mac
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv venv --python 3.12 .venv
+      - run: uv venv --python ${{ matrix.python }} .venv
       - run: uv pip install --python .venv/bin/python -r requirements.lock.txt
       - run: .venv/bin/python -m pytest -q -p no:cacheprovider
         env:

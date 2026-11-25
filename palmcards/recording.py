@@ -150,7 +150,7 @@ class TakeWriter:
 
     def mark_section(self, t: float, section: int, source: str = "start") -> None:
         """A section came up: at the start ("start"), by the voice ("voice"),
-        a flick ("flick") or a key ("key")."""
+        or a key ("key")."""
         with self._lock:
             self.sections.append((t, section, source))
 

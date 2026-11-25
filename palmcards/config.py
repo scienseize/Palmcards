@@ -77,15 +77,15 @@ class Pose:
     open_thumb_min: float = 0.47  # dist(thumb tip, index MCP): clear of the palm, not stuck out
     open_spread_off: float = 0.27  # once open, it stays open down to these (hysteresis)
     open_thumb_off: float = 0.42
-    # A thumbs-up ("done": stop the take, cancel the count-in, back to
-    # Prepare): no finger out, the thumb up. The user's thumbs-ups: thumb
+    # A thumbs-up (no command; a class of its own so a fist is never read as one):
+    # no finger out, the thumb up. The user's thumbs-ups: thumb
     # 0.79-1.0 palms from the index knuckle, within 17 deg of vertical, its
     # tip 0.52-0.75 palms above the knuckle. Near misses in older traces
     # (an L collapsing, tracking glitches) had the thumb much further out.
     thumb_up_dist: tuple[float, float] = (0.65, 1.35)
     thumb_up_deg: float = 30.0
     thumb_up_height: tuple[float, float] = (0.3, 1.1)
-    # A thumbs-down (undo in Prepare): no finger out, the thumb pointing down, the mirror of the
+    # A thumbs-down (no command): no finger out, the thumb pointing down, the mirror of the
     # thumbs-up: within thumb_up_deg of straight down, its tip thumb_up_height below the index knuckle.
     # A V sign (back to Prepare from Review): index and middle out and apart, their tips at least
     # this far apart (palm widths); two fingers together (TWO) are under `together`, and the gap
@@ -202,9 +202,9 @@ class Knob:
 class Rehearse:
     start_hold_s: float = 1.0  # closed fist held this long (Prepare, Review) starts a take
     count_in_s: float = 3.0  # 3-2-1 before recording
-    # A thumbs-up held this long, anywhere in the frame ("done"): stops a take
-    # or drill, cancels the count-in, goes back to Prepare from Review. In
-    # Rehearse nothing else a hand does is a command.
+    # The OK sign held this long, anywhere in the frame ("done"): stops a take
+    # or drill, cancels the count-in. In Rehearse nothing else a hand does is
+    # a command.
     done_hold_s: float = 1.5
     done_grace_s: float = 0.3  # misread frames the hold forgives
 

@@ -18,13 +18,13 @@ Screenshots reviewed: 01 browse word, 02 browse sentence, 03 browse paragraph, 0
 The camera frame is split into three vertical zones, because you sit in the middle with your right hand on the right:
 
 ```
-| 6% |  TEXT COLUMN (6%–38%)  |   FACE ZONE (38%–55%)   |   HAND ZONE (55%–95%)   |
-|    | labels, notes, ring,   |   nothing drawn here    |   hand box, command     |
-|    | gauge, review metrics  |   except fingertip dots |   zone, zone hints      |
+| 6% |  TEXT COLUMN (6%–36%)  |   FACE ZONE (36%–55%)   |   HAND ZONE (55%–95%)   |
+|    | labels, notes, ring,   |   nothing drawn here    |   hand box, REC clock,  |
+|    | gauge, take chips      |   except fingertip dots |   count-in, take table  |
 ```
 
 - Everything the user reads lives in the text column. Nothing is drawn over the face zone.
-- The hand zone only holds what belongs to the hand (box corners, command zone, its hints).
+- The hand zone only holds what belongs to the hand (box corners, in Rehearse the REC clock and the count-in digit, in Review the take table and the tutorial card). There is no command zone: the OK sign, held anywhere, is the one command in a take.
 - Status pills stay bottom-left; performance numbers are hidden unless debugging.
 
 ---
@@ -38,7 +38,7 @@ The camera frame is split into three vertical zones, because you sit in the midd
 - **S** Hand box corners are large and bright and overlap label line 2 on 07. Make them smaller and fainter (about 30% opacity), and never draw them over text.
 - **S** The last visible line is cut through the middle of its letters ("Most of us rehearse in our heads" on 01, 02, 03). Fade the last line out, or show only whole lines.
 - **N** The mouse pointer shows in the middle of the frame. Hide it while the window is focused. **[behaviour]**
-- **N** Bottom-left pills (CLOUD LLM, H: KEYS) are fine; make them a little dimmer so they don't compete with the label.
+- **N** Bottom-left pills (CLOUD AI, H: KEYS) are fine; make them a little dimmer so they don't compete with the label.
 
 ## 01 Prepare, browse by word
 - **S** Focused word as an orange pill with dark text works well. Keep it.
@@ -69,8 +69,6 @@ The camera frame is split into three vertical zones, because you sit in the midd
 - **S** Label line 2 is overlapped by the hand box corner (see the every-screen label fix).
 
 ## 09 Rehearse with follow
-- **S** The command zone is a full rectangle with a line cutting across the background; it reads like a second window. Use corner marks like the hand box.
-- **S** Its two hints are separate boxes. One small, dim line each, no boxes.
 - **N** REC indicator is clear. Keep it.
 - **B** Text over the mouth (covered by the text-column fix).
 

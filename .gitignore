@@ -31,3 +31,7 @@ docs/local/
 .claude/skills/*
 !.claude/skills/session-files/
 AGENTS.md
+
+# Landing film: build output and dependencies
+videos/node_modules/
+videos/out/

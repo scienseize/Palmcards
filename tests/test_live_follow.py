@@ -152,13 +152,13 @@ def test_the_voice_moves_the_section_and_it_is_recorded_as_such(tmp_path, monkey
     rig.assert_closed_once()
 
 
-def test_a_flick_and_the_previous_key_are_recorded_as_such(tmp_path, monkeypatch):
+def test_the_next_and_previous_section_keys_are_recorded_as_keys(tmp_path, monkeypatch):
     script = {**TAKE, 10: ("next_section", "rehearse")}
     rig = Rig(tmp_path, monkeypatch, script=script, keys={20: ord("b"), 40: ord("q")})
     monkeypatch.setattr(main, "ModeMachine", _with_real_commands(main.ModeMachine))
     assert rig.run() == 0
     assert [(s["section"], s["source"]) for s in rig.session().take(1).sections] == \
-        [(0, "start"), (1, "flick"), (0, "key")]
+        [(0, "start"), (1, "key"), (0, "key")]
 
 
 def _with_real_commands(cls):

@@ -2,7 +2,7 @@
 
     f = Follower(notes, section=0)
     f.update(words) -> [FollowEvent]    words: newly confirmed LiveWords
-    f.flick(t)      -> [FollowEvent]    the manual override: next section
+    f.flick(t)      -> [FollowEvent]    the manual override (a key): next section
 
 The newest live words (FOLLOW.tail_words) are aligned with the M5 aligner
 against the current section plus the opening of the next one only. The
@@ -48,7 +48,7 @@ class FollowEvent:
     kind: str  # "sentence" (Notes.sentences index) | "section" (Notes.sections index)
     index: int
     t: float  # app time it was decided: when the deciding word was confirmed
-    source: str = "voice"  # "voice" | "flick"
+    source: str = "voice"  # "voice" | "flick" (the manual override, from a key)
 
 
 @dataclass(frozen=True)
@@ -175,7 +175,7 @@ class Follower:
         return max(0.0, now - self.tail[-1].end) * rate
 
     def flick(self, t: float) -> list[FollowEvent]:
-        """The manual override: on to the next section's first sentence."""
+        """The manual override (the n key): on to the next section's first sentence."""
         if self.section + 1 >= self.sections:
             return []
         self.section += 1

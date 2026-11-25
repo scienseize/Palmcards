@@ -73,7 +73,6 @@ class Colors:
     dark_fill: RGBA = (15, 15, 18, 215)
     node_text: RGBA = (240, 240, 240, 255)
     node_outline: RGBA = (240, 240, 240, 200)
-    node_outline_dim: RGBA = (240, 240, 240, 90)  # the ring's action node (hear it)
     node_fill: RGBA = (12, 14, 34, 235)  # the options ring's nodes: Kat's navy boxes
     connector: RGB = (255, 196, 40)  # the options ring's spokes
     # Review.
@@ -437,7 +436,7 @@ class Sound:
 class Rec:
     """Rehearse: the recording clock (TYPE.operation) and microphone level,
     top right of the frame, in the hand zone. Nothing else is drawn there
-    during a take: its only command, a thumbs-up, works anywhere."""
+    during a take: its only command, the OK sign, works anywhere."""
     x: float = 0.83  # the chip's centre, x the frame width
     top: float = 0.5  # its top, x the notes' line height below the frame's top edge
     mic_dx: int = 14  # px left of the REC chip
@@ -546,8 +545,7 @@ HIGH_CONTRAST = replace(COLORS, text=(255, 255, 255, 255),
                         shadow=(0, 0, 0, 240), outline=(0, 0, 0, 220),
                         label_operation=(255, 140, 0, 245), label_hint=(255, 140, 0, 235), context_fill=(50, 62, 115, 235),
                         bar_track=(255, 255, 255, 110),
-                        label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255),
-                        node_outline_dim=(245, 245, 245, 160))
+                        label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255))
 TEXT = Text()
 CHIPS = Chips()
 LABEL = Label()

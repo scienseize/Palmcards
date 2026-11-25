@@ -9,7 +9,7 @@
       --trace: also record every hand result's landmarks, for offline replay
       --llm: the optional LLM for word meanings, alternatives and rewrites (default: off,
              or config LLM.provider). "anthropic" is the cloud: the sentence or paragraph you ask
-             about leaves the Mac (ANTHROPIC_API_KEY from the environment or .env); a CLOUD LLM
+             about leaves the Mac (ANTHROPIC_API_KEY from the environment or .env); a CLOUD AI
              chip shows while it is on. Each call's tokens: python -m palmcards.llm usage
 
 Mirrored webcam feed with the notes overlaid in the demo style. Prepare mode
@@ -227,8 +227,8 @@ FIST_HINT_S = HINT_DWELL_S
 def nonactivation_hint(mode: str, gs, open_s: float, t: float | None = None) -> str:
     """Why a gesture the camera sees is not doing anything, when that's likely
     to puzzle: a fist formed from another pose and held; in a take or count-in,
-    an open palm or a thumbs-up held (each stopped takes once; the label's hint
-    row already says what does now)."""
+    an open palm or a thumbs-up held (neither stops a take now; the label's hint
+    row says what does)."""
     p = gs.primary
     if p is None:
         return ""
@@ -963,7 +963,7 @@ class Takes:
         if ev.kind == "next_section":
             if self.section + 1 >= len(self.notes.sections):
                 return "LAST SECTION"
-            source = "key" if ev.source == "key" else "flick"
+            source = "key"  # sections move with the voice, or by key
             self.section += 1
             view.current, view.panel_scroll, view.preview_next = self.first_of(self.section), 0.0, False
             if self.writer is not None:

@@ -8,8 +8,8 @@ orange bar beside it; without a hand the current sentence is orange. The
 video is darkened under the text column (the scrim) and each glyph has a
 faint dark halo, so the text reads on a bright wall. Everything the user
 reads stays in the text column on the left (style.LAYOUT); nothing is drawn
-over the face; the hand zone on the right holds only the hand box, the
-command zone and its hints.
+over the face; the hand zone on the right holds only the hand box, in
+Rehearse the recording clock, and Review's take table.
 
 The layout is a grid of monospace cells, so every word has a known row and
 column range; a row can hold several sentences. hit_test() maps a point back
@@ -27,7 +27,7 @@ cloud LLM is on, a CLOUD AI chip sits at the bottom left ("SENDING" while a
 request is out).
 
 In Rehearse the current section is shown in the focus panel, the current
-sentence in orange and the rest dimmed, with the command zone (top right),
+sentence in orange and the rest dimmed, with
 a recording clock and microphone level, and a large 3-2-1 during the
 count-in. A drill shows just its one sentence.
 
@@ -171,13 +171,16 @@ KEYS_HELP = (
     "KEYS (WHEN GESTURES WON'T DO)",
     "T  START A TAKE      X  STOP (AUDIO, TAKE)",
     "N B  NEXT / PREVIOUS SECTION     U  UNDO EDIT",
-    "J K  NEXT / PREVIOUS SENTENCE, OR SCROLL",
+    "J K  NEXT / PREVIOUS SENTENCE (SPACE: NEXT)",
+    "      OR SCROLL A FOCUSED PANEL",
     "A  PLAY / STOP       P  BACK TO PREPARE",
     "E  CALIBRATE EYES AT THE NEXT TAKE",
     "M  FLIP A REPLAYED VIDEO (MIRROR OR NOT)",
+    "C  HIGH CONTRAST     G  SHOW / HIDE TUTORIAL",
+    "ENTER  SKIP A TUTORIAL STEP",
     "REPLAY BAR: YELLOW FILLER, RED RESTART,",
     "  WHITE LONG PAUSE, BLUE LOOKED AWAY",
-    "R  RETRY ANALYSIS    H  HIDE    Q  QUIT",
+    "R  RETRY ANALYSIS   H  HIDE   Q, ESC  QUIT",
 )
 
 
@@ -882,10 +885,6 @@ class TextOverlay:
         return (self.word_text(state.focus), *state.alternatives)
 
     # --- drawing: text -----------------------------------------------------
-
-    @staticmethod
-    def _get_font(size: int, weight: str = "medium") -> ImageFont.FreeTypeFont:
-        return load_font(size, weight)
 
     def _face(self, step: TypeStep, weight: str | None = None, scale: float = 1.0) -> Face:
         """A step of the type scale at this frame's size (x `scale`)."""
@@ -2031,7 +2030,7 @@ class TextOverlay:
         if state.app == "review" and state.mode == "focus" and state.takes and g is None:
             self._draw_takes(frame, state)
         if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
-            # In the hand zone, below the command zone: the hand is down during
+            # In the hand zone, below the recording clock: the hand is down during
             # the count-in. A bar under the digit empties over each second.
             if self._count is None or self._count[0] != state.count_in:
                 self._count = (state.count_in, state.now)
