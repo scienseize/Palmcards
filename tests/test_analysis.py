@@ -215,6 +215,26 @@ def test_retry_runs_a_failed_job_again(tmp_path):
     sup.close(1)
 
 
+def test_an_unexpected_error_fails_the_job_and_the_supervisor_goes_on(tmp_path, monkeypatch):
+    real = Supervisor._dispatch
+    broke = []
+
+    def dispatch(self):
+        if not broke and any(j.state == "queued" for j in self._jobs):
+            broke.append(1)
+            raise RuntimeError("boom")
+        real(self)
+
+    monkeypatch.setattr(Supervisor, "_dispatch", dispatch)
+    sup = Supervisor(spawn=spawner(tmp_path, "ok"))
+    sup.submit(tmp_path, job(1))
+    sup.submit(tmp_path, job(2))
+    results = collect(sup, lambda rs: len(rs) >= 2)
+    assert [(r["take"], r["ok"]) for r in results] == [(1, False), (2, True)]
+    assert "boom" in results[0]["error"] and records(tmp_path)[1]["state"] == "failed"
+    sup.close(1)
+
+
 def test_the_real_worker_answers_its_job(tmp_path):
     text = "Hello there friend."
     (tmp_path / "notes.txt").write_text(text)

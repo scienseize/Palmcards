@@ -309,3 +309,12 @@ def test_the_content_hash_ignores_ids():
     snap, _ = to_snapshot(notes)
     renamed = json.loads(json.dumps(snap).replace('"s1', '"s9'))
     assert content_hash(renamed) == content_hash(snap)
+
+
+def test_a_torn_revision_file_is_a_session_error_naming_it(tmp_path):
+    session = Session.create(notes_file(tmp_path), root=tmp_path)
+    take = session.add_take(silence(), 8000, 1.0, datetime.now(), [(0.0, 0)])
+    name = session.revision(take.revision)["file"]
+    (session.dir / name).write_text('{"sections": [')
+    with pytest.raises(SessionError, match=name):
+        Session.load(session.dir).notes_for(take)

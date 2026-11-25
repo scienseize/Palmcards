@@ -305,3 +305,36 @@ def test_a_take_with_no_audio_uses_the_moment_it_was_asked_for(tmp_path):
     assert m["first_sample_t"] is None and m["samples"] == 0
     take = session.finish_take(m)
     assert (take.t_start, take.duration_s, take.sections) == (5.0, 0.0, [{"section": 0, "t": 0.0, "source": "start"}])
+
+
+def test_a_push_after_stop_is_not_counted(tmp_path):
+    session = notes_session(tmp_path)
+    w = writer_for(session)
+    w.push(ramp(BLOCK), first_t=1.0, source="adc")
+    w.stop()
+    w.push(ramp(BLOCK))  # a late block from the audio callback
+    assert w.wait(5) and w.enqueued == BLOCK == w.samples and not w.manifest()["discontinuities"]
+
+
+def test_an_unexpected_error_in_the_writer_still_ends_the_take(tmp_path, monkeypatch):
+    session = notes_session(tmp_path)
+
+    def broken(self, f, at):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(TakeWriter, "_fill_to", broken)
+    w = writer_for(session)
+    w.push(ramp(BLOCK), first_t=1.0, source="adc")
+    w.stop()
+    assert w.wait(5) and w.state == "failed" and "boom" in w.error
+
+
+def test_a_torn_manifest_is_reported_and_left_alone_and_the_rest_recovers(tmp_path):
+    session = notes_session(tmp_path)
+    session.save()  # makes the folder
+    torn = session.dir / "take-02.recording.json"
+    torn.write_text('{"take": 2, "wa')
+    session.release()
+    lines = recover_all(tmp_path / "sessions")
+    assert any("take-02.recording.json" in line and "left as it is" in line for line in lines)
+    assert torn.exists() and torn.read_text() == '{"take": 2, "wa'

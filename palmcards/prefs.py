@@ -29,7 +29,7 @@ from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
 from palmcards.config import CURSOR, REHEARSE
-from palmcards.paths import data_dir
+from palmcards.paths import data_dir, write_atomic
 
 
 @dataclass
@@ -74,9 +74,7 @@ def load(where: Path | None = None) -> Prefs:
 def save(prefs: Prefs, where: Path | None = None) -> None:
     where = where or path()
     where.parent.mkdir(parents=True, exist_ok=True)
-    tmp = where.with_name(where.name + ".tmp")
-    tmp.write_text(json.dumps(asdict(prefs.checked()), indent=1) + "\n")
-    tmp.replace(where)
+    write_atomic(where, (json.dumps(asdict(prefs.checked()), indent=1) + "\n").encode())
 
 
 def hand_box(reach: float) -> tuple[float, float, float, float]:

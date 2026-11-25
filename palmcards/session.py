@@ -58,7 +58,7 @@ import numpy as np
 
 from palmcards import revisions
 from palmcards.notes import Notes, notes_from_bytes
-from palmcards.paths import data_dir
+from palmcards.paths import data_dir, write_atomic as _write_atomic
 
 SESSIONS_DIR = data_dir()  # palmcards.paths: $PALMCARDS_DATA, the checkout's sessions/, or Application Support
 SILENT_PEAK = 1e-3  # a take whose loudest sample is below this is silence
@@ -140,12 +140,6 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _write_atomic(path: Path, data: bytes) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_bytes(data)
-    tmp.replace(path)
-
-
 @dataclass
 class Session:
     notes: Path  # where the notes were imported from (provenance only)
@@ -158,6 +152,7 @@ class Session:
     revisions: list[dict] = field(default_factory=list)
     schema: int = SCHEMA
     orphans: list[str] = field(default_factory=list)  # files found on load that no take claims
+    damaged: list[str] = field(default_factory=list)  # recording manifests recover() could not read
     current: str | None = None  # the notes revision in use (None: the latest); undo moves it back
     calibrations: list[dict] = field(default_factory=list)  # gaze/posture baselines, oldest first
     _loaded_schema: int = SCHEMA
@@ -379,7 +374,10 @@ class Session:
             path = self.dir / entry["file"]
             if not path.exists():
                 raise SessionError(f"{self.dir.name}: notes revision file {entry['file']} is missing")
-            snap = json.loads(path.read_text())
+            try:
+                snap = json.loads(path.read_text())
+            except ValueError as exc:  # a write cut short
+                raise SessionError(f"{self.dir.name}: notes revision file {entry['file']} is damaged: {exc}") from exc
             if revisions.content_hash(snap) != entry["hash"]:
                 raise SessionError(f"{self.dir.name}: notes revision {rid} does not match its recorded hash "
                                    "(the file was changed or damaged)")
@@ -534,7 +532,11 @@ class Session:
 
         out = []
         for path in sorted(self.dir.glob("take-*.recording.json")):
-            manifest = json.loads(path.read_text())
+            try:
+                manifest = json.loads(path.read_text())
+            except ValueError as exc:  # a write cut short: leave the file where it is
+                self.damaged.append(f"{path.name}: {exc}")
+                continue
             if any(t.number == manifest["take"] for t in self.takes):
                 path.unlink()  # finished, only the manifest's removal was missed
                 continue
@@ -609,6 +611,7 @@ def recover_all(root: Path = SESSIONS_DIR) -> list[str]:
         try:
             for take in session.recover():
                 lines.append(f"{folder.name}: take {take.number} recovered ({take.duration_s:.1f} s, {take.status})")
+            lines += [f"{folder.name}: could not read {d}; left as it is" for d in session.damaged]
         finally:
             session.release()
     return lines
@@ -627,11 +630,15 @@ def write_wav(path: Path, audio: np.ndarray, rate: int) -> None:
     tmp.replace(path)
 
 
-def read_wav(path: Path) -> tuple[np.ndarray, int]:
-    """16-bit PCM WAV -> (float32 audio in -1..1, sample rate); mono or first channel."""
+def read_wav(path: Path, start_s: float = 0.0, end_s: float | None = None) -> tuple[np.ndarray, int]:
+    """16-bit PCM WAV -> (float32 audio in -1..1, sample rate); mono or first channel.
+    With `start_s` and `end_s` (seconds into the file) only that span is read."""
     with wave.open(str(path), "rb") as f:
         if f.getsampwidth() != 2:
             raise ValueError(f"{path}: expected 16-bit PCM")
-        channels, rate = f.getnchannels(), f.getframerate()
-        pcm = np.frombuffer(f.readframes(f.getnframes()), dtype="<i2")
+        channels, rate, n = f.getnchannels(), f.getframerate(), f.getnframes()
+        a = min(n, max(0, int(start_s * rate)))
+        b = n if end_s is None else min(n, max(a, int(end_s * rate)))
+        f.setpos(a)
+        pcm = np.frombuffer(f.readframes(b - a), dtype="<i2")
     return pcm[::channels].astype(np.float32) / 32767, rate

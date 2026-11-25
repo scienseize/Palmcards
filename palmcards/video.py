@@ -120,6 +120,7 @@ class VideoWriter:
         self.gaps: list[list[float]] = []  # [app time of the first frame dropped, frames] per run of drops
         self.done = threading.Event()
         self._queue: queue.Queue = queue.Queue(maxsize=max(2, round(VIDEO.queue_s * VIDEO.fps_guess)))
+        self._gate = threading.Lock()  # push() and stop(): a frame counts only if it is queued before STOP
         self._thread = threading.Thread(target=self._run, name=f"take-{number:02d}-video", daemon=True)
         self._thread.start()
 
@@ -129,27 +130,30 @@ class VideoWriter:
         """A frame and its capture time (app clock). Never blocks: a full queue
         drops the frame and records the gap. The caller hands over a frame it
         won't draw on (a copy)."""
-        if self.state != "recording" or (self.t_last is not None and t <= self.t_last):
-            return  # the same frame twice, or time running backwards: nothing to add
-        if self.t_first is None:
-            self.t_first = t
-        self.t_last = t
-        self.pushed += 1
-        try:
-            self._queue.put_nowait((t, frame))
-        except queue.Full:
-            self.dropped += 1
-            if self.gaps and self.gaps[-1][2] == self.pushed - 1:
-                self.gaps[-1][1] += 1  # one gap, however many frames in a row
-                self.gaps[-1][2] = self.pushed
-            else:
-                self.gaps.append([round(t, 3), 1, self.pushed])
+        with self._gate:
+            if self.state != "recording" or (self.t_last is not None and t <= self.t_last):
+                return  # the same frame twice, or time running backwards: nothing to add
+            if self.t_first is None:
+                self.t_first = t
+            self.t_last = t
+            self.pushed += 1
+            try:
+                self._queue.put_nowait((t, frame))
+            except queue.Full:
+                self.dropped += 1
+                if self.gaps and self.gaps[-1][2] == self.pushed - 1:
+                    self.gaps[-1][1] += 1  # one gap, however many frames in a row
+                    self.gaps[-1][2] = self.pushed
+                else:
+                    self.gaps.append([round(t, 3), 1, self.pushed])
 
     # --- the app's side ---------------------------------------------------------
 
     def stop(self) -> None:
         """Finish in the background: drain, flush the encoder, publish. Never blocks."""
-        if self.state == "recording":
+        with self._gate:
+            if self.state != "recording":
+                return
             self.state = "finalizing"
             try:
                 self._queue.put_nowait(STOP)

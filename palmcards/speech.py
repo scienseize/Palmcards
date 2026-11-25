@@ -57,6 +57,7 @@ from palmcards.asr import Transcription, get_recognizer, initial_prompt  # noqa:
 from palmcards.audio import prepare_audio, resample, trim_silence  # noqa: F401 (re-exported)
 from palmcards.config import ALIGN, METRICS, PROSODY, SPEECH
 from palmcards.notes import Notes
+from palmcards.paths import write_atomic
 from palmcards.prosody import Prosody
 from palmcards.session import Session, TakeRecord, read_wav
 
@@ -191,9 +192,7 @@ def run_job(job: dict) -> dict:
             "text": tr.text,
             "words": words_on_clock({"segments": tr.segments}, job["t_start"], tr.offset_s),
         }
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
-        tmp.replace(path)
+        write_atomic(path, (json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode())
     language = job.get("language", "en")
     fillers = ALIGN.fillers if language in SPEECH.filler_languages else ()  # the filler list is English
     alignment = align(job["sentences"], data["words"], fillers)

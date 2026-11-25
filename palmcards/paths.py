@@ -21,6 +21,25 @@ CHECKOUT = Path(__file__).resolve().parent.parent
 APP_SUPPORT = Path.home() / "Library" / "Application Support" / "PalmCards" / "sessions"
 
 
+def write_atomic(path: Path, data: bytes) -> None:
+    """Write `data` to `path` so a crash leaves the old file or the new one, never half.
+    The bytes are on disk before the rename, and the folder entry is synced after it."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(path)
+    try:
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass  # best effort: not every file system syncs a folder
+
+
 def data_dir() -> Path:
     if env := os.environ.get("PALMCARDS_DATA"):
         return Path(env).expanduser().resolve()

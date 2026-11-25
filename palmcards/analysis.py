@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Callable
 
 from palmcards.config import ALIGN, ANALYSIS, GAZE, METRICS, PROSODY, SPEECH
+from palmcards.paths import write_atomic
 
 ROOT = Path(__file__).resolve().parent.parent
 TERMINAL = ("succeeded", "failed")
@@ -58,9 +59,7 @@ def _now() -> str:
 
 
 def _write_json(path: Path, data: dict) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=1) + "\n")
-    tmp.replace(path)
+    write_atomic(path, (json.dumps(data, indent=1) + "\n").encode())
 
 
 @dataclass
@@ -221,31 +220,44 @@ class Supervisor:
 
     def _loop(self) -> None:
         while True:
+            command = None
             try:
-                command = self._commands.get(timeout=0.1)
-            except queue.Empty:
-                command = None
-            if command is not None:
-                kind = command[0]
-                if kind == "submit":
-                    self._accept(command[1], command[2])
-                elif kind == "retry":
-                    for job in self._jobs:
-                        if job.state == "failed":
-                            job.attempts, job.error = 0, None
-                            with self._lock:
-                                self._admitted += 1
-                            self._set(job, "queued")
-                elif kind == "line":
-                    self._reply(command[1], command[2])
-                elif kind == "exit":
-                    self._exited(command[1], command[2])
-                elif kind == "close":
-                    self._shutdown(command[1])
+                try:
+                    command = self._commands.get(timeout=0.1)
+                except queue.Empty:
+                    pass
+                if command is not None:
+                    kind = command[0]
+                    if kind == "submit":
+                        self._accept(command[1], command[2])
+                    elif kind == "retry":
+                        for job in self._jobs:
+                            if job.state == "failed":
+                                job.attempts, job.error = 0, None
+                                with self._lock:
+                                    self._admitted += 1
+                                self._set(job, "queued")
+                    elif kind == "line":
+                        self._reply(command[1], command[2])
+                    elif kind == "exit":
+                        self._exited(command[1], command[2])
+                    elif kind == "close":
+                        self._shutdown(command[1])
+                        command[2].set()
+                        return
+                self._check_timeout()
+                self._dispatch()
+            except Exception as exc:  # noqa: BLE001 - one bad job must not stop the supervisor
+                why = f"analysis supervisor error: {type(exc).__name__}: {exc}"
+                self.log.append(why)
+                if command is not None and command[0] == "close":
                     command[2].set()
                     return
-            self._check_timeout()
-            self._dispatch()
+                job = self._running or next((j for j in self._jobs if j.state == "queued"), None)
+                if job is not None:
+                    self._running = None
+                    self._fail(job, why)
+                    self._kill()  # a worker still busy with it would answer a job nobody waits for
 
     def _accept(self, session_dir: str, job_input: dict) -> None:
         job = Job(id=secrets.token_hex(6), session=session_dir, take=job_input["take"],

@@ -42,6 +42,7 @@ from typing import Callable
 import numpy as np
 
 from palmcards.config import RECORDING
+from palmcards.paths import write_atomic
 
 HEADER_BYTES = 44
 STOP = object()
@@ -81,9 +82,7 @@ def first_sample_time(now: float, time_info, frames: int, rate: int) -> tuple[fl
 
 
 def _write_json(path: Path, data: dict) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=1) + "\n")
-    tmp.replace(path)
+    write_atomic(path, (json.dumps(data, indent=1) + "\n").encode())
 
 
 class TakeWriter:
@@ -113,6 +112,7 @@ class TakeWriter:
         self._open = open_file
         self._queue: queue.Queue = queue.Queue(maxsize=max(2, int(RECORDING.queue_s * rate / block_frames)))
         self._lock = threading.Lock()  # guards discontinuities/sections for the manifest copy
+        self._gate = threading.Lock()  # push() and stop(): a block counts only if it is queued before STOP
         self._thread = threading.Thread(target=self._run, name=f"take-{number:02d}-writer", daemon=True)
         self._thread.start()
 
@@ -125,13 +125,14 @@ class TakeWriter:
     def push(self, block: np.ndarray, first_t: float | None = None, source: str | None = None) -> None:
         if self.first_sample_t is None and first_t is not None:
             self.first_sample_t, self.clock_source = first_t, source
-        if self.state not in ("recording",):
-            return
-        try:
-            self._queue.put_nowait((self.enqueued, block))
-        except queue.Full:
-            self._gap(self.enqueued, len(block), "queue_full")
-        self.enqueued += len(block)
+        with self._gate:  # held for a put_nowait only, so the callback never waits long
+            if self.state not in ("recording",):
+                return
+            try:
+                self._queue.put_nowait((self.enqueued, block))
+            except queue.Full:
+                self._gap(self.enqueued, len(block), "queue_full")
+            self.enqueued += len(block)
 
     def mark_overflow(self) -> None:
         """The device dropped input before we saw it (PortAudio input overflow)."""
@@ -156,7 +157,9 @@ class TakeWriter:
 
     def stop(self) -> None:
         """Finish in the background: drain, fix the header, publish. Never blocks."""
-        if self.state == "recording":
+        with self._gate:
+            if self.state != "recording":
+                return
             self.state = "finalizing"
             try:
                 self._queue.put_nowait(STOP)
@@ -188,39 +191,42 @@ class TakeWriter:
     def _run(self) -> None:
         f = None
         try:
-            f = self._open(self.part, "wb")
-            f.write(wav_header(self.rate, 0))
-            self._flush(f)
-        except OSError as exc:
-            self._fail(exc)
-        last_flush = time.monotonic()
-        while True:
             try:
-                item = self._queue.get(timeout=RECORDING.flush_s)
-            except queue.Empty:
-                item = None
-            if item is STOP:
-                break
-            if item is not None:
-                at, block = item
-                if self.error is None and f is not None:
+                f = self._open(self.part, "wb")
+                f.write(wav_header(self.rate, 0))
+                self._flush(f)
+            except OSError as exc:
+                self._fail(exc)
+            last_flush = time.monotonic()
+            while True:
+                try:
+                    item = self._queue.get(timeout=RECORDING.flush_s)
+                except queue.Empty:
+                    item = None
+                if item is STOP:
+                    break
+                if item is not None:
+                    at, block = item
+                    if self.error is None and f is not None:
+                        try:
+                            self._fill_to(f, at)
+                            pcm = (np.clip(block, -1.0, 1.0) * 32767).round().astype("<i2")
+                            f.write(pcm.tobytes())
+                            self.samples += len(block)
+                            self.peak = max(self.peak, float(np.abs(block).max()) if len(block) else 0.0)
+                        except OSError as exc:
+                            self._fail(exc)
+                            self._gap(at, len(block), "write_error")
+                    else:
+                        self._gap(at, len(block), "write_error")
+                if f is not None and self.error is None and time.monotonic() - last_flush >= RECORDING.flush_s:
                     try:
-                        self._fill_to(f, at)
-                        pcm = (np.clip(block, -1.0, 1.0) * 32767).round().astype("<i2")
-                        f.write(pcm.tobytes())
-                        self.samples += len(block)
-                        self.peak = max(self.peak, float(np.abs(block).max()) if len(block) else 0.0)
+                        self._flush(f)
                     except OSError as exc:
                         self._fail(exc)
-                        self._gap(at, len(block), "write_error")
-                else:
-                    self._gap(at, len(block), "write_error")
-            if f is not None and self.error is None and time.monotonic() - last_flush >= RECORDING.flush_s:
-                try:
-                    self._flush(f)
-                except OSError as exc:
-                    self._fail(exc)
-                last_flush = time.monotonic()
+                    last_flush = time.monotonic()
+        except Exception as exc:  # noqa: BLE001 - whatever it was, the take must still finish
+            self._fail(exc)
         self._finish(f)
 
     def _fill_to(self, f, at: int) -> None:
@@ -241,7 +247,7 @@ class TakeWriter:
         os.fsync(f.fileno())
         _write_json(self.manifest_path, self.manifest())
 
-    def _fail(self, exc: OSError) -> None:
+    def _fail(self, exc: Exception) -> None:
         if self.error is None:
             self.error = f"{type(exc).__name__}: {exc}"
 
@@ -252,7 +258,7 @@ class TakeWriter:
                     if self.error is None:
                         self._fill_to(f, self.enqueued)  # dropped at the very end: the take keeps its length
                     self._flush(f)
-                except OSError as exc:
+                except Exception as exc:  # noqa: BLE001
                     self._fail(exc)
                 f.close()
                 if self.part.exists():
@@ -261,7 +267,7 @@ class TakeWriter:
             self.state = "failed" if self.error else "saved"
             try:
                 _write_json(self.manifest_path, self.manifest())
-            except OSError as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._fail(exc)
         finally:
             self.done.set()
