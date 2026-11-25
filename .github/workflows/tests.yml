@@ -7,7 +7,7 @@ jobs:
     runs-on: macos-15  # Apple silicon, like the target Mac (macos-14 is retired)
     strategy:
       matrix:
-        python: ["3.11", "3.12"]
+        python: ["3.12"]  # the lock file needs 3.12 (networkx 3.7)
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

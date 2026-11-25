@@ -7,7 +7,7 @@ Full design note: https://claude.ai/artifact/2mB94zAhFAKUNK7GnCsqSc (written whe
 ## Hard constraints
 
 - Single local Python desktop app on a MacBook Air (Apple silicon). No browser, no backend, no database.
-- Python 3.11 or 3.12 (newer versions may not have mediapipe wheels).
+- Python 3.12 (the lock file needs 3.12; newer versions may not have mediapipe wheels).
 - Input is uploaded files only: `.txt`, `.md`, `.docx`. No typing inside the app. Legacy `.doc` is not supported.
 - After a file is opened, everything is controlled by hand gestures.
 - Visual style: notes drawn as a small monospace text block (IBM Plex Mono Medium; the current sentence and the state label in SemiBold) over the live, mirrored webcam feed, in the style of the "gestural editing/writing" demo by @poetengineer__: as big as in its frames (20 px at 720p, rows 24 px apart), about 30 characters a row in the text column, about 22 rows visible, a paragraph's sentences running on with a blank row between paragraphs. The unit under the hand sits on an orange fill in dark text, the rest of its paragraph on a slate-blue fill (one tight fill per row), with an orange bar beside it; with no hand up the current sentence is orange. The video is darkened under the text column (at full strength to 28% of the width, fading out by its edge) and each glyph has a faint dark halo and outline, as strong as the glyph is opaque (dimmed text stays dim on a pale wall), for legibility; light marks drawn straight on the video (hand box corners, fingertip dots, progress tracks, the scrollbar, the tone knob) sit on a dark rim, so they show on a pale wall too.

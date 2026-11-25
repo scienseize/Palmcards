@@ -12,7 +12,7 @@ The desktop app, recording and analysis run on your Mac. After downloading the m
 
 ## Install
 
-You need Python 3.11 or 3.12 (MediaPipe has no wheels for newer versions yet) and [uv](https://docs.astral.sh/uv/).
+You need Python 3.12 (the lock file needs 3.12, and MediaPipe has no wheels for newer versions yet) and [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv venv --python 3.12 .venv
