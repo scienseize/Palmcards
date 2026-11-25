@@ -62,6 +62,7 @@ Keys work when gestures won't (press `h` to see them in the app):
 | `n` / `b` | next / previous section |
 | `space` / `j`, `k` | next / previous sentence, or scroll a focused panel |
 | `p` | back to Prepare from Review |
+| `o` | export the notes to the session's `exports/` folder (Review) |
 | `r` | retry a failed edit preview, otherwise retry failed analysis |
 | `u` | undo the last edit (Prepare) |
 | `e` | calibrate the eyes again at the next count-in |

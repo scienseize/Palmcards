@@ -93,3 +93,20 @@ def test_the_cli_exports_the_chosen_revision_to_the_session(tmp_path, capsys):
     back = load_notes(session.dir / "exports" / f"talk-{second}.docx")
     assert back.sentences[0].text == "Good evening, all."  # the later revision's text
     assert original.exists() and export.main([str(session.dir)]) == 1  # the same file again: refused
+
+
+def test_key_o_in_review_exports_the_current_notes_and_says_where(tmp_path, monkeypatch, capsys):
+    import json
+
+    from tests.test_app_lifecycle import TAKE, Rig
+
+    script = {**TAKE, 20: ("take_stop", "review")}
+    keys = {n: ord("o") for n in range(30, 200)} | {260: ord("q")}  # the take is saved a few frames after the stop
+    rig = Rig(tmp_path, monkeypatch, script=script, keys=keys)
+    assert rig.run() == 0
+    session = rig.session()
+    (written,) = (session.dir / "exports").glob("talk-*.md")  # once: the later presses find it there
+    assert [x.text for x in load_notes(written).sentences] == [x.text for x in load_notes(rig.notes_path).sentences]
+    assert f"exported {written}" in capsys.readouterr().out
+    events = [json.loads(line) for line in (tmp_path / "log.jsonl").read_text().splitlines()]
+    assert any(e.get("kind") == "key" and e.get("command") == "export" and e.get("acted") for e in events)

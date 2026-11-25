@@ -712,6 +712,31 @@ class Takes:
         self.log(time.perf_counter() - self.t0, "undo", revision=rid)
         return "UNDONE"
 
+    def export_notes(self, t: float) -> str:
+        """Key o in Review: the current notes revision to a new file in the session's exports/ folder,
+        as `python -m palmcards.export RUN` does by default (a .docx takes about 40 ms: no worker)."""
+        from palmcards import export
+
+        rid = self.session.current_revision
+        if rid is None or self.session._parsed is not None:  # nothing saved yet
+            return "NOTHING TO EXPORT YET"
+        fmt = self.session.notes.suffix.lower().lstrip(".").replace("markdown", "md")
+        fmt = fmt if fmt in export.FORMATS else "txt"
+        dest = self.session.dir / "exports" / f"{self.session.notes.stem}-{rid}.{fmt}"
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            export.write(self.notes, dest, fmt, self.session.notes)
+            note = f"EXPORTED TO EXPORTS/{dest.name.upper()}"
+        except FileExistsError:  # this revision was exported before: it is still there
+            note = f"ALREADY EXPORTED: EXPORTS/{dest.name.upper()}"
+        except OSError as exc:
+            print(f"cannot export: {exc}", file=sys.stderr)
+            self.log(t, "key", command="export", mode="review", acted=False, error=str(exc))
+            return "EXPORT FAILED (SEE TERMINAL)"
+        print(f"exported {dest}")
+        self.log(t, "key", command="export", mode="review", acted=True, path=str(dest))
+        return note
+
     def play_sentence(self, sentence: int) -> str:
         """Play a sentence (current notes' index) from the take Review shows for it."""
         n = self.board.shown(sentence)
@@ -1688,6 +1713,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.note = "STOPPED" if takes.stop_playback("key", now_t) \
                 else play_focus(view, overlay, log, speaker, takes, now_t)
             note_until = time.perf_counter() + NOTE_S
+        elif key == ord("o") and view.app == "review":  # write the notes out, as palmcards.export does
+            view.note, note_until = takes.export_notes(now_t), time.perf_counter() + NOTE_S
         elif key == ord("e"):
             view.note, note_until = takes.recalibrate(), time.perf_counter() + NOTE_S
         elif key == ord("d"):
