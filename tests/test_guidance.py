@@ -106,6 +106,19 @@ def test_contrast_tutorial_card_and_hand_area_are_drawn(restore):
     assert (area != 128).any()
 
 
+def test_the_last_tutorial_step_says_what_stops_a_take_and_stays_below_the_hand_box(restore):
+    text = STEPS[-1][1]
+    assert "FIST" in text and "OK SIGN" in text and "STOP" in text
+    sentences = parse_text("Hello there. Good night all.").sentences
+    ov = TextOverlay(sentences, (1280, 720))
+    base = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(base, ViewState())
+    card = np.full((720, 1280, 3), 128, np.uint8)
+    ov.draw(card, ViewState(tutorial=(len(STEPS), len(STEPS), text)))
+    rows = np.argwhere((card != base).any(axis=2))[:, 0]
+    assert rows.min() > 0.8 * 720  # clear of the hand box's bottom corners (3 rows of text at most)
+
+
 def test_keys_in_the_app_save_preferences_to_its_file(tmp_path, monkeypatch, restore):
     keys = {2: ord("c"), **{3 + k: main.ENTER for k in range(len(STEPS))}, 16: ord("m"), 20: ord("q")}
     rig = Rig(tmp_path, monkeypatch, script={}, keys=keys)
