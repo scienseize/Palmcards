@@ -74,10 +74,8 @@ def span_clip(session: Session, take: TakeRecord, sentences: list[int]) -> tuple
     span = clip_span(take, sentences)
     if span is None:
         return None
-    audio, rate = read_wav(session.dir / take.wav)
-    a = max(0, int((span[0] - take.t_start) * rate))
-    b = min(len(audio), int((span[1] - take.t_start) * rate))
-    return (audio[a:b], rate) if b > a else None
+    audio, rate = read_wav(session.dir / take.wav, span[0] - take.t_start, span[1] - take.t_start)
+    return (audio, rate) if len(audio) else None
 
 
 def take_words(session: Session, take: TakeRecord) -> list[dict]:

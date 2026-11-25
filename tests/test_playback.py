@@ -268,3 +268,16 @@ def test_a_replays_captions_colour_the_words_as_the_player_does(tmp_path):
     assert [(w[2], w[3]) for w in words] == [("Hello", "word"), ("um", "filler"), ("there", "word"),
                                              ("friend.", "word"), ("Good", "restart"), ("Good", "word"),
                                              ("night", "word"), ("all.", "word")]
+
+
+def test_a_span_is_read_without_reading_the_whole_take(tmp_path):
+    from palmcards.session import read_wav, write_wav
+
+    audio = (np.arange(16000 * 3) % 200 / 400 - 0.25).astype(np.float32)
+    write_wav(tmp_path / "t.wav", audio, 16000)
+    full, rate = read_wav(tmp_path / "t.wav")
+    part, prate = read_wav(tmp_path / "t.wav", 0.5, 1.25)
+    assert prate == rate and part.dtype == full.dtype
+    assert np.array_equal(part, full[int(0.5 * rate):int(1.25 * rate)])
+    assert len(read_wav(tmp_path / "t.wav", 2.5, 9.0)[0]) == len(full) - int(2.5 * rate)  # past the end: clipped
+    assert len(read_wav(tmp_path / "t.wav", 5.0, 6.0)[0]) == 0

@@ -359,3 +359,15 @@ def test_the_video_preference_turns_it_on_without_the_flag(tmp_path, monkeypatch
     rig.prefs_file.write_text('{"video": true}\n')
     assert rig.run() == 0
     assert rig.session().take(1).video["state"] == "saved"
+
+
+def test_a_missing_model_file_is_one_line_and_closes_what_was_open(tmp_path, monkeypatch, capsys):
+    def missing():
+        raise FileNotFoundError("models/gesture_recognizer.task missing: run python scripts/download_models.py")
+
+    rig = Rig(tmp_path, monkeypatch, tracker_factory=missing)
+    code = main.run_reporting(rig.notes_path, notes_from_bytes(NOTES, rig.notes_path), NOTES, devices=rig.devices,
+                              sessions_root=rig.tmp / "sessions", prefs_file=rig.prefs_file)
+    err = capsys.readouterr().err
+    assert code == 1 and "gesture_recognizer.task" in err and "download_models.py" in err
+    assert "Traceback" not in err and rig.camera.released == 1

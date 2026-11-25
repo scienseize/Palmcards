@@ -312,8 +312,11 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
             view.note = "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
     elif ev.kind == "commit":
         sentence = view.focus.sentence if view.focus else None
-        picked = overlay.ring_labels(view)[view.ops.picked] if ev.op == "ring" else None
         unit = tuple(overlay.unit(ev.level, sentence)) if sentence is not None else ()
+        picked = None
+        if ev.op == "ring":
+            labels = overlay.ring_labels(view)
+            picked = labels[view.ops.picked] if 0 <= view.ops.picked < len(labels) else None
         if picked in view.alternatives and takes is not None and view.focus is not None and view.ops.picked > 0:
             view.note = takes.use_alternative(view.focus.sentence, view.focus.word, picked)
         elif ev.op in ("tone", "stretch") and takes is not None and unit:
@@ -1310,12 +1313,9 @@ def main() -> int:
         return 1
     for warning in notes.warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    try:
-        return run(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow,
-                   gaze_check=args.gaze_check, video=args.video, devices=Devices(llm=lambda: get_provider(args.llm)))
-    except CameraError as exc:
-        print(exc, file=sys.stderr)
-        return 1
+    return run_reporting(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow,
+                         gaze_check=args.gaze_check, video=args.video,
+                         devices=Devices(llm=lambda: get_provider(args.llm)))
 
 
 def reopen(args) -> int:
@@ -1338,12 +1338,22 @@ def reopen(args) -> int:
               f"python -m palmcards.speech {folder} --rebind", file=sys.stderr)
         return 1
     notes = from_snapshot(session.snapshot(session.current_revision))
+    return run_reporting(session.notes, notes, b"", lang=session.language, trace=args.trace,
+                         follow=not args.no_follow, session=session, gaze_check=args.gaze_check, video=args.video,
+                         devices=Devices(llm=lambda: get_provider(args.llm)))
+
+
+def run_reporting(*args, **kwargs) -> int:
+    """run(), with a camera or a missing model file said in one line, not a traceback."""
     try:
-        return run(session.notes, notes, b"", lang=session.language, trace=args.trace, follow=not args.no_follow,
-                   session=session, gaze_check=args.gaze_check, video=args.video,
-                   devices=Devices(llm=lambda: get_provider(args.llm)))
+        return run(*args, **kwargs)
     except CameraError as exc:
         print(exc, file=sys.stderr)
+        return 1
+    except FileNotFoundError as exc:
+        if "download_models" not in str(exc):
+            raise
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
 
