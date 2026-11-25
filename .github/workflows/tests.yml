@@ -4,7 +4,7 @@ name: tests
 on: [push, pull_request]
 jobs:
   pytest:
-    runs-on: macos-14  # Apple silicon, like the target Mac
+    runs-on: macos-15  # Apple silicon, like the target Mac (macos-14 is retired)
     strategy:
       matrix:
         python: ["3.11", "3.12"]
