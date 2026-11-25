@@ -107,17 +107,32 @@ def test_the_take_table_sets_the_last_full_takes_side_by_side():
     table = b.take_table()
     assert len({len(line) for line in table}) == 1  # every line the same width: the columns line up
     rows = {line.split("  ")[0].strip(): line.split() for line in table[1:]}
-    assert table[0].split() == ["TAKE", "1", "TAKE", "2", "TAKE", "4"]
-    assert rows["LENGTH"][-3:] == ["1:01", "0:58", "0:40"]
-    assert rows["WPM"][-3:] == ["142", "131", "-"]
-    assert rows["FILLERS/MIN"][-3:] == ["1.5", "0.5", "-"]
-    assert rows["PITCH (SEMITONES)"][-3:] == ["6.2", "8", "-"]
-    assert rows["ON SCREEN"][-3:] == ["82%", "50%", "-"]
-    assert rows["FACE TOUCHES"][-3:] == ["1", "2", "-"]
-    assert rows["SHOULDERS TILTED"][-3:] == ["-", "13%", "-"]
+    assert table[0].split() == ["TAKE", "1", "TAKE", "2", "TAKE", "4", "CHANGE"]
+    assert rows["LENGTH"][-4:-1] == ["1:01", "0:58", "0:40"]
+    assert rows["WPM"][-4:-1] == ["142", "131", "-"]
+    assert rows["FILLERS/MIN"][-4:-1] == ["1.5", "0.5", "-"]
+    assert rows["PITCH (SEMITONES)"][-4:-1] == ["6.2", "8", "-"]
+    assert rows["ON SCREEN"][-4:-1] == ["82%", "50%", "-"]
+    assert rows["FACE TOUCHES"][-4:-1] == ["1", "2", "-"]
+    assert rows["SHOULDERS TILTED"][-4:-1] == ["-", "13%", "-"]
+    assert rows["LENGTH"][-1] == "-0:18" and rows["WPM"][-1] == "-"  # take 4 less take 2; nothing measured for 4
     for n in (5, 6):
         b.add(n, analysed(FULL))
     assert b.take_table()[0].split()[1::2] == ["2", "4", "5", "6"]  # the last four
+
+
+def test_the_take_table_shows_the_change_from_the_previous_take_as_a_signed_difference():
+    b = Board(parse_text(TEXT))
+    b.add(1, analysed(FULL), metrics([(8, 2, 0)] * 3, pace=140.0, fillers=1.5, pitch=6.0, touches=2), duration_s=60.0)
+    assert b.take_table()[0].split() == ["TAKE", "1"]  # one take: nothing to change from
+    b.add(2, analysed(FULL), metrics([(8, 2, 0)] * 3, pace=152.0, fillers=0.5, pitch=6.0, touches=2), duration_s=75.0)
+    table = b.take_table()
+    assert len({len(line) for line in table}) == 1 and table[0].split()[-1] == "CHANGE"
+    change = {line.split("  ")[0].strip(): line.split()[-1] for line in table[1:]}
+    assert change["LENGTH"] == "+0:15" and change["WPM"] == "+12" and change["FILLERS/MIN"] == "-1"
+    assert change["PITCH (SEMITONES)"] == "0" and change["FACE TOUCHES"] == "0"  # the same: no sign
+    assert not any(ch in " ".join(change.values()) for ch in "↑↓")  # plain numbers, nothing says better or worse
+    assert max(len(line) for line in table) <= 57  # the width the table was checked at 720p with
 
 
 def test_review_points_at_take_chips_and_says_when_there_is_nothing_to_choose(tmp_path, monkeypatch):

@@ -162,26 +162,28 @@ class Board:
     def take_table(self, n: int = TABLE_TAKES) -> tuple[str, ...]:
         """The last `n` full takes side by side (a drill has only one sentence:
         it is compared in the sentence's panel instead). One line per metric,
-        every line the same width (monospace), "-" where not measured."""
+        every line the same width (monospace), "-" where not measured. From two
+        takes on, a last column gives the newest take's change from the one
+        before it: a plain signed difference, nothing says which way is better."""
         full = [t for t in self.takes if t not in self.drills][-n:]
         if not full:
             return ()
-        cols = [self._take_column(t) for t in full]
-        rows = [("", [f"TAKE {t}" for t in full])] + [(name, [c[k] for c in cols]) for k, name in enumerate(METRIC_ROWS)]
+        raw = [self._take_values(t) for t in full]
+        cols = [[_show(form, v) for form, v in zip(METRIC_FORMS, vals)] for vals in raw]
+        head = [f"TAKE {t}" for t in full]
+        if len(full) > 1:
+            head.append("CHANGE")
+            cols.append([_change(form, old, new) for form, old, new in zip(METRIC_FORMS, raw[-2], raw[-1])])
+        rows = [("", head)] + [(name, [c[k] for c in cols]) for k, name in enumerate(METRIC_ROWS)]
         name_w = max(len(r[0]) for r in rows)
         col_w = max(len(v) for _, vals in rows for v in vals)
         return tuple(f"{name:<{name_w}}" + "".join(f"  {v:>{col_w}}" for v in vals) for name, vals in rows)
 
-    def _take_column(self, number: int) -> list[str]:
+    def _take_values(self, number: int) -> list[float | None]:
+        """One take's table column as numbers (None: not measured), in METRIC_ROWS order."""
         m = self.metrics.get(number) or {}
         speech, voice, gaze = m.get("speech"), m.get("voice"), m.get("gaze")
         hands, posture = m.get("hands"), m.get("posture")
-
-        def fmt(v, form: str) -> str:
-            return "-" if v is None else form.format(v)
-
-        secs = self.durations.get(number)
-        length = "-" if secs is None else "{}:{:02d}".format(*divmod(round(secs), 60))
         c = (gaze or {}).get("counts")
         on_screen = None
         if c and value(gaze, "screen_share") is not None:
@@ -189,18 +191,42 @@ class Board:
             on_screen = 100 * (c["camera"] + c["notes"]) / total
         tilted = value(posture, "tilted_share")
         return [
-            length,
-            fmt(value(speech, "pace_wpm"), "{:.0f}"),
-            fmt(value(speech, "fillers_per_min"), "{:g}"),
-            fmt(value(speech, "long_pauses") if value(speech, "long_pauses") is not None
-                else value(speech, "unplanned_long_pauses"), "{}"),  # metrics before version 5
-            fmt(value(speech, "restarts"), "{}"),
-            fmt(value(voice, "pitch_range_st"), "{:g}"),
-            fmt(on_screen, "{:.0f}%"),
-            fmt(value(hands, "face_touches"), "{}"),
-            fmt(None if tilted is None else 100 * tilted, "{:.0f}%"),
+            self.durations.get(number),
+            value(speech, "pace_wpm"),
+            value(speech, "fillers_per_min"),
+            value(speech, "long_pauses") if value(speech, "long_pauses") is not None
+            else value(speech, "unplanned_long_pauses"),  # metrics before version 5
+            value(speech, "restarts"),
+            value(voice, "pitch_range_st"),
+            on_screen,
+            value(hands, "face_touches"),
+            None if tilted is None else 100 * tilted,
         ]
 
 
 METRIC_ROWS = ("LENGTH", "WPM", "FILLERS/MIN", "LONG PAUSES", "RESTARTS", "PITCH (SEMITONES)", "ON SCREEN",
                "FACE TOUCHES", "SHOULDERS TILTED")
+
+# How each row's number is written (None: a length, as m:ss).
+METRIC_FORMS = (None, "{:.0f}", "{:g}", "{}", "{}", "{:g}", "{:.0f}%", "{}", "{:.0f}%")
+
+
+def _mmss(seconds: float) -> str:
+    return "{}:{:02d}".format(*divmod(round(seconds), 60))
+
+
+def _show(form: str | None, v: float | None) -> str:
+    if v is None:
+        return "-"
+    return _mmss(v) if form is None else form.format(v)
+
+
+def _change(form: str | None, old: float | None, new: float | None) -> str:
+    """The new value less the old, signed ("0" when they show the same); "-" if either is missing."""
+    if old is None or new is None:
+        return "-"
+    d = round(new) - round(old) if form is None else round(new - old, 6)  # no float dust
+    text = _mmss(abs(d)) if form is None else form.format(abs(d))
+    if float(text.replace(":", "").rstrip("%")) == 0:
+        return "0"
+    return ("+" if d > 0 else "-") + text
