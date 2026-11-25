@@ -128,3 +128,21 @@ def test_reduced_motion_and_sounds_are_preferences(tmp_path, monkeypatch, capsys
     assert prefs.main(["set", "reduced_motion", "true"]) == 0 and prefs.load().reduced_motion is True
     assert prefs.main(["set", "reduced_motion", "auto"]) == 0 and prefs.load().reduced_motion is None
     assert prefs.main(["set", "sounds", "on"]) == 0 and prefs.load().sounds is True
+
+
+def test_last_notes_is_kept_and_an_old_prefs_file_still_loads(tmp_path):
+    path = tmp_path / "prefs.json"
+    path.write_text(json.dumps({"reach": 0.8}))  # written before last_notes existed
+    assert prefs.load(path).last_notes == ""
+    prefs.save(prefs.Prefs(last_notes="/a/notes.md"), path)
+    assert prefs.load(path).last_notes == "/a/notes.md"
+
+
+def test_choose_notes_prefers_the_argument_then_the_last_file_then_the_sample(tmp_path):
+    last = tmp_path / "last.md"
+    last.write_text("Hello there.\n")
+    given = tmp_path / "given.md"
+    assert main.choose_notes(given, str(last)) == (given, False)
+    assert main.choose_notes(None, str(last)) == (last, True)
+    assert main.choose_notes(None, str(tmp_path / "gone.md")) == (main.SAMPLE, False)  # the file went away
+    assert main.choose_notes(None, "") == (main.SAMPLE, False)

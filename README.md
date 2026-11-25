@@ -34,6 +34,7 @@ macOS asks for these on first use; allow them for the terminal app you run PalmC
 
 ```sh
 .venv/bin/python main.py my-talk.md            # .txt, .md or .docx
+.venv/bin/python main.py                       # the file you opened last, else the sample
 .venv/bin/python main.py --no-follow notes.txt # don't follow the voice during takes
 ```
 

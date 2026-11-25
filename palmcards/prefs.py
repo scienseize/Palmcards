@@ -19,6 +19,7 @@ sessions (which are evidence and never change with your settings).
   replay_mirrored  Review replays a take's video mirrored, as in the app (key m); by default
                  flipped back, as others see you
   tutorial_done  the first-run gesture tutorial has been seen (key g shows it again)
+  last_notes     the notes file opened last (kept by the app); main.py with no file opens it again
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ class Prefs:
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
     done_hold_s: float = REHEARSE.done_hold_s
+    last_notes: str = ""  # absolute path of the notes file opened last; "" until one was
 
     def checked(self) -> "Prefs":
         """Values clamped to what the app can use."""
@@ -118,6 +120,8 @@ def main(argv: list[str]) -> int:
             value = truth
         elif kinds[key] == "bool | None":  # auto: follow the system
             value = None if raw.lower() == "auto" else truth
+        elif kinds[key] in (str, "str"):
+            value = raw
         else:
             value = float(raw)
         prefs = replace(prefs, **{key: value}).checked()

@@ -100,7 +100,7 @@ import sys
 import time
 import traceback
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -1285,9 +1285,20 @@ def guarded(fn: Callable[[], None], what: str) -> Callable[[], None]:
     return run
 
 
+def choose_notes(given: Path | None, last_notes: str) -> tuple[Path, bool]:
+    """The notes file to open and whether it came from the preferences: the one named on the command
+    line, else the one opened last if it is still there, else the sample."""
+    if given is not None:
+        return given, False
+    if last_notes and Path(last_notes).is_file():
+        return Path(last_notes), True
+    return SAMPLE, False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="PalmCards rehearsal mirror")
-    ap.add_argument("notes", nargs="?", type=Path, default=SAMPLE, help=".txt, .md or .docx")
+    ap.add_argument("notes", nargs="?", type=Path,
+                    help=".txt, .md or .docx (default: the file opened last, else the sample)")
     ap.add_argument("--lang", default=SPEECH.language, help="language of the takes, for Whisper")
     ap.add_argument("--trace", action="store_true", help="record hand landmarks for offline replay")
     ap.add_argument("--no-follow", action="store_true", help="don't follow the voice during takes")
@@ -1304,13 +1315,17 @@ def main() -> int:
         print(f"recovered: {line}")
     if args.open:
         return reopen(args)
-    path = args.notes
+    prefs = preferences.load()
+    path, remembered = choose_notes(args.notes, prefs.last_notes)
     try:
         source = path.read_bytes()  # parsed once and kept byte for byte in the session
         notes = notes_from_bytes(source, path)
     except (OSError, ValueError) as exc:
         print(f"Could not open notes: {exc}", file=sys.stderr)
         return 1
+    if remembered:
+        print(f"opening the notes file from last time: {path}")
+    preferences.save(replace(prefs, last_notes=str(path.resolve())))
     for warning in notes.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     return run_reporting(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow,
