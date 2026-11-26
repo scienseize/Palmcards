@@ -670,7 +670,9 @@ class Grammar:
         self._dial_hist: deque[dict] = deque()  # focus: the dials' values per frame, for the rewind
         self._cursor_hist: deque[tuple[float, float, tuple[float, float]]] = deque()  # browse by word: (t, thumb, cursor)
         self._tap = Tap()  # a quick tap of the browsing fingers selects (Prepare, Review)
-        self._tap_hist: deque[tuple[float, tuple[float, float]]] = deque()  # browsing: (t, cursor), for the tap's rewind
+        # Browsing: (t, cursor, fingertip height over the knuckle) for the tap's rewind, and (t, height) every frame.
+        self._tap_hist: deque[tuple[float, tuple[float, float], float]] = deque()
+        self._bend_hist: deque[tuple[float, float]] = deque()
         self._tap_at: tuple[str, str] | None = None  # while a tap is down: (its shape, its level)
 
     # -- hands --
@@ -712,6 +714,7 @@ class Grammar:
         self._tap.reset()
         self._tap_at = None
         self._tap_hist.clear()
+        self._bend_hist.clear()
         self._palm_since, self._palm_done = None, False
         self.focus_hold = None
         self._reset_ring()
@@ -814,12 +817,19 @@ class Grammar:
             return
 
         tap = self._update_tap(t, p)
+        # The fingertip's height over the index knuckle (palms, + = below it): it rises
+        # as the finger bends at the knuckle, a row or more before the finger curls.
+        height = float(p.hand.points[INDEX_TIP][1] - p.hand.points[INDEX_MCP][1]) / p.hand.size
+        self._bend_hist.append((t, height))
+        while self._bend_hist and self._bend_hist[0][0] < t - TIMING.tap_bend_s:
+            self._bend_hist.popleft()
+        bending = height - min(h for _, h in self._bend_hist) > TIMING.tap_bend
         # The cursor only follows the hand while it holds a shape of the level,
         # so closing the hand to focus doesn't drag the highlight along (nor a tap's curl).
-        if self.shape_levels.get(p.raw) == s.level and self._tap_at is None and tap != "tap":
+        if self.shape_levels.get(p.raw) == s.level and self._tap_at is None and tap != "tap" and not bending:
             s.cursor = self.cursor.update(p.hand.point(INDEX_TIP), t)
             s.scroll_rate = self.cursor.scroll_rate
-            self._tap_hist.append((t, s.cursor))
+            self._tap_hist.append((t, s.cursor, height))
             while self._tap_hist and self._tap_hist[0][0] < t - 1.0:
                 self._tap_hist.popleft()
         else:
@@ -856,10 +866,14 @@ class Grammar:
         got = self._tap.update(t, sum(p.feat.ext_ratio[i] for i in fingers) / len(fingers))
         if got == "down":
             self._tap_at = (shape, s.level)
-            back = [c for tt, c in self._tap_hist if tt <= (self._tap.up_t or t)]
-            if back and back[-1] != s.cursor:
-                s.cursor = back[-1]
-                self.log(t, "rewind", op="cursor", back_s=round(t - (self._tap.up_t or t), 3))
+            # Back to where the cursor was while the fingertip was still at its highest over the knuckle.
+            recent = [e for e in self._tap_hist if e[0] >= t - TIMING.tap_rewind_s]
+            if recent:
+                top = min(e[2] for e in recent)
+                back_t, back, _ = [e for e in recent if e[2] <= top + TIMING.tap_plateau][-1]
+                if back != s.cursor:
+                    s.cursor = back
+                    self.log(t, "rewind", op="cursor", back_s=round(t - back_t, 3))
         elif got == "tap" and self._tap_at is not None:
             shape_then, level_then = self._tap_at
             self._tap_at = None
@@ -880,6 +894,8 @@ class Grammar:
         its own can't be the sign here: pointing, the thumb often rests near the
         index tip (a third of the time within 0.9 palms)."""
         s = self.state
+        if self._tap_at is not None:  # a tap under way holds the cursor where it went back to
+            return
         if p.pinching:
             if not s.closing:
                 recent = [e for e in self._cursor_hist if e[0] >= t - OPS.rewind_max_s]

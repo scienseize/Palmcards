@@ -126,6 +126,17 @@ class Timing:
     tap_down: float = 1.05
     tap_down_frames: int = 3  # about 0.1 s: a 2-frame dip was a pinch flickering, in a recording
     tap_window_s: float = 0.6
+    # A tap starts with the finger bending at the knuckle while still straight, so
+    # the tip drops a row or more before the ratio above moves. The fingertip's
+    # height over the index knuckle (palms) says when: the cursor doesn't follow
+    # while it has dropped more than tap_bend within tap_bend_s, and a tap selects
+    # where the cursor was when it was last within tap_plateau of its highest in
+    # the tap_rewind_s before the curl. (On the user's recording 2026-11-27, the
+    # old rewind to the last straight frame landed 3-4 rows low.)
+    tap_bend: float = 0.2
+    tap_bend_s: float = 0.15
+    tap_plateau: float = 0.06  # steady pointing wobbles ~0.05 in the recordings; a bend starts above that
+    tap_rewind_s: float = 0.6
     drop_s: float = 1.0  # hand gone this long while focused = back out
     # The whole hand (its highest landmark) below this fraction of frame
     # height counts as gone. Not the wrist: at chest height the wrist is

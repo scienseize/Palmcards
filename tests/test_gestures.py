@@ -1173,18 +1173,31 @@ def test_a_tap_selects_at_every_level(shape, level):
     assert focus and focus[0].level == level and g.state.mode == "focus"
 
 
-def test_a_tap_selects_what_was_pointed_at_before_the_finger_moved():
-    g = Grammar((W, H))
-    _, t = run(g, hold(one, 0.5))
-    before = g.state.cursor
-    sinking = [one(origin=(960, 600 + 4 * k)) for k in range(1, 4)]  # the tip sinks as the finger starts to curl
-    events, t = run(g, sinking + hold(curled, 0.15) + hold(one, 0.2), t)
-    assert any(e.kind == "focus" for e in events)
-    assert np.allclose(g.state.cursor, before, atol=2.0)
-
-
 def test_an_open_palm_closing_and_opening_is_not_a_tap():
     g = Grammar((W, H))
     _, t = run(g, hold(two, 0.5) + hold(open_palm, 0.5))  # browsing by sentence, then a palm
     events, _ = run(g, hold(curled, 0.15) + hold(open_palm, 0.3), t)
     assert not any(e.kind == "focus" for e in events)
+
+
+def knuckle_bent(deg, **kw):
+    """One finger still straight but pivoting at its knuckle (by `deg`): the tip drops while
+    the finger's own extension hardly changes, as a tap starts in the recordings."""
+    mcp, a = np.array((-30.0, -95.0)), math.radians(deg)
+    tips = {}
+    for i, pt in ((6, (-30, -140)), (7, (-30, -170)), (8, (-30, -200))):
+        v = np.array(pt) - mcp
+        tips[i] = tuple(mcp + (v[0] * math.cos(a) - v[1] * math.sin(a), v[0] * math.sin(a) + v[1] * math.cos(a)))
+    return hand(tips, **kw)
+
+
+def test_a_tap_starting_at_the_knuckle_selects_the_word_before_it():
+    # Recorded 2026-11-27: the tip dropped 100 px in a frame while the finger read straight;
+    # the old rewind (to the last straight frame) selected a word 3-4 rows low.
+    g = Grammar((W, H))
+    _, t = run(g, hold(one, 0.6))
+    before = g.state.cursor
+    bend = [knuckle_bent(d) for d in (25, 45, 60)]
+    events, _ = run(g, bend + hold(curled, 0.15) + hold(one, 0.2), t)
+    assert any(e.kind == "focus" and e.level == "word" for e in events)
+    assert np.allclose(g.state.cursor, before, atol=0.01)  # hand-box units: a word is ~0.03 wide
