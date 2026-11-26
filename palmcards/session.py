@@ -1,4 +1,4 @@
-"""Sessions on disk: one folder per app run, a WAV per take, session.json.
+"""Sessions on disk: one folder per session (an unchanged notes file opened again continues its newest), a WAV per take, session.json.
 
   sessions/20260925-143000-sample_notes-3fa9c1/
       session.json              schema 2, see below

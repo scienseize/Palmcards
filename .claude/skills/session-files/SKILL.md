@@ -12,8 +12,9 @@ format reference.
 
 ```
 sessions/
-├── 20260925-101345-sample_notes-3fa9c1/  # one folder per app run: <start time>-<notes stem>-<random>, created exclusively
-│   ├── session.json                 # created with the first take; no takes, no folder
+├── 20260925-101345-sample_notes-3fa9c1/  # one folder per session: <start time>-<notes stem>-<random>, created exclusively;
+│   │                                #   the same, unchanged notes file opened again continues it (data.latest_session_for)
+│   ├── session.json                 # created with the first take, edit or LLM call; until then, no folder
 │   ├── session.lock                 # flock held by the process writing the session (released on exit or crash)
 │   ├── source/sample_notes.md       # the imported notes file, byte for byte
 │   ├── notes/r1a2b3c4d5e6f.json     # a notes revision: the parsed notes a take was recorded with (palmcards/revisions.py)
@@ -36,8 +37,6 @@ sessions/
 │   └── 20260925-101345.trace.jsonl  # only with `main.py --trace`: raw landmarks for offline replay
 └── screens/                         # `s` key screenshots
 ```
-
-`session.json`:
 
 `session.json`:
 
