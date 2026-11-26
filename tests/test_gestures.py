@@ -402,8 +402,7 @@ def test_pinching_a_word_focuses_the_word_pointed_at_before_the_curl():
     before = g.state.cursor
     events, t = run(g, curl_into_pinch(), t)
     assert [e.kind for e in events] == ["focus"]
-    assert g.state.cursor == before  # not dragged down by the curl
-    assert any(e["kind"] == "rewind" and e["op"] == "cursor" for e in g.log.entries)
+    assert g.state.cursor == before  # not dragged down by the curl: the cursor reads the knuckle, not the tip
 
 
 def test_a_pointing_thumb_resting_near_the_index_does_not_hold_the_cursor():

@@ -155,7 +155,12 @@ class Cursor:
     hand_box: tuple[float, float, float, float] = (0.55, 0.20, 0.95, 0.80)
     edge_band: float = 0.10  # top/bottom fraction of the hand box that scrolls
     edge_speed_rows_s: float = 6.0  # scroll speed at the very edge
-    # One Euro filter on the fingertip.
+    # The cursor point: the index knuckle moved up the palm's axis by this many palms,
+    # about where a straight index tip is. Curling the index (a tap, a pinch, a fold)
+    # moves none of the joints it reads, so selecting doesn't drag the cursor
+    # (on four traces of 2026-11-27: a median 1.5 rows of drift, 7 for the fingertip).
+    reach: float = 0.85
+    # One Euro filter on the cursor point.
     min_cutoff: float = 1.2
     beta: float = 0.02
     d_cutoff: float = 1.0

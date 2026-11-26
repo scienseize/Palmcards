@@ -495,8 +495,15 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return min(max(x, lo), hi)
 
 
+def cursor_point(hand: Hand) -> tuple[float, float]:
+    """Where the browse cursor reads the hand: the index knuckle, CURSOR.reach palms up
+    the palm's axis (wrist -> middle MCP). No fingertip, so a curl doesn't move it."""
+    x, y = hand.points[INDEX_MCP] + CURSOR.reach * (hand.points[MIDDLE_MCP] - hand.points[WRIST])
+    return float(x), float(y)
+
+
 class RelativeCursor:
-    """Smoothed fingertip -> (u, v) in the hand box, plus edge-scroll rate."""
+    """Smoothed cursor point -> (u, v) in the hand box, plus edge-scroll rate."""
 
     def __init__(self, frame_size: tuple[int, int]):
         w, h = frame_size
@@ -827,7 +834,7 @@ class Grammar:
         # The cursor only follows the hand while it holds a shape of the level,
         # so closing the hand to focus doesn't drag the highlight along (nor a tap's curl).
         if self.shape_levels.get(p.raw) == s.level and self._tap_at is None and tap != "tap" and not bending:
-            s.cursor = self.cursor.update(p.hand.point(INDEX_TIP), t)
+            s.cursor = self.cursor.update(cursor_point(p.hand), t)
             s.scroll_rate = self.cursor.scroll_rate
             self._tap_hist.append((t, s.cursor, height))
             while self._tap_hist and self._tap_hist[0][0] < t - 1.0:
