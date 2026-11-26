@@ -2405,7 +2405,7 @@ Tests: pytest (full) -> 681 passed. New: time line and Questions section parsing
   checks; over time names the section, on time went well; the round's coaching; with fake devices a full
   take is followed by its round (each answer a take with its question), and with Q&A off none is asked.
 Not checked: on the camera; whether 4 s to read a question is right; the AI's questions on a real pitch.
-  Left: the AI coach for a round of answers (it coaches pitch takes only).
+  Left: the AI coach for a round of answers (it coaches pitch takes only). Done the same day: see below.
 ```
 
 ```text
@@ -2426,4 +2426,20 @@ Tests: pytest (full) -> 686 passed. New: tests/test_progress.py (not ready under
   On the real sessions: sample_notes, 58 takes over 4 days, "Not ready yet: on time in 0 of the last 3
   takes" with a 1:00 target.
 Not checked: on the camera; whether the readiness bar (3 takes, 90%, 3 fillers a minute) feels right.
+```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: AI coach for a Q&A round (the follow-up left by stage D; the user: "Yes, build it")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: when the newest analysed take is a Q&A round's answer, an open palm held in Review asks the AI
+  coach about the round (Takes.latest_round, _ask_round): each question with its answer's transcript
+  (Q1:/A1:), the notes, each answer's length, first word and fillers, and the app's own note;
+  llm.answers_coach_request asks for the direct answer first, then one reason, under a minute. Offered once
+  nothing is still analysing; once per round (keyed by its last answer); the card shows it marked · AI.
+  Fixed: llm._tagged now defuses both the notes and the transcript tag in any tagged text (a "</notes>"
+  inside a transcript, or "</transcript>" inside the notes, stayed intact since stage C).
+Tests: pytest (full) -> 688 passed. New: the answers request keeps the round as data with neither tag
+  intact; the app sends each question with its answer and the measures, and shows the reply once.
+Not checked: on the camera, and the AI's coaching on real answers.
 ```

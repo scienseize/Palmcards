@@ -122,7 +122,8 @@ from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, normalize, notes_from_bytes
 from palmcards.edit import replace_text, replace_word
 from palmcards.preview import Previews
-from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, coach_request, describe, \
+from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, answers_coach_request, \
+    coach_request, describe, \
     get_provider, meaning_request, parse_coach, parse_meaning, parse_alternatives, parse_questions, parse_rewrite, \
     questions_request, rewrite_request
 from palmcards.render import (
@@ -964,7 +965,7 @@ class Takes:
                     view.scroll = overlay.scroll_to(view.current)
             view.summary = self._days if self.panel_view == "days" else self._summary
             a = self._advice
-            ai = None if (last_answer or 0) > (n or 0) else self.ai_advice.get(n)  # the AI coached the take, not the round
+            ai = self.ai_advice.get(self._coach_subject())  # the AI's, on the take or the round the card is about
             if self.panel_view != "coach" or a is None:
                 view.coach = ()
             elif ai is not None:  # the AI coach's, asked for with an open palm
@@ -1039,18 +1040,54 @@ class Takes:
                 "first_word_s": round(heard[0]["start"] - take.t_start, 2) if heard else None,
                 "fillers": len(alignment.get("fillers", []))}
 
+    def latest_round(self) -> list[int]:
+        """The newest Q&A round's answer takes, when the round is newer than every take of the notes."""
+        last = max(self.answers, default=None)
+        if last is None or last < (self.board.latest() or 0):
+            return []
+        since = max((t for t in self.board.takes if t < last), default=0)
+        return [m for m in sorted(self.answers) if m > since]
+
+    def _coach_subject(self) -> int | None:
+        """What the AI coach would be asked about: the newest take, or the newest round's last answer."""
+        return (self.latest_round() or [self.board.latest()])[-1]
+
     def coach_ready(self) -> bool:
-        """The AI coach can be asked about the newest take: there is an LLM, the take is
-        measured, and it hasn't been asked (or answered) yet."""
-        n = self.board.latest()
-        return self.assistant is not None and n is not None and n in self.board.metrics \
-            and n not in self.ai_advice and not self.assistant.asking("coach", (n,))
+        """The AI coach can be asked about the newest take (or round of answers): there is an
+        LLM, it is measured (a round: nothing still analysing), and it hasn't been asked yet."""
+        n = self._coach_subject()
+        if self.assistant is None or n is None or n in self.ai_advice or self.assistant.asking("coach", (n,)):
+            return False
+        return not self.analysis.pending if self.latest_round() else n in self.board.metrics
+
+    def _ask_round(self, t: float, numbers: list[int]) -> str:
+        """The AI coach on a Q&A round: each question and what was said in answer."""
+        pairs = []
+        for k, m in enumerate(numbers, 1):
+            take = self.session.take(m)
+            try:
+                words = json.loads((self.session.dir / take.transcript).read_text())["words"]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                return f"Couldn't read answer {k}'s transcript: {short(exc)}"
+            said = " ".join(w["text"].strip() for w in words) or "(nothing heard)"
+            pairs.append(f"Q{k}: {take.answer['question']}\nA{k}: {said}")
+        facts = "\n".join(f"Answer {k}: {coach.mmss(self.answers[m]['duration_s'])} long, first word after "
+                          + ("-" if self.answers[m]["first_word_s"] is None else f"{self.answers[m]['first_word_s']:.1f} s")
+                          + f", {self.answers[m]['fillers']} fillers" for k, m in enumerate(numbers, 1))
+        if self._advice is not None:
+            facts += f"\nThe app's own note: {self._advice.work}"
+        self.assistant.ask("coach", (numbers[-1],), self._llm_revision(),
+                           answers_coach_request(self.notes_text(), "\n\n".join(pairs), facts), parse_coach)
+        self.log(t, "llm", ask="coach", round=numbers)
+        return "Asking the AI coach about your answers…"
 
     def ask_coach(self, t: float) -> str:
-        """An open palm held in Review: the newest take, its transcript and measures, to the AI coach."""
-        n = self.board.latest()
+        """An open palm held in Review: the newest take (or round of answers) to the AI coach."""
         if not self.coach_ready():
             return ""
+        if numbers := self.latest_round():
+            return self._ask_round(t, numbers)
+        n = self.board.latest()
         take = self.session.take(n)
         try:
             words = json.loads((self.session.dir / take.transcript).read_text())["words"]
