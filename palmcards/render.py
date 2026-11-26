@@ -169,6 +169,8 @@ def review_hint(state: "ViewState") -> tuple[str, str]:
         long += ["Pinch and lift to practise it", DROP_HINT]
         short += ["Pinch + lift: practise", "Hand down: back"]
         return REVIEW_SEP.join(long), REVIEW_SEP.join(short)
+    if state.coach_ready:
+        return f"{FIST_HINT[0]} · Hold an open palm for AI coaching", f"{FIST_HINT[1]} · Palm: AI coach"
     return FIST_HINT
 KEYS_HELP = (
     "Keys, for when gestures won't do",
@@ -181,6 +183,7 @@ KEYS_HELP = (
     "E  Calibrate eyes at the next take",
     "M  Flip a replayed video (mirror or not)",
     "W  Fading cards on / off",
+    "I  Coach card or take table (in Review)",
     "C  High contrast     G  Show / hide tutorial",
     "L  Open another notes file   F  Full screen",
     "Enter  Skip a tutorial step",
@@ -421,6 +424,9 @@ class ViewState:
     drill: int | None = None  # count_in, rehearse: the one sentence a drill rehearses
     detail: tuple[str, ...] = ()  # Review focus: the lines under the sentence (a take each)
     summary: tuple[str, ...] = ()  # Review, browsing: the take table (palmcards.review), a line each
+    coach: tuple[tuple[str, str], ...] = ()  # Review, browsing: the coach card (palmcards.coach), (heading, text) rows
+    coach_ready: bool = False  # Review: an open palm held would ask the AI coach about the newest take
+    coach_progress: float = 0.0  # ... how far that hold has got
     panel_scroll: float = 0.0  # px into the focus panel's content (clamped when drawn)
     # The app's: the panel scrolls to panel_scroll sprung (follow_panel_scroll). None: at once.
     panel_motion: PanelMotion | None = None
@@ -778,6 +784,8 @@ class TextOverlay:
             second, progress = "Keep holding to undo", state.undo_progress
         elif state.retry_progress > 0:
             second, progress = "Keep holding to retry", state.retry_progress
+        elif state.coach_progress > 0:
+            second, progress = "Keep holding for AI coaching", state.coach_progress
         elif state.palm_progress > 0:
             second, progress = "Keep holding to stop", state.palm_progress
         elif state.drop_progress > 0 and state.mode == "focus":  # the hand is down: say what happens, and how not to
@@ -2121,7 +2129,9 @@ class TextOverlay:
             self._draw_alert(frame, state.alert, bottom, low)
         # Bottom right: the take table (Review, browsing), the first-run tutorial.
         self.summary_box = None
-        if state.app == "review" and state.summary and state.mode != "focus":
+        if state.app == "review" and state.coach and state.mode != "focus":
+            self._draw_coach(frame, state.coach)
+        elif state.app == "review" and state.summary and state.mode != "focus":
             self._draw_summary(frame, state.summary)
         if state.tutorial is not None:
             self._draw_tutorial(frame, *state.tutorial)
@@ -2205,6 +2215,28 @@ class TextOverlay:
         self._draw_glass(frame, (x - pad, y - pad, x + w + pad, y + h + pad))  # on glass, like the label and the notes
         _blend(frame, x, y, color, inv)
         self.summary_box = (x, y, x + w, y + h)
+
+    def _draw_coach(self, frame: np.ndarray, rows: tuple[tuple[str, str], ...]) -> None:
+        """The coach card at the bottom right, where the take table goes (key i swaps
+        them): each point's heading small and dim, its text in the label's state
+        face, wrapped to the hand zone, right-aligned like the tutorial card."""
+        small, big = self._label_face(2), self._label_face(1)
+        pad = round(GLASS.pad * self.line_h)
+        right = self.frame_w - SUMMARY.right - pad
+        width = right - LAYOUT.hand[0] * self.frame_w
+        lines = []
+        for heading, text in rows:
+            lines.append((heading, small, C.label_hint))
+            lines += [(row, big, C.orange if heading.startswith("Work on") else C.label_state)
+                      for row in self._wrap(text, big, width)]
+        y = self.frame_h - SUMMARY.bottom - pad - sum(f.line_h for _, f, _ in lines)
+        left = right - max(_text_w(f.font, row, f.tracking) for row, f, _ in lines)
+        self._draw_glass(frame, (left - pad, y - pad, right + pad, self.frame_h - SUMMARY.bottom))
+        self.summary_box = (left, y, right, self.frame_h - SUMMARY.bottom)
+        for row, f, color in lines:
+            ink = self._ink(row, f, color)
+            self._blend_ink(frame, ink, right - (ink[0].shape[1] - 2 * ink[2]), y)
+            y += f.line_h
 
     def _draw_tutorial(self, frame: np.ndarray, step: int, of: int, text: str) -> None:
         """One gesture at a time, at the bottom right under the hand box (it

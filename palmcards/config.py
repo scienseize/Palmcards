@@ -260,6 +260,19 @@ class Rehearse:
 
 
 @dataclass(frozen=True)
+class Coach:
+    """Review's coach card (palmcards.coach): one point per take."""
+    quote_words: int = 4  # a sentence is named by its first words
+    pause_s: float = 2.0  # a silence this long between two sentences is worth working on (a blank)
+    fillers_in_one: int = 2  # fillers in one sentence before it is worth working on
+    # Pace: a talk to an audience is usually 130-170 words a minute; outside, say so.
+    pace_low: int = 130
+    pace_high: int = 170
+    away_share: float = 0.3  # looking away from the screen more than this share of the speaking time
+    few_fillers: float = 2.0  # fillers a minute under this are worth saying went well
+
+
+@dataclass(frozen=True)
 class Fade:
     """Fading cards (palmcards.fade; preference `fade`, key w): in a take, a note
     word said in the newest takes that said its sentence, that many in a row,
@@ -517,6 +530,7 @@ class Llm:
     url: str = "http://localhost:11434"
     timeout_s: float = 20.0  # Ollama: a local model can take a while to load
     max_chars: int = 1200  # the most text a request carries
+    coach_max_chars: int = 6000  # the AI coach: the most of the notes, and of the take's transcript, each
     max_alternatives: int = 3  # word alternatives on the options ring
     cloud_model: str = "claude-haiku-4-5"
     cloud_timeout_s: float = 10.0  # per attempt
@@ -539,6 +553,7 @@ OPS = Ops()
 PREVIEW = Preview()
 KNOB = Knob()
 REHEARSE = Rehearse()
+COACH = Coach()
 RECORDING = Recording()
 VIDEO = Video()
 SPEECH = Speech()

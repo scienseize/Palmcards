@@ -2359,3 +2359,28 @@ Tests: pytest (full) -> 660 passed. New: the short count-in; AutoStop waits for 
 Not checked: on the camera; whether 2.5 s is right for a pitch's last line (a long pause before the
   final sentence's last words would stop it), and the noise floor on the real microphone.
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: Rehearse/Review plan, stage C: coach card (the user checked stage B: "Works")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: CLAUDE.md's "Feedback is observations only ... Nothing is judged" rule is replaced (the user's
+  decision: coaching is fine): one coaching point per take, from the measures only, never on accent.
+  palmcards/coach.py advise(board, n): Went well (largest gain over the take before, else what is good),
+  Work on (first that applies: a sentence left out, not reached, the longest silence before a sentence
+  over COACH.pause_s, a restart, fillers in one sentence, pace outside 130-170, looking away), Next (drill
+  that sentence, else a full run or fading cards). Drills coached against earlier takes of their
+  sentence. metrics v6 adds pause_before_s per sentence (the longest silence between words before it;
+  a restart in between is not silence). Board keeps restarts per sentence. Review: the card sits bottom
+  right while nothing is focused (key i swaps it with the take table); the sentence named becomes the
+  current one and scrolls into view. AI coach: an open palm held with nothing focused (ModeMachine.
+  coach_hold, armed by the app; not while analysis failed) sends the newest take's transcript, the notes
+  and its measures (llm.coach_request, both tagged as data, LLM.coach_max_chars each); parse_coach checks
+  three short sentences; the card shows them marked "· AI". Once per take.
+Tests: pytest (full) -> 674 passed (see below). New: tests/test_coach.py (left out, not reached, a pause
+  before a section, a restart, went well over the take before, a clean take, a drill); the coach request
+  keeps notes and transcript as data and is bounded, answers are checked; the app asks once and shows
+  the answer; no LLM, no offer; an open palm held in Review asks once, and retries instead after failure.
+Not checked: on the camera; whether the rules pick what the speaker would pick; the AI coach's answers on
+  a real take (cost: one call per palm, logged in llm-usage.jsonl).
+```

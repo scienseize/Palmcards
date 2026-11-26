@@ -51,7 +51,7 @@ from palmcards.notes import normalize
 from palmcards.prosody import Prosody
 
 VERSION = 6  # 2: gaze; 3: posture, hands, face touches; 4: speech per sentence, voice; 5: long pauses, all of them;
-# 6: key points (sentences said, own words included), own-words sentences counted in pace
+# 6: key points (sentences said, own words included), own-words sentences counted in pace, pause_before_s
 
 
 def _none(reason: str) -> dict:
@@ -141,6 +141,16 @@ def speech(alignment: dict, words: list[dict], duration_s: float, lost=()) -> di
     out["restarts"] = {"value": len(alignment["restarts"]), "basis": "phrases said again"}
     out["ad_libs"] = {"value": len(alignment["extras"]), "basis": "runs of words not in the notes"}
     out["sentences"] = sentence_speech(alignment, lost)
+    # The longest silence between words from the sentence said before to this one's first word:
+    # a blank before it (a restart in between doesn't count as silence).
+    timed = sorted((s for s in alignment["sentences"] if s["start"] is not None), key=lambda s: s["start"])
+    before = {}
+    for p, s in zip(timed, timed[1:]):
+        silent = [g for g, b in gaps if p["end"] < words[b]["start"] <= s["start"] + 1e-6]
+        before[s["sentence"]] = round(max(silent, default=0.0), 2)
+    for entry in out["sentences"]:
+        if entry["sentence"] in before:
+            entry["pause_before_s"] = before[entry["sentence"]]
     return out
 
 

@@ -1403,6 +1403,8 @@ class ModeMachine:
         self.undo_ready = False
         self.undo_hold = PoseHold(VICTORY)  # Prepare: a V sign, held, undoes the last edit
         self.back_hold = PoseHold(VICTORY)  # Review: a V sign, held, goes back to Prepare
+        self.coach_ready = False  # set by the app: the AI coach can be asked about the newest take
+        self.coach_hold = PoseHold(OPEN)  # Review, nothing focused: an open palm, held, asks the AI coach
         self.retry_ready = False
         self.retry_progress = 0.0
         self._retry_since: float | None = None
@@ -1441,6 +1443,11 @@ class ModeMachine:
                 self.log(t, "retry")
             # A V sign, held as long as a fist, goes back to Prepare (a thumbs-up does nothing:
             # it is "stop" in a take, and one read as a fist could start a take).
+            # An open palm, held as long as a fist, with nothing focused: the AI coach (failed analysis: retry).
+            if self.coach_hold.update(present, t, REHEARSE.start_hold_s,
+                                      armed=self.coach_ready and not self.retry_ready and not focused):
+                self.log(t, "coach")
+                events.append(GestureEvent("coach", t))
             if self.back_hold.update(present, t, REHEARSE.start_hold_s, armed=not focused):
                 self.log(t, "done", mode=self.mode, pose=VICTORY)
                 events.append(GestureEvent("to_prepare", t))
@@ -1459,6 +1466,10 @@ class ModeMachine:
     @property
     def undo_progress(self) -> float:
         return self.undo_hold.progress
+
+    @property
+    def coach_progress(self) -> float:
+        return self.coach_hold.progress
 
     @property
     def back_progress(self) -> float:
@@ -1563,6 +1574,7 @@ class ModeMachine:
         self.done.reset(release=any(tr.feat is not None and is_ok_sign(tr.feat) for tr in live))
         self.undo_hold.reset(release=any(tr.stable == VICTORY for tr in live))
         self.back_hold.reset(release=any(tr.stable == VICTORY for tr in live))
+        self.coach_hold.reset(release=any(tr.stable == OPEN for tr in live))
         for track in tracks:
             track.first_pose = CARRIED
         self._fist_since, self.start_progress = None, 0.0

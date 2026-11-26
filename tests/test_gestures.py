@@ -1210,3 +1210,16 @@ def test_a_tap_starting_at_the_knuckle_selects_the_word_before_it():
     events, _ = run(g, bend + hold(curled, 0.15) + hold(one, 0.2), t)
     assert any(e.kind == "focus" and e.level == "word" for e in events)
     assert np.allclose(g.state.cursor, before, atol=0.01)  # hand-box units: a word is ~0.03 wide
+
+
+def test_an_open_palm_held_in_review_asks_the_ai_coach_once():
+    m = ModeMachine((W, H))
+    m.enter("review", 0.0)
+    m.coach_ready = True
+    events, t = run(m, hold(open_palm, 1.3))
+    assert kinds(events) == ["coach"]
+    events, t = run(m, hold(open_palm, 1.3), t)  # held on: not again
+    assert events == []
+    m.retry_ready = True  # failed analysis: the palm retries instead
+    events, t = run(m, [None] * 20 + hold(open_palm, 1.3), t)
+    assert "coach" not in kinds(events)

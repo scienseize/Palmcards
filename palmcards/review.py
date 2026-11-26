@@ -1,7 +1,8 @@
 """Review's view of the analysed takes: how each went, side by side.
 
-Nothing is judged: the takes are compared with one another on what was
-measured (palmcards.metrics). While browsing, the take table sets the last
+The board compares, it doesn't judge: the takes are set against one another
+on what was measured (palmcards.metrics); the coaching (one point per take)
+is palmcards.coach's, from these same measures. While browsing, the take table sets the last
 few full takes side by side (length, pace, fillers, long pauses, restarts,
 pitch range, gaze, face touches, posture). A focused sentence lists every
 take that said it, drills included, with that sentence's pace, fillers,
@@ -36,6 +37,7 @@ class Board:
         self.picked: dict[int, int] = {}  # sentence -> take chosen by pointing
         self.said: dict[int, dict[int, tuple[bool, ...]]] = {}  # take -> sentence it said -> which words
         self.memory: dict[int, float] = {}  # take -> share of its hidden words said unprompted (fading cards)
+        self.restarts: dict[int, dict[int, int]] = {}  # take -> sentence -> phrases said again in it
 
     @property
     def takes(self) -> list[int]:
@@ -62,6 +64,10 @@ class Board:
                        "start": a.get("start"), "end": a.get("end"),
                        "said_words": sum(w is not None for w in a.get("words", []))}
         self.rows[number] = rows
+        self.restarts[number] = {}
+        for r in alignment.get("restarts", []):
+            if (i := place(r["sentence"])) is not None:
+                self.restarts[number][i] = self.restarts[number].get(i, 0) + 1
         self.said[number] = {}
         for a in alignment["sentences"]:
             i, words = place(a["sentence"]), a.get("words", [])

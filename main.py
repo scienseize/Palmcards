@@ -113,7 +113,7 @@ import numpy as np
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import ANALYSIS, BODY, FADE, FOLLOW, LLM, RECORDING, REHEARSE, SPEECH
-from palmcards import fade, features, gaze
+from palmcards import coach, fade, features, gaze
 from palmcards import prefs as preferences
 from palmcards import render
 from palmcards.gestures import FIST, OPEN, THUMB_UP, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
@@ -121,8 +121,8 @@ from palmcards.tutorial import Tutorial
 from palmcards.notes import Notes, notes_from_bytes
 from palmcards.edit import replace_text, replace_word
 from palmcards.preview import Previews
-from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, describe, get_provider, \
-    meaning_request, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
+from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, coach_request, describe, \
+    get_provider, meaning_request, parse_coach, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
 from palmcards.render import (
     UNDO_HINT, FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_replay_hint,
@@ -382,6 +382,9 @@ class Takes:
         self.board = Board(notes)  # the analysed takes, side by side, for Review
         self.drill: int | None = None  # the sentence the current count-in or take drills
         self._summary_key, self._summary = None, ()  # Review's take table, and what it was made from
+        self._advice = None  # the coach's advice for the newest take (palmcards.coach)
+        self.ai_advice: dict[int, tuple[str, str, str]] = {}  # take -> the AI coach's (well, work, next)
+        self.show_table = False  # Review shows the take table instead of the coach card (key i)
         self.vision: Watcher | None = None  # face and pose (milestone 7); run() opens it
         self.vision_off = "face and pose tracking not opened"  # why there is none
         self.calibrate_next = False  # e: calibrate the eyes again at the next count-in
@@ -485,7 +488,7 @@ class Takes:
     # --- the optional LLM: requests from explicit actions, answers as previews ---
 
     LLM_WHAT = {"meaning": "the meaning", "alternatives": "other words", "tone": "a new tone",
-                "length": "a new length"}
+                "length": "a new length", "coach": "AI coaching"}
 
     @property
     def no_llm(self) -> str:
@@ -649,6 +652,10 @@ class Takes:
                 continue
             if a.kind == "alternatives":
                 self.alternatives[a.key] = tuple(a.value)
+                continue
+            if a.kind == "coach":
+                self.ai_advice[a.key[0]] = a.value
+                note = "The AI coach's notes are on the card"
                 continue
             self.proposals[a.key] = (a.kind, a.value, a.value)
             note = "A suggestion is ready: select it again to see it"
@@ -882,13 +889,56 @@ class Takes:
         else:
             view.detail, view.playable = self.board.detail(focused), bool(said)
         n = self.board.latest()
-        if focused is None and n is not None:  # the take table, made again when a take arrives
+        if focused is None and n is not None:  # the take table and the coach, made again when a take arrives
             key = (n, n in self.board.metrics, id(self.board))
             if key != self._summary_key:
                 self._summary_key, self._summary = key, self.board.take_table()
+                self._advice = coach.advise(self.board, n)
+                # The sentence to practise is the current one (orange), in view, ready to select.
+                if self._advice is not None and self._advice.sentence is not None and overlay is not None \
+                        and gs.mode == "idle":
+                    view.current = self._advice.sentence
+                    view.scroll = overlay.scroll_to(view.current)
             view.summary = self._summary
+            a, ai = self._advice, self.ai_advice.get(n)
+            if self.show_table or a is None:
+                view.coach = ()
+            elif ai is not None:  # the AI coach's, asked for with an open palm
+                view.coach = (("Went well · AI", ai[0]), ("Work on · AI", ai[1]), ("Next · AI", ai[2]))
+            else:
+                view.coach = (("Went well", a.well), ("Work on", a.work), ("Next", a.next))
         else:
-            view.summary = ()
+            view.summary, view.coach = (), ()
+
+    def coach_ready(self) -> bool:
+        """The AI coach can be asked about the newest take: there is an LLM, the take is
+        measured, and it hasn't been asked (or answered) yet."""
+        n = self.board.latest()
+        return self.assistant is not None and n is not None and n in self.board.metrics \
+            and n not in self.ai_advice and not self.assistant.asking("coach", (n,))
+
+    def ask_coach(self, t: float) -> str:
+        """An open palm held in Review: the newest take, its transcript and measures, to the AI coach."""
+        n = self.board.latest()
+        if not self.coach_ready():
+            return ""
+        take = self.session.take(n)
+        try:
+            words = json.loads((self.session.dir / take.transcript).read_text())["words"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return f"Couldn't read take {n}'s transcript: {short(exc)}"
+        transcript = " ".join(w["text"].strip() for w in words)
+        notes = "\n\n".join((f"# {sec.title}\n" if sec.title else "") + " ".join(s.text for s in sec.sentences)
+                             for sec in self.notes.sections)
+        if n in self.board.drills:
+            notes += f"\n\n(This take practised one sentence: {self.notes.sentences[self.board.drills[n]].text})"
+        rows = self.board.take_table(1)
+        facts = "\n".join(line.strip() for line in rows[1:]) if rows else ""
+        if self._advice is not None:
+            facts += f"\nThe app's own note: {self._advice.work}"
+        self.assistant.ask("coach", (n,), self._llm_revision(), coach_request(notes, transcript, facts), parse_coach)
+        self.log(t, "llm", ask="coach", take=n)
+        return "Asking the AI coach…"
 
     def on_transcribed(self, result: dict) -> str:
         """A take's transcript and alignment arrived. Returns a label note."""
@@ -947,6 +997,8 @@ class Takes:
             view.hover = view.focus = None
             view.mode, view.level, view.ops = "idle", None, OpsView()
             return ""
+        if ev.kind == "coach":
+            return self.ask_coach(ev.t)
         if ev.kind == "to_prepare":
             view.hover = view.focus = None
             view.mode, view.level, view.ops = "idle", None, OpsView()
@@ -1793,6 +1845,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             modes.undo_ready = modes.mode == "prepare" and takes.can_undo()
             modes.quick_count_in = takes.quick_count_in()
             modes.retry_ready = modes.mode == "review" and bool(takes.analysis.failed())
+            modes.coach_ready = modes.mode == "review" and takes.coach_ready()
             events = modes.update(*result)
             if takes.vision is not None:
                 takes.vision.hands(*result)
@@ -1840,6 +1893,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             if takes.vision is not None and modes.mode == "count_in" else None
         view.hold_progress = modes.back_progress if modes.mode == "review" else modes.done.progress
         view.retry_progress, view.undo_ready = modes.retry_progress, modes.mode == "prepare" and takes.can_undo()
+        view.coach_ready = modes.mode == "review" and takes.coach_ready() and not takes.analysis.failed()
+        view.coach_progress = modes.coach_progress if modes.mode == "review" else 0.0
         view.undo_progress = modes.undo_progress if modes.mode == "prepare" else 0.0
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
         if modes.mode in ("prepare", "review") and result is not None:
@@ -1993,6 +2048,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             preferences.save(prefs, prefs_file)
             view.note = "Replays are mirrored" if prefs.replay_mirrored else "Replays show you as others see you"
             note_until = time.perf_counter() + NOTE_S
+        elif key == ord("i") and view.app == "review":  # the coach card, or the take table
+            takes.show_table = not takes.show_table
+            view.note, note_until = ("Take table" if takes.show_table else "Coach card"), time.perf_counter() + NOTE_S
         elif key == ord("w") and view.app in ("prepare", "review"):  # fading cards, from the next take
             prefs.fade = takes.fade_on = not prefs.fade
             preferences.save(prefs, prefs_file)
