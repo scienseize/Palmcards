@@ -84,6 +84,9 @@ THUMB_UP = "THUMB_UP"
 THUMB_DOWN = "THUMB_DOWN"
 VICTORY = "VICTORY"  # a V sign, index and middle out and apart: undo (Prepare), back to Prepare (Review)
 CARRIED = "CARRIED"  # not a pose: HandTrack.first_pose of a hand in view across a mode change
+# Poses that do something: once a hand raised as a fist holds one (past HOLD_GRACE_S), its fist no longer starts a take.
+# Not NONE, THUMB_UP or THUMB_DOWN: a raised fist is misread as those now and then.
+WORKING_POSES = frozenset((ONE, TWO, FLAT, OPEN, L, PINCH, VICTORY))
 # Every hold (a fist to start, the OK sign for done, a V sign for undo or back, an open palm to hear, play, stop,
 # open the ring or retry) forgives the same misreadings in the middle and completes only on a
 # frame that reads its pose (or, with the hand lost, none). The OK sign reads each frame's features,
@@ -360,7 +363,8 @@ class HandTrack:
         self.raw = NONE
         self.stable = NONE
         # First stable pose other than NONE since the hand came into view: a
-        # take starts only from a fist raised as such, not one formed mid-gesture.
+        # take starts only from a fist raised as such, with no other gesture
+        # since (a working pose after it replaces it), not one formed mid-gesture.
         # CARRIED once the mode changes with the hand in view (ModeMachine._enter):
         # that hand came into view for something else, so its fist is formed, not raised.
         self.first_pose: str | None = None
@@ -396,6 +400,11 @@ class HandTrack:
             if self.first_pose is None and self.stable != NONE:
                 self.first_pose = self.stable
             events.append("pose")
+        if self.first_pose == FIST and self.stable in WORKING_POSES and self.held(t) > HOLD_GRACE_S:
+            # A hand raised as a fist that then browses (a flat hand, say) and closes again is
+            # folding, not raising a fist: it started takes by mistake. Held past the grace, so
+            # not a misread in the middle of a raised fist's hold.
+            self.first_pose = self.stable
 
         # FOLD: from TWO or FLAT, the extended fingertips converge on the
         # thumb quickly. The folding hand passes through NONE and PINCH, so

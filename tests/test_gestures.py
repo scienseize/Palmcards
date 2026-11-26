@@ -695,6 +695,15 @@ def test_fist_formed_from_another_pose_does_not_start_a_take():
         assert "count_in" not in kinds(events) and m.start_progress == 0.0, before.__name__
 
 
+def test_a_raised_fist_that_browses_then_closes_does_not_start_a_take():
+    # Seen live (2026-11-26): the hand came back up curled, opened to browse a paragraph,
+    # closed to focus it, and the fold, missed, started a take.
+    for between in (one, two, flat):
+        m = ModeMachine((W, H))
+        events, _ = run(m, hold(fist, 0.3) + hold(between, 0.5) + hold(fist, 1.5))
+        assert "count_in" not in kinds(events) and m.start_progress == 0.0, between.__name__
+
+
 def test_drop_the_hand_then_raise_a_fist_starts_a_take():
     m = ModeMachine((W, H))
     _, t = run(m, hold(one, 0.5) + hold(fist, 1.5))

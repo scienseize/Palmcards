@@ -79,6 +79,10 @@ def test_hints_say_why_a_gesture_did_nothing():
     formed = state(FIST, first=PINCH, mode="browse")
     assert main.nonactivation_hint("prepare", formed, 0.0) == main.FIST_HINT
     assert main.nonactivation_hint("prepare", state(FIST, first=FIST), 0.0) == ""  # a real start
+    # Browsing sentences or paragraphs, a fist is a fold made too slowly: say how to focus.
+    for level in ("sentence", "paragraph"):
+        assert main.nonactivation_hint("prepare", state(FIST, first="FLAT", mode="browse", level=level), 0.0) \
+            == main.FOLD_HINT
     # A fold or a slow pinch passes through a fist on its way to a focus: only a fist held says so.
     formed.primary.held = lambda t: t
     assert main.nonactivation_hint("prepare", formed, 0.0, t=0.3) == ""

@@ -32,8 +32,8 @@ that closes into a fist (its first pose is `CARRIED`).
 
 | Grammar state | Gesture | Condition, hold | Action | Hint on screen |
 |---|---|---|---|---|
-| idle | `FIST` raised into view (its first pose) | held 1.0 s | count-in (a take) | `RAISE A FIST: NEW TAKE`; while held `NEW TAKE: HOLD` and a bar |
-| idle, browse | `FIST` formed from another pose, or by a hand up across a mode change | held 0.6 s | nothing; a hint (at most every 6 s) | `NEW TAKE: DROP THE HAND, RAISE A FIST` |
+| idle | `FIST` raised into view (its first pose, no working pose held since) | held 1.0 s | count-in (a take) | `RAISE A FIST: NEW TAKE`; while held `NEW TAKE: HOLD` and a bar |
+| idle, browse | `FIST` formed from another pose, or by a hand up across a mode change | held 0.6 s | nothing; a hint (at most every 6 s) | `NEW TAKE: DROP THE HAND, RAISE A FIST`; browsing sentences or paragraphs `FOLD IN ONE QUICK MOVE: FOCUS` |
 | idle, browse, an edit made | `VICTORY` (a V sign) | held 1.0 s, once per hold (one that left Review must come down first) | undo the last edit | idle: `V SIGN: UNDO`; after an edit `… / V SIGN: UNDO`; `UNDO: HOLD` + bar |
 | idle, browse | `THUMB_UP`, `THUMB_DOWN` | – | nothing | – |
 | idle, browse | `ONE` / `TWO` / `FLAT` | 0.15 s | browse by word / sentence / paragraph (a change of shape changes the level) | idle: `FINGER UP: BROWSE`; browse: the other levels' shapes |

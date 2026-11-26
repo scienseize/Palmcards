@@ -237,6 +237,7 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
 
 
 FIST_HINT = "NEW TAKE: DROP THE HAND, RAISE\u00a0A\u00a0FIST"  # it wraps at the comma, not before "A FIST"
+FOLD_HINT = "FOLD IN ONE QUICK MOVE: FOCUS"  # a slow fold closes into a fist: no focus, and no take
 PALM_HINT = {"rehearse": "A PALM DOESN'T STOP A TAKE", "count_in": "A PALM DOESN'T CANCEL"}
 THUMB_HINT = {"rehearse": "A THUMBS-UP DOESN'T STOP A TAKE", "count_in": "A THUMBS-UP DOESN'T CANCEL"}
 HINT_DWELL_S = 0.6  # a gesture that does nothing held this long before its hint (a fist formed from
@@ -255,7 +256,7 @@ def nonactivation_hint(mode: str, gs, open_s: float, t: float | None = None) -> 
         return ""
     if mode in ("prepare", "review") and p.stable == FIST and p.first_pose != FIST and gs.mode != "focus" \
             and (t is None or p.held(t) >= FIST_HINT_S):
-        return FIST_HINT
+        return FOLD_HINT if gs.mode == "browse" and gs.level in ("sentence", "paragraph") else FIST_HINT
     if mode in ("count_in", "rehearse") and p.stable == OPEN and open_s > HINT_DWELL_S:
         return PALM_HINT[mode]
     if mode in ("count_in", "rehearse") and p.stable == THUMB_UP and t is not None and p.held(t) >= HINT_DWELL_S:
@@ -1763,7 +1764,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         # A gesture hint belongs to the mode it was about: a take stopping (the palm hint)
         # or a focus (a fist seen on the way into it) takes it away at once.
         focused = view.mode == "focus" or any(ev.kind == "focus" for ev in events)
-        if hint_note and view.note == hint_note and (modes.mode != hint_mode or hint_note == FIST_HINT and focused):
+        if hint_note and view.note == hint_note and (modes.mode != hint_mode or hint_note in (FIST_HINT, FOLD_HINT) and focused):
             view.note, note_until, hint_note = "", None, ""
         if takes.notes_version != notes_seen:  # an edit or undo: lay the new notes out
             notes_seen = takes.notes_version
