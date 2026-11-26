@@ -94,3 +94,33 @@ def test_a_drill_is_coached_against_the_takes_before_it():
 
 def test_nothing_is_advised_before_the_take_is_analysed():
     assert advise(Board(NOTES), 1) is None
+
+
+def test_over_time_names_the_section_most_over_its_budget():
+    from palmcards.coach import budgets
+    b = Board(NOTES)
+    # The first section runs long: 4 s of silence inside it.
+    add(b, 1, ALL.replace("heads. |", "heads. | | | | |"))
+    length = b.durations[1]
+    a = advise(b, 1, target_s=length - 6)
+    assert a.work.startswith("Over time by 0:06: “Problem” ran") and a.sentence == 0
+    assert "Tighten it in Prepare" in a.next
+    assert sum(budgets(NOTES, 60)) == 60
+
+
+def test_on_time_is_what_went_well():
+    b = Board(NOTES)
+    add(b, 1, ALL)
+    assert advise(b, 1, target_s=b.durations[1] + 2).well.startswith("On time:")
+
+
+def test_a_qa_round_is_coached_on_its_longest_or_slowest_answer():
+    from palmcards.coach import advise_answers
+    long = advise_answers([{"question": "Why now and not five years ago?", "duration_s": 84, "first_word_s": 1.0,
+                            "fillers": 1}, {"question": "Who pays?", "duration_s": 20, "first_word_s": 0.6, "fillers": 0}])
+    assert long.work.startswith("Your answer to “Why now and not…” ran 1:24")
+    slow = advise_answers([{"question": "Who pays?", "duration_s": 30, "first_word_s": 4.2, "fillers": 0}])
+    assert slow.work.startswith("You took 4.2 s to start") and slow.well == "1 answer under 1:00"
+    good = advise_answers([{"question": "Who pays?", "duration_s": 30, "first_word_s": 0.8, "fillers": 0}] * 2)
+    assert good.work.startswith("Short, direct answers") and good.well == "All 2 answers under 1:00"
+    assert advise_answers([]) is None

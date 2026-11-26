@@ -58,6 +58,10 @@ class Notes:
     sections: list[Section]
     source: Path | None = None
     warnings: list[str] = field(default_factory=list)
+    # From the file, not part of the talk: a "Time: 3:00" line (the target length, seconds)
+    # and a section headed "Questions" (or "Q&A"): the questions to practise answering.
+    target_s: float | None = None
+    questions: list[str] = field(default_factory=list)
 
     @property
     def sentences(self) -> list[Sentence]:
@@ -202,11 +206,27 @@ def _docx_blocks(data: bytes) -> list[Block]:
     return blocks
 
 
+TIME_LINE = re.compile(r"^\s*(?:time|target|length)\s*:\s*(\d{1,2}):([0-5]\d)\s*$", re.IGNORECASE)
+QUESTIONS_HEADING = re.compile(r"^\s*(?:(?:likely|anticipated|practice)\s+)?(?:questions|q\s*&\s*a|q\s*and\s*a)\s*:?\s*$",
+                               re.IGNORECASE)
+
+
 def build_notes(blocks: list[Block], source: Path | None = None) -> Notes:
     notes = Notes(sections=[Section("")], source=source)
     paragraph = -1
     ignored: list[int] = []
+    asking = False  # inside the Questions section: its lines are questions, not the talk
     for kind, text in blocks:
+        if kind == "para" and notes.target_s is None and (m := TIME_LINE.match(text)):
+            notes.target_s = float(int(m.group(1)) * 60 + int(m.group(2)))
+            continue
+        if kind == "heading":
+            asking = bool(QUESTIONS_HEADING.match(text))
+            if asking:
+                continue
+        if asking and kind == "para":
+            notes.questions += [q.lstrip("-*• ").strip() for q in split_sentences(text) if q.strip(" -*•")]
+            continue
         current = notes.sections[-1]
         if kind in ("heading", "break"):
             if current.sentences or current.title:

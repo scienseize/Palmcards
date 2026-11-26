@@ -471,3 +471,35 @@ def test_a_take_without_the_end_reached_does_not_end_itself(tmp_path, monkeypatc
     rig = Rig(tmp_path, monkeypatch, keys={120: ord("q")})  # FakeLive hears nothing
     assert rig.run() == 0
     assert '"auto_stop"' not in (tmp_path / "log.jsonl").read_text()
+
+
+def test_after_a_full_take_the_qa_round_records_each_answer_as_a_take(tmp_path, monkeypatch):
+    import json as json_
+    from dataclasses import replace
+
+    monkeypatch.setattr(main, "QA", replace(main.QA, gap_s=0.0))
+    monkeypatch.setattr(main.Takes, "questions", lambda self: ["Why now?", "Who pays?"])
+    script = {**TAKE, 20: ("take_stop", "review"),
+              30: ("take_start", "rehearse"), 45: ("take_stop", "review"),  # the first answer
+              55: ("take_start", "rehearse"), 70: ("take_stop", "review")}  # the second
+    rig = Rig(tmp_path, monkeypatch, script=script, keys={110: ord("q")})
+    rig.prefs_file.write_text(json_.dumps({"qa": True, "tutorial_done": True}))
+    assert rig.run() == 0
+    takes = rig.session().takes
+    assert [t.number for t in takes] == [1, 2, 3]
+    assert takes[0].answer is None
+    assert takes[1].answer == {"question": "Why now?", "index": 1, "of": 2}
+    assert takes[2].answer == {"question": "Who pays?", "index": 2, "of": 2}
+    rig.assert_closed_once()
+
+
+def test_with_qa_off_no_questions_follow_a_take(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    monkeypatch.setattr(main, "QA", replace(main.QA, gap_s=0.0))
+    monkeypatch.setattr(main.Takes, "questions", lambda self: ["Why now?"])
+    script = {**TAKE, 20: ("take_stop", "review"), 30: ("take_start", "rehearse"), 45: ("take_stop", "review")}
+    rig = Rig(tmp_path, monkeypatch, script=script, keys={80: ord("q")})
+    assert rig.run() == 0
+    assert all(t.answer is None for t in rig.session().takes)
+    assert '"qa_question"' not in (tmp_path / "log.jsonl").read_text()

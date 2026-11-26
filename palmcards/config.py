@@ -270,6 +270,22 @@ class Coach:
     pace_high: int = 170
     away_share: float = 0.3  # looking away from the screen more than this share of the speaking time
     few_fillers: float = 2.0  # fillers a minute under this are worth saying went well
+    # Over the target length by more than this (seconds, or share of the target, the larger) is worth working on;
+    # within it either way is on time.
+    over_s: float = 5.0
+    over_share: float = 0.05
+
+
+@dataclass(frozen=True)
+class QA:
+    """The Q&A round (key y, preference qa): after a full take, practice questions one
+    at a time, each answered aloud as a take of its own (an answer)."""
+    per_round: int = 3  # questions after each full take, the least answered first
+    gap_s: float = 1.5  # after a take stops, before the first question (the take finishes saving)
+    read_s: float = 4.0  # the question on screen before recording starts: time to read it, not to prepare
+    answer_max_s: float = 60.0  # an answer longer than this is worth working on: the answer first, then one reason
+    slow_start_s: float = 3.0  # silence before the first word longer than this is worth working on
+    max_questions: int = 8  # the most the AI suggests
 
 
 @dataclass(frozen=True)
@@ -554,6 +570,7 @@ PREVIEW = Preview()
 KNOB = Knob()
 REHEARSE = Rehearse()
 COACH = Coach()
+QA = QA()
 RECORDING = Recording()
 VIDEO = Video()
 SPEECH = Speech()

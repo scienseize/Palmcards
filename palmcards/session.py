@@ -115,6 +115,9 @@ class TakeRecord:
     # Fading cards (palmcards.fade) during the take: {"hidden": [[sentence, word], ...] blanked
     # at its start, "prompted": the ones the stall prompt brought back}, in its revision's indices.
     fade: dict | None = None
+    stopped: str | None = None  # "auto": it ended itself in quiet at the end (palmcards.follow.AutoStop)
+    # An answer to a practice question (the Q&A round after a take): {"question", "index", "of"}.
+    answer: dict | None = None
 
     @property
     def silent(self) -> bool:
@@ -158,6 +161,8 @@ class Session:
     damaged: list[str] = field(default_factory=list)  # recording manifests recover() could not read
     current: str | None = None  # the notes revision in use (None: the latest); undo moves it back
     calibrations: list[dict] = field(default_factory=list)  # gaze/posture baselines, oldest first
+    target_s: float | None = None  # the talk's target length, set with keys [ and ] (else the notes' Time: line)
+    questions: list[str] = field(default_factory=list)  # practice questions the AI suggested (key y)
     _loaded_schema: int = SCHEMA
     _parsed: Notes | None = None  # notes of the pending first revision, until the folder exists
     _source_bytes: bytes | None = None
@@ -216,7 +221,7 @@ class Session:
             Path(data["notes"]), folder, data.get("gesture_log"), takes, data.get("language", "en"),
             id=data.get("id", ""), source=data.get("source"), revisions=data.get("revisions", []),
             schema=SCHEMA, current=data.get("current"), calibrations=data.get("calibrations", []),
-            _loaded_schema=schema,
+            target_s=data.get("target_s"), questions=data.get("questions", []), _loaded_schema=schema,
         )
         session.orphans = session._find_orphans()
         return session
@@ -521,6 +526,7 @@ class Session:
             sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
             status=status, capture=capture, live=manifest.get("live"), vision=manifest.get("vision"),
             gaze_check=manifest.get("gaze_check"), video=manifest.get("video"), fade=manifest.get("fade"),
+            stopped=manifest.get("stopped"), answer=manifest.get("answer"),
         )
         self.takes = [t for t in self.takes if t.number != take.number] + [take]
         self.takes.sort(key=lambda t: t.number)
@@ -590,6 +596,8 @@ class Session:
             "gesture_log": self.gesture_log,
             "language": self.language,
             "calibrations": self.calibrations,
+            **({"target_s": self.target_s} if self.target_s else {}),
+            **({"questions": self.questions} if self.questions else {}),
             # Fields a take doesn't have yet are left out, not written as null.
             "takes": [{k: v for k, v in asdict(t).items() if v is not None} for t in self.takes],
         }

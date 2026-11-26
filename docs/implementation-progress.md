@@ -2384,3 +2384,26 @@ Tests: pytest (full) -> 674 passed (see below). New: tests/test_coach.py (left o
 Not checked: on the camera; whether the rules pick what the speaker would pick; the AI coach's answers on
   a real take (cost: one call per palm, logged in llm-usage.jsonl).
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: Rehearse/Review plan, stage D: pitch timer and Q&A round (the user checked stage C: "Works")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: notes: a "Time: 3:00" line is the target length and a "Questions" (or "Q&A") section the practice
+  questions; neither is part of the talk. Target length: that line, or keys ] / [ (15 s; kept as
+  session.target_s); in a take the REC clock reads REC 1:12 / 3:00 (orange once over) and the section
+  line counts down the section's share (coach.budgets, by words). Coach: over time first (the section
+  most over its budget; next: tighten it in Prepare), on time is what went well. Q&A round (key y,
+  preference qa): after a full take, QA.per_round questions, least answered first; each shown large in the
+  notes' place with QA.read_s to read, its answer a take of its own (TakeRecord.answer), no follow,
+  calibration or fading; stops by the OK sign or quiet after speech; an OK sign in its count-in or a take
+  started by hand ends the round. No Questions section: turning Q&A on asks the AI once
+  (llm.questions_request, kept in session.questions). Answers are kept off the board; the coach card
+  coaches the round (coach.advise_answers: too long, a slow start, fillers). Fixed from stage B:
+  TakeRecord now keeps stopped ("auto" was written to the manifest only).
+Tests: pytest (full) -> 681 passed. New: time line and Questions section parsing; questions request and
+  checks; over time names the section, on time went well; the round's coaching; with fake devices a full
+  take is followed by its round (each answer a take with its question), and with Q&A off none is asked.
+Not checked: on the camera; whether 4 s to read a question is right; the AI's questions on a real pitch.
+  Left: the AI coach for a round of answers (it coaches pitch takes only).
+```

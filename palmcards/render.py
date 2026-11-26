@@ -138,6 +138,7 @@ REVIEW_SEP = " · "  # between gesture hints on the hint row (narrower than HINT
 DONE_HINT = "Hold a V sign to edit"  # Review: a V sign (index and middle apart) held goes back to Prepare
 FIST_HINT = (f"{BROWSE_ENTRY} · {NEW_TAKE} · {DONE_HINT}", "Finger: browse · Fist: record · V sign: edit")
 NBSP = "\u00a0"  # keeps a quoted word on one row of the label
+QUESTION_SCALE = 1.6  # the Q&A round's question, x the label's state size
 LABEL_PUNCT = ".,;:!?\"'“”‘’()[]…"  # left off a word quoted in the label
 
 
@@ -184,6 +185,8 @@ KEYS_HELP = (
     "M  Flip a replayed video (mirror or not)",
     "W  Fading cards on / off",
     "I  Coach card or take table (in Review)",
+    "[ ]  Target length, 15 s shorter / longer",
+    "Y  Q&A round after each take on / off",
     "C  High contrast     G  Show / hide tutorial",
     "L  Open another notes file   F  Full screen",
     "Enter  Skip a tutorial step",
@@ -418,6 +421,8 @@ class ViewState:
     end_progress: float = 0.0  # rehearse: how far the quiet at the end has got to stopping the take (AutoStop)
     calibration: str | None = None  # count_in: the calibration step, "camera" (look into the lens) or "notes"
     rec_s: float = 0.0  # length of the take so far
+    target_s: float | None = None  # rehearse: the talk's target length (the REC clock counts toward it)
+    question: str = ""  # count_in, rehearse: the practice question being answered (the Q&A round), in the notes' place
     recording_video: bool = False  # the take's video is being recorded too (the REC chip says so)
     mic: float = 0.0  # microphone level, 0..1
     hold_progress: float = 0.0  # the OK sign held toward "done" (stop, cancel), or a V sign toward Prepare (Review), 0..1
@@ -1956,8 +1961,13 @@ class TextOverlay:
     def _draw_rec(self, frame: np.ndarray, state: ViewState) -> None:
         """Rehearse: the recording clock and the microphone level, top right (REC)."""
         m, sec = divmod(int(state.rec_s), 60)
-        rec = f"REC {m}:{sec:02d}" + (" · Video" if state.recording_video else "")
-        chip = self._chip(rec, self._face(TYPE.operation), C.node_text, C.dark_fill)
+        target = ""
+        if state.target_s:
+            tm, ts = divmod(int(state.target_s), 60)
+            target = f" / {tm}:{ts:02d}"
+        rec = f"REC {m}:{sec:02d}{target}" + (" · Video" if state.recording_video else "")
+        over = bool(state.target_s) and state.rec_s > state.target_s  # past the target: the clock turns orange
+        chip = self._chip(rec, self._face(TYPE.operation), C.orange if over else C.node_text, C.dark_fill)
         top = REC.top * self.line_h
         bx0, by0, _, by1 = self._blend_centered(frame, chip, REC.x * self.frame_w, top + chip[0].shape[0] / 2)
         # The dot swells with the microphone level: a flat dot means no sound is arriving.
@@ -1995,9 +2005,49 @@ class TextOverlay:
     def _draw_glass(self, frame: np.ndarray, box: tuple[float, float, float, float]) -> None:
         draw_glass(frame, box, round(GLASS.radius * self.line_h), self._scrim_alpha or GLASS.alpha_min)
 
+    def _draw_count_in(self, frame: np.ndarray, state: ViewState) -> None:
+        """The count-in's digit, in the hand zone below the recording clock (the hand
+        is down during the count-in), a bar under it emptying over each second."""
+        if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
+            if self._count is None or self._count[0] != state.count_in:
+                self._count = (state.count_in, state.now)
+            f = self._face(TYPE.display)
+            ink = self._ink(str(state.count_in), f, C.label_state)
+            cx = sum(LAYOUT.hand) / 2 * self.frame_w
+            box = self._blend_centered(frame, ink, cx, self.frame_h * COUNT_IN.y)
+            half = f.advance * COUNT_IN.bar_em / 2
+            self._draw_bar(frame, cx - half, cx + half, box[3] + BAR.count_em * self.ui_size,
+                           1.0 - (state.now - self._count[1]))
+        else:
+            self._count = None
+
+    def _draw_question(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
+        """The Q&A round: the question in the notes' place (glass, the focus face,
+        wrapped to the text column), the label, the recording clock, the count-in."""
+        glass = self.notes_glass()
+        self._draw_glass(frame, glass)
+        st = TYPE.label  # SF Pro semibold, larger: read at a glance, from a step back
+        f = face(round(self._face(st).size * QUESTION_SCALE), st.weight, st.tracking, st.leading, family="ui")
+        x0, y = glass[0] + self.pad, glass[1] + self.pad
+        for row in self._wrap(state.question, f, glass[2] - glass[0] - 2 * self.pad):
+            ink = self._ink(row, f, C.label_state)
+            self._blend_ink(frame, ink, x0, y)
+            y += f.line_h
+        if state.app == "rehearse":
+            self._draw_rec(frame, state)
+        self._draw_count_in(frame, state)
+        self._draw_label(frame, state, glass[1])
+        low = self._draw_pills(frame, state)
+        if state.alert:
+            self._draw_alert(frame, state.alert, glass[3], low)
+        self.summary_box = None
+        return frame
+
     def draw(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
         """Composite the overlay onto `frame` in place and return it."""
         self._glass_level(frame)
+        if state.question and state.app in ("count_in", "rehearse"):
+            return self._draw_question(frame, state)
         self._draw_glass(frame, self.notes_glass())
         if state.mode == "focus" and state.ops.stretch_ends is not None:  # under the text, faint
             self._draw_stretch(frame, state.ops)
@@ -2109,20 +2159,7 @@ class TextOverlay:
             self._draw_rec(frame, state)
         if state.app == "review" and state.mode == "focus" and state.takes and g is None:
             self._draw_takes(frame, state)
-        if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
-            # In the hand zone, below the recording clock: the hand is down during
-            # the count-in. A bar under the digit empties over each second.
-            if self._count is None or self._count[0] != state.count_in:
-                self._count = (state.count_in, state.now)
-            f = self._face(TYPE.display)
-            ink = self._ink(str(state.count_in), f, C.label_state)
-            cx = sum(LAYOUT.hand) / 2 * self.frame_w
-            box = self._blend_centered(frame, ink, cx, self.frame_h * COUNT_IN.y)
-            half = f.advance * COUNT_IN.bar_em / 2
-            self._draw_bar(frame, cx - half, cx + half, box[3] + BAR.count_em * self.ui_size,
-                           1.0 - (state.now - self._count[1]))
-        else:
-            self._count = None
+        self._draw_count_in(frame, state)
         self._draw_label(frame, state, top)
         low = self._draw_pills(frame, state)
         if state.alert:

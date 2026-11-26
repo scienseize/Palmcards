@@ -187,3 +187,17 @@ def test_unsupported_and_empty_files(tmp_path):
     empty.write_text("   \n\n")
     with pytest.raises(ValueError, match="No text"):
         load_notes(empty)
+
+
+def test_a_time_line_and_a_questions_section_are_not_part_of_the_talk():
+    from palmcards.notes import parse_text
+
+    n = parse_text("Time: 3:00\n\n# Problem\n\nFounders rehearse in their heads.\n\n# Questions\n\n- Why now?\n"
+                   "- Who pays for it?\n\n# Ask\n\nWe are raising a seed round.\n", "md")
+    assert n.target_s == 180.0
+    assert n.questions == ["Why now?", "Who pays for it?"]
+    assert [s.text for s in n.sentences] == ["Founders rehearse in their heads.", "We are raising a seed round."]
+    assert [s.title for s in n.sections] == ["Problem", "Ask"]
+    plain = parse_text("Target: 2:30\n\nHello there.\n\n# Q&A\n\nWhy you? Why now?\n", "txt")
+    assert plain.target_s == 150.0 and plain.questions == ["Why you?", "Why now?"]
+    assert parse_text("It took 3:00 hours.\n", "txt").target_s is None  # only a line of its own

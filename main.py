@@ -112,17 +112,18 @@ import numpy as np
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import ANALYSIS, BODY, FADE, FOLLOW, LLM, RECORDING, REHEARSE, SPEECH
+from palmcards.config import ANALYSIS, BODY, FADE, FOLLOW, LLM, QA, RECORDING, REHEARSE, SPEECH
 from palmcards import coach, fade, features, gaze
 from palmcards import prefs as preferences
 from palmcards import render
 from palmcards.gestures import FIST, OPEN, THUMB_UP, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
 from palmcards.tutorial import Tutorial
-from palmcards.notes import Notes, notes_from_bytes
+from palmcards.notes import Notes, normalize, notes_from_bytes
 from palmcards.edit import replace_text, replace_word
 from palmcards.preview import Previews
 from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_request, coach_request, describe, \
-    get_provider, meaning_request, parse_coach, parse_meaning, parse_alternatives, parse_rewrite, rewrite_request
+    get_provider, meaning_request, parse_coach, parse_meaning, parse_alternatives, parse_questions, parse_rewrite, \
+    questions_request, rewrite_request
 from palmcards.render import (
     UNDO_HINT, FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_replay_hint,
@@ -342,6 +343,16 @@ class Takes:
     def __init__(self, notes: Notes, session: Session, log: GestureLog, devices: "Devices | None" = None,
                  follow: bool = FOLLOW.enabled):
         self.notes, self.session, self.log = notes, session, log
+        # From the notes file itself (not its revisions): a "Time: 3:00" line and a Questions section.
+        self.target_file, self.file_questions = notes.target_s, list(notes.questions)
+        self.section_t = 0.0  # app time the current section began, in a take (for its time budget)
+        # The Q&A round (key y): after a full take, questions one at a time, each answer a take of its own.
+        self.qa_on = False
+        self.qa_queue: list[str] = []  # the round's questions still to come
+        self.qa_of = 0  # questions in the round
+        self.qa_next_at: float | None = None  # app time the next question's count-in starts
+        self.answer: tuple[int, int, str] | None = None  # the answer being recorded: (k, of, question)
+        self.answers: dict[int, dict] = {}  # answer take -> what was measured (coach.advise_answers)
         self.devices = devices or Devices()
         self.follow_enabled = follow
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
@@ -409,6 +420,25 @@ class Takes:
         self.fade_prompted: list[tuple[int, int]] = []
         self._fade_quiet: tuple[int, float] = (0, 0.0)  # (live words heard, app time the count last grew)
 
+    @property
+    def target_s(self) -> float | None:
+        """The talk's target length: set with [ and ] (kept in the session), else the notes' Time: line."""
+        return self.session.target_s or self.target_file
+
+    def set_target(self, step: float) -> str:
+        """Keys [ and ]: the target length 15 s shorter or longer (from an estimate at 150
+        words a minute when none is set); under 15 s, off."""
+        words = sum(len(s.words) for s in self.notes.sentences)
+        now = self.target_s or round(words / 150 * 60 / 15) * 15
+        new = now + step if self.target_s else now
+        self.session.target_s = new if new >= 15 else None
+        try:
+            self.session.save()
+        except (OSError, SessionError) as exc:
+            return f"Couldn't keep the target: {short(exc)}"
+        self._summary_key = None  # the coach looks again
+        return f"Target length {coach.mmss(new)}" if new >= 15 else "No target length"
+
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown. In Review
         only what the focus shows, or how the takes are doing: the gestures
@@ -418,12 +448,19 @@ class Takes:
             prompts = self.check["prompts"]
             i = next((k for k, p in enumerate(prompts) if now < p["t1"]), len(prompts) - 1)
             return f"{gaze.prompt_text(prompts[i])}  {i + 1}/{len(prompts)}"
+        if mode in ("count_in", "rehearse") and self.answer is not None:
+            return "Answer it aloud: the answer first, then one reason"
         if mode in ("count_in", "rehearse") and self.drill is not None:
             return f"Sentence {self.drill + 1}"
         if mode in ("count_in", "rehearse"):
             title = self.notes.sections[self.section].title or "Untitled"
             fading = " · Fading cards" if view.faded is not None else ""
-            return f"Section {self.section + 1} of {len(self.notes.sections)}: {title}{fading}"
+            budget = ""
+            if mode == "rehearse" and self.target_s:  # this section's share of the target, counting down
+                left = coach.budgets(self.notes, self.target_s)[self.section] - (time.perf_counter() - self.t0
+                                                                                 - self.section_t)
+                budget = f" · {coach.mmss(left)} {'left' if left >= 0 else 'over'}"
+            return f"Section {self.section + 1} of {len(self.notes.sections)}: {title}{budget}{fading}"
         if mode == "review" and view.mode == "focus" and view.level == "sentence" and view.focus is not None:
             said = self.board.said_in(view.focus.sentence)
             if len(said) > 1:
@@ -454,7 +491,13 @@ class Takes:
     def _fill_board(self) -> None:
         """Every analysed take on the board, placed on the current notes by sentence id."""
         for take in self.session.takes:
-            if take.alignment is not None:
+            if take.alignment is not None and take.answer:  # an answer: for the round's coaching, off the board
+                try:
+                    words = json.loads((self.session.dir / take.transcript).read_text())["words"]
+                except (OSError, ValueError, KeyError, TypeError):
+                    words = []
+                self.answers[take.number] = self._answer_facts(take, words, take.alignment)
+            elif take.alignment is not None:
                 self.board.add(take.number, take.alignment, take.metrics, take.drill,
                                self.session.sentence_map(take), take.duration_s, take.fade)
 
@@ -488,7 +531,7 @@ class Takes:
     # --- the optional LLM: requests from explicit actions, answers as previews ---
 
     LLM_WHAT = {"meaning": "the meaning", "alternatives": "other words", "tone": "a new tone",
-                "length": "a new length", "coach": "AI coaching"}
+                "length": "a new length", "coach": "AI coaching", "questions": "practice questions"}
 
     @property
     def no_llm(self) -> str:
@@ -656,6 +699,14 @@ class Takes:
             if a.kind == "coach":
                 self.ai_advice[a.key[0]] = a.value
                 note = "The AI coach's notes are on the card"
+                continue
+            if a.kind == "questions":
+                self.session.questions = list(a.value)
+                try:
+                    self.session.save()
+                except (OSError, SessionError) as exc:
+                    print(f"couldn't keep the questions: {exc}", file=sys.stderr)
+                note = f"{len(a.value)} practice questions ready: they follow your next full take"
                 continue
             self.proposals[a.key] = (a.kind, a.value, a.value)
             note = "A suggestion is ready: select it again to see it"
@@ -889,18 +940,24 @@ class Takes:
         else:
             view.detail, view.playable = self.board.detail(focused), bool(said)
         n = self.board.latest()
-        if focused is None and n is not None:  # the take table and the coach, made again when a take arrives
-            key = (n, n in self.board.metrics, id(self.board))
+        last_answer = max(self.answers, default=None)
+        if focused is None and (n is not None or last_answer is not None):  # the take table and the coach, anew per take
+            key = (n, n in self.board.metrics, id(self.board), last_answer, self.target_s)
             if key != self._summary_key:
                 self._summary_key, self._summary = key, self.board.take_table()
-                self._advice = coach.advise(self.board, n)
+                if last_answer is not None and last_answer > (n or 0):  # the newest is a Q&A round
+                    since = max((t for t in self.board.takes if t < last_answer), default=0)
+                    self._advice = coach.advise_answers([self.answers[m] for m in sorted(self.answers) if m > since])
+                else:
+                    self._advice = coach.advise(self.board, n, self.target_s)
                 # The sentence to practise is the current one (orange), in view, ready to select.
                 if self._advice is not None and self._advice.sentence is not None and overlay is not None \
                         and gs.mode == "idle":
                     view.current = self._advice.sentence
                     view.scroll = overlay.scroll_to(view.current)
             view.summary = self._summary
-            a, ai = self._advice, self.ai_advice.get(n)
+            a = self._advice
+            ai = None if (last_answer or 0) > (n or 0) else self.ai_advice.get(n)  # the AI coached the take, not the round
             if self.show_table or a is None:
                 view.coach = ()
             elif ai is not None:  # the AI coach's, asked for with an open palm
@@ -909,6 +966,63 @@ class Takes:
                 view.coach = (("Went well", a.well), ("Work on", a.work), ("Next", a.next))
         else:
             view.summary, view.coach = (), ()
+
+    def notes_text(self) -> str:
+        """The whole notes as plain text, sections headed: what the AI reads (coach, questions)."""
+        return "\n\n".join((f"# {sec.title}\n" if sec.title else "") + " ".join(s.text for s in sec.sentences)
+                            for sec in self.notes.sections)
+
+    def questions(self) -> list[str]:
+        """The practice questions: the notes' Questions section, else the ones the AI suggested."""
+        return self.file_questions or self.session.questions
+
+    def toggle_qa(self, on: bool, t: float) -> str:
+        """Key y: the Q&A round on or off. On with no questions: the AI is asked for some (the
+        key is the request), or the label says how to add them."""
+        self.qa_on = on
+        if not on:
+            self.qa_queue, self.qa_next_at = [], None
+            return "Q&A off"
+        if self.questions():
+            return f"Q&A on: {min(QA.per_round, len(self.questions()))} questions after each full take"
+        if self.assistant is None:
+            return "Q&A on: add a “Questions” section to your notes, or start with --llm for the AI's"
+        if not self.assistant.asking("questions", ("questions",)):
+            self.assistant.ask("questions", ("questions",), self._llm_revision(), questions_request(self.notes_text()),
+                               parse_questions)
+            self.log(t, "llm", ask="questions")
+        return "Q&A on: asking the AI for likely questions…"
+
+    def _pick_questions(self) -> list[str]:
+        """The round's questions: the least answered so far first, in the list's order."""
+        asked: dict[str, int] = {}
+        for take in self.session.takes:
+            if take.answer:
+                asked[take.answer["question"]] = asked.get(take.answer["question"], 0) + 1
+        qs = self.questions()
+        return sorted(qs, key=lambda q: (asked.get(q, 0), qs.index(q)))[: QA.per_round]
+
+    def qa_tick(self, t: float, modes: ModeMachine, view: ViewState, overlay: TextOverlay) -> str:
+        """Every frame: when the round's next question is due (Review, nothing recording), its count-in."""
+        if self.qa_next_at is None or t < self.qa_next_at or modes.mode != "review" or self.writer is not None:
+            return ""
+        self.qa_next_at = None
+        if not self.qa_queue:
+            return ""
+        question = self.qa_queue.pop(0)
+        self.answer = (self.qa_of - len(self.qa_queue), self.qa_of, question)
+        modes.enter("count_in", t)
+        note = self.handle(GestureEvent("count_in", t, source="qa"), modes, view, overlay)
+        if modes.mode == "count_in":
+            modes.count_in_end = t + QA.read_s  # time to read the question
+        self.log(t, "qa_question", k=self.answer[0] if self.answer else None, of=self.qa_of, question=question)
+        return note
+
+    def _answer_facts(self, take, words: list[dict], alignment: dict) -> dict:
+        heard = [w for w in words if normalize(w["text"])]
+        return {"question": take.answer["question"], "duration_s": take.duration_s,
+                "first_word_s": round(heard[0]["start"] - take.t_start, 2) if heard else None,
+                "fillers": len(alignment.get("fillers", []))}
 
     def coach_ready(self) -> bool:
         """The AI coach can be asked about the newest take: there is an LLM, the take is
@@ -949,6 +1063,15 @@ class Takes:
             return ""
         self.session.set_result(n, result["transcript"], result["alignment"], result.get("metrics"))
         take = self.session.take(n)
+        if take.answer:  # an answer to a practice question: measured for the round, not a take of the notes
+            try:
+                words = json.loads((self.session.dir / take.transcript).read_text())["words"]
+            except (OSError, ValueError, KeyError, TypeError):
+                words = []
+            self.answers[n] = self._answer_facts(take, words, result["alignment"])
+            self.log(time.perf_counter() - self.t0, "transcribed", take=n, seconds=result["seconds"])
+            self.last_saved = f"Answer {take.answer['index']}: {coach.mmss(take.duration_s)}"
+            return ""
         self.board.add(n, result["alignment"], result.get("metrics"), take.drill, duration_s=take.duration_s,
                        faded=take.fade)
         self.log(time.perf_counter() - self.t0, "transcribed", take=n, seconds=result["seconds"])
@@ -967,6 +1090,8 @@ class Takes:
         """Mode events. Returns a label note to show, or ""."""
         if ev.kind in ("count_in", "drill"):
             self.stop_playback("take", ev.t)
+            if ev.source != "qa":  # a take or drill started by hand: the Q&A round, if any, is over
+                self.answer, self.qa_queue, self.qa_next_at = None, [], None
             self.drill = ev.sentence if ev.kind == "drill" else None
             if self.drill is not None:
                 self.log(ev.t, "drill", sentence=self.drill)
@@ -985,11 +1110,12 @@ class Takes:
             self.section = 0 if self.drill is None else self.notes.sentences[self.drill].section
             view.current = self.drill if self.drill is not None else self.first_of(self.section)
             view.panel_scroll, view.preview_next = 0.0, False
-            view.faded = self._fade_start()
-            if self.drill is None and self._ensure_follow():
+            view.faded = None if self.answer else self._fade_start()
+            if self.drill is None and self.answer is None and self._ensure_follow():
                 self.follow.prepare()  # the model loads during the count-in
-            check = self.gaze_check and self.drill is None
-            if self.vision is not None and (self.calibrate_next or self.session.calibration is None or check):
+            check = self.gaze_check and self.drill is None and self.answer is None
+            if self.vision is not None and self.answer is None \
+                    and (self.calibrate_next or self.session.calibration is None or check):
                 # The count-in starts with looking into the camera; the orange sentence is the 3-2-1.
                 self.vision.begin_calibration(ev.t)
                 modes.count_in_end = ev.t + BODY.calib_camera_s + REHEARSE.count_in_s
@@ -1004,6 +1130,7 @@ class Takes:
             view.mode, view.level, view.ops = "idle", None, OpsView()
             return ""
         if ev.kind == "count_in_cancel":
+            self.answer, self.qa_queue, self.qa_next_at = None, [], None  # the OK sign ends the round too
             if self.vision is not None:
                 self.vision.cancel()
             self.recorder.close()
@@ -1024,6 +1151,10 @@ class Takes:
                 self.alert = f"Can't record: {short(exc)}  /  Hold an OK sign to stop"
                 return ""
             self.writer.mark_section(ev.t, self.section, "start")
+            self.section_t = ev.t
+            if self.answer is not None:
+                k, of, question = self.answer
+                self.writer.meta["answer"] = {"question": question, "index": k, "of": of}
             if view.faded is not None:
                 self.fade_prompted, self._fade_quiet = [], (0, ev.t)
                 self.writer.meta["fade"] = {"hidden": [list(k) for k in sorted(self.fade_hidden)],
@@ -1031,7 +1162,7 @@ class Takes:
             self.recorder.start(self.writer)
             self.stopper = AutoStop()
             self._start_video(number)
-            if self.drill is None and self.follow is not None:
+            if self.drill is None and self.answer is None and self.follow is not None:
                 self.follow.start_take(self.section)
                 self.recorder.tap = self.follow.tap
             if self.vision is not None:
@@ -1053,6 +1184,7 @@ class Takes:
             source = "key"  # sections move with the voice, or by key
             self.section += 1
             view.current, view.panel_scroll, view.preview_next = self.first_of(self.section), 0.0, False
+            self.section_t = ev.t
             if self.writer is not None:
                 self.writer.mark_section(ev.t, self.section, source)
             if self.follow is not None:
@@ -1064,6 +1196,7 @@ class Takes:
                 return "This is the first section"
             self.section -= 1
             view.current, view.panel_scroll, view.preview_next = self.first_of(self.section), 0.0, False
+            self.section_t = ev.t
             if self.writer is not None:
                 self.writer.mark_section(ev.t, self.section, "key")
             if self.follow is not None:
@@ -1075,8 +1208,18 @@ class Takes:
             note = ""
             if writer is not None:
                 self.log(ev.t, "take_stop", take=writer.number, duration_s=round(writer.seconds, 3), wav=writer.wav)
-                kind = "Practice" if self.drill is not None else "Take"
+                kind = "Answer" if self.answer else "Practice" if self.drill is not None else "Take"
                 note = f"{kind} {writer.number} saved · " + "{}:{:02d}".format(*divmod(round(writer.seconds), 60))
+                if self.answer is not None:  # the round goes on, or ends
+                    self.answer = None
+                    if self.qa_queue:
+                        self.qa_next_at, note = ev.t + QA.gap_s, note + " · Next question"
+                    else:
+                        note += " · That was the last question"
+                elif self.drill is None and self.qa_on and self.questions():  # a full take: its Q&A round
+                    self.qa_queue = self._pick_questions()
+                    self.qa_of, self.qa_next_at = len(self.qa_queue), ev.t + QA.gap_s
+                    note += " · Questions next"
             if self.drill is not None:
                 view.current = self.drill
             else:
@@ -1162,7 +1305,7 @@ class Takes:
         speech), see AutoStop. Never during a gaze check, which ends on its own."""
         if self.writer is None or self.recorder is None or self.check is not None:
             return False
-        if self.drill is not None:
+        if self.drill is not None or self.answer is not None:  # one sentence, or an answer: once it heard speech
             at_end = self.stopper.heard_s >= REHEARSE.end_heard_s
         else:
             f = self.follow.follower if self.follow is not None and self.follow.state == "following" else None
@@ -1258,7 +1401,7 @@ class Takes:
             return
         for ev in self.follow.poll():
             if ev.kind == "section" and ev.index == self.section + 1:
-                self.section = ev.index
+                self.section, self.section_t = ev.index, ev.t
                 self.writer.mark_section(ev.t, ev.index, "voice")
                 self.log(ev.t, "section", section=ev.index, source="voice")
             elif ev.kind == "sentence":
@@ -1765,6 +1908,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     takes.replay_mirrored = prefs.replay_mirrored
     takes.video_on = takes.video_on or prefs.video
     takes.fade_on = takes.fade_on or prefs.fade
+    takes.qa_on = prefs.qa
     backdrop = None  # the room behind you darkened (preference room_dim; 0: off); closed with the takes
     if prefs.room_dim > 0:
         try:
@@ -1864,6 +2008,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.note, note_until = note, start + LLM_NOTE_S
         if note := takes.poll():
             view.note, note_until = note, start + NOTE_S
+        if note := takes.qa_tick(start - t0, modes, view, overlay):  # the Q&A round's next question
+            view.note, note_until = note, start + NOTE_S
         takes.recording_problem()
         for ev in events:  # a drill rehearses the sentence focused now, before any handler clears the focus
             if ev.kind == "drill" and ev.sentence is None:
@@ -1888,7 +2034,10 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         view.llm = takes.llm
         view.llm_busy = bool(takes.assistant and takes.assistant.pending)
         view.title = "Gaze check" if takes.gaze_check and modes.mode in ("count_in", "rehearse") \
-            and takes.drill is None else ""
+            and takes.drill is None and takes.answer is None else ""
+        view.question = ""
+        if takes.answer is not None and modes.mode in ("count_in", "rehearse"):  # the Q&A round
+            view.title, view.question = f"Question {takes.answer[0]} of {takes.answer[1]}", takes.answer[2]
         view.calibration = takes.vision.phase(start - t0) \
             if takes.vision is not None and modes.mode == "count_in" else None
         view.hold_progress = modes.back_progress if modes.mode == "review" else modes.done.progress
@@ -1917,6 +2066,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.section = takes.section
             view.count_in = max(1, math.ceil(modes.count_in_end - (start - t0)))
             view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" and takes.recorder else 0.0
+            view.target_s = takes.target_s if takes.drill is None else None
             view.mic = takes.recorder.level if takes.recorder else 0.0
             view.end_progress = takes.stopper.progress if modes.mode == "rehearse" else 0.0
             view.recording_video = takes.video is not None
@@ -2048,6 +2198,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             preferences.save(prefs, prefs_file)
             view.note = "Replays are mirrored" if prefs.replay_mirrored else "Replays show you as others see you"
             note_until = time.perf_counter() + NOTE_S
+        elif key in (ord("["), ord("]")) and view.app in ("prepare", "review"):  # the target length
+            view.note, note_until = takes.set_target(15 if key == ord("]") else -15), time.perf_counter() + NOTE_S
+        elif key == ord("y") and view.app in ("prepare", "review"):  # the Q&A round on or off
+            prefs.qa = not prefs.qa
+            preferences.save(prefs, prefs_file)
+            view.note, note_until = takes.toggle_qa(prefs.qa, time.perf_counter() - t0), time.perf_counter() + NOTE_S
         elif key == ord("i") and view.app == "review":  # the coach card, or the take table
             takes.show_table = not takes.show_table
             view.note, note_until = ("Take table" if takes.show_table else "Coach card"), time.perf_counter() + NOTE_S

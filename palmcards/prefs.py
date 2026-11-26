@@ -23,6 +23,7 @@ sessions (which are evidence and never change with your settings).
   room_dim       how dark the room behind you is drawn: 0 as the camera sees it, 1 black (default 0.6)
   fade           fading cards: in a take, words said take after take dim, then blank
                  (key w in the app; main.py --fade for one run)
+  qa             the Q&A round: practice questions after each full take (key y)
   tutorial_done  the first-run gesture tutorial has been seen (key g shows it again)
   last_notes     the notes file opened last (kept by the app); main.py with no file opens it again
 """
@@ -49,6 +50,7 @@ class Prefs:
     replay_mirrored: bool = False  # Review replays a take's video mirrored (key m); else as others see you
     fullscreen: bool = False  # the window fills the screen (key f)
     fade: bool = False  # fading cards (palmcards.fade; key w); main.py --fade for one run
+    qa: bool = False  # the Q&A round after each full take (key y)
     room_dim: float = BACKDROP.strength  # the room behind you darkened by this (palmcards.vision.Backdrop)
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s

@@ -9,6 +9,9 @@ learner acts on one goal at a time (one thing done well and one to work on
 per round, then another round).
 
 Work on, the first that applies (COACH settings):
+  0. over the target length (when there is one) by more than COACH.over_s or
+     COACH.over_share: the section the most over its budget (budgets: the
+     target shared by the sections' words),
   1. a key point left out: a sentence skipped before the last one said,
      then sentences not reached (the take stopped early),
   2. a long pause before a sentence, the longest: often a blank at a
@@ -26,7 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from palmcards.config import COACH
+from palmcards.config import COACH, QA
 from palmcards.metrics import value
 
 
@@ -45,16 +48,71 @@ def opening(text: str, words: int = COACH.quote_words) -> str:
     return f"“{cut}…”" if len(parts) > words else f"“{text.rstrip('.')}”"
 
 
-def advise(board, number: int) -> Advice | None:
-    """The coaching for take `number` (None until it is analysed)."""
+def mmss(seconds: float) -> str:
+    return "{}:{:02d}".format(*divmod(round(abs(seconds)), 60))
+
+
+def budgets(notes, target_s: float) -> list[float]:
+    """Each section's share of the target length, by its words."""
+    words = [sum(len(s.words) for s in sec.sentences) for sec in notes.sections]
+    total = max(1, sum(words))
+    return [target_s * w / total for w in words]
+
+
+def section_times(board, n: int) -> dict[int, float]:
+    """Seconds each section said in take n ran: from its first word said to the
+    next section's first word said (the last: to its own last word)."""
+    rows, notes = board.rows[n], board.notes
+    spans: dict[int, list[float]] = {}
+    for i, r in rows.items():
+        if r.get("start") is not None:
+            spans.setdefault(notes.sentences[i].section, []).extend((r["start"], r["end"]))
+    starts = sorted((min(v), k) for k, v in spans.items())
+    out = {}
+    for (start, k), nxt in zip(starts, starts[1:] + [None]):
+        out[k] = (nxt[0] if nxt else max(spans[k])) - start
+    return out
+
+
+def _section_name(board, k: int) -> str:
+    sec = board.notes.sections[k]
+    return f"“{sec.title}”" if sec.title else opening(sec.sentences[0].text)
+
+
+def _over_time(board, n: int, target_s: float | None) -> tuple[str, int] | None:
+    """(what to say, the over section) when the take ran over its target."""
+    length = board.durations.get(n)
+    if not target_s or length is None:
+        return None
+    over = length - target_s
+    if over <= max(COACH.over_s, COACH.over_share * target_s):
+        return None
+    times, budget = section_times(board, n), budgets(board.notes, target_s)
+    worst = max(times, key=lambda k: times[k] - budget[k], default=None)
+    if worst is None or times[worst] <= budget[worst]:
+        return f"Over time by {mmss(over)}: {mmss(length)} for {mmss(target_s)}", -1
+    return (f"Over time by {mmss(over)}: {_section_name(board, worst)} ran {mmss(times[worst])} "
+            f"for its {mmss(budget[worst])}"), worst
+
+
+def advise(board, number: int, target_s: float | None = None) -> Advice | None:
+    """The coaching for take `number` (None until it is analysed). `target_s`: the
+    talk's target length, if one is set."""
     if number not in board.rows:
         return None
     if number in board.drills:
         return _drill(board, number)
     full = [t for t in board.takes if t not in board.drills and t < number]
     before = full[-1] if full else None
+    well = _went_well(board, number, before, target_s)
+    if (over := _over_time(board, number, target_s)) is not None:
+        work, section = over
+        if section < 0:
+            return Advice(well, work, "Run it through again, a little tighter")
+        first = board.notes.sections[section].sentences[0].index
+        return Advice(well, work, "Tighten it in Prepare: select its paragraph, then bring two L-hands together",
+                      first)
     work, sentence = _work_on(board, number)
-    well = _went_well(board, number, before)
     if sentence is not None:
         nxt = "Practise it: select it, then pinch and lift"
     elif work.startswith("You stopped"):
@@ -117,11 +175,19 @@ def _away(board, n: int) -> float | None:
     return value(gaze, "away_share") if gaze else None
 
 
-def _went_well(board, n: int, before: int | None) -> str:
+def _on_time(board, n: int, target_s: float | None) -> bool:
+    length = board.durations.get(n)
+    return bool(target_s) and length is not None and \
+        abs(length - target_s) <= max(COACH.over_s, COACH.over_share * target_s)
+
+
+def _went_well(board, n: int, before: int | None, target_s: float | None = None) -> str:
     now = _facts(board, n)
     if before is not None:
         then = _facts(board, before)
         gains = []  # (size of the gain, what to say)
+        if _on_time(board, n, target_s) and not _on_time(board, before, target_s):
+            gains.append((1.5, f"On time: {mmss(board.durations[n])} for {mmss(target_s)}"))
         if now["said"] > then["said"]:
             gains.append((now["said"] - then["said"], f"You said {now['said']} of {now['of']} key points, "
                                                       f"{now['said'] - then['said']} more than take {before}"))
@@ -135,6 +201,8 @@ def _went_well(board, n: int, before: int | None) -> str:
         if gains:
             return max(gains)[1]
     # Nothing gained (or the first take): what is good in this one.
+    if _on_time(board, n, target_s):
+        return f"On time: {mmss(board.durations[n])} for {mmss(target_s)}"
     if now["of"] and now["said"] == now["of"]:
         return f"You said all {now['of']} key points"
     if now["restarts"] == 0:
@@ -184,3 +252,37 @@ def _drill(board, n: int) -> Advice:
         work = "It is ready: put it back in a full run"
     nxt = "Run it through again" if not restarts and not fillers else "Practise it once more, then a full run"
     return Advice(well, work, nxt, i)
+
+
+def advise_answers(answers: list[dict]) -> Advice | None:
+    """The coaching for a Q&A round: its answers, each {"question", "duration_s",
+    "first_word_s" (silence before the first word, None if nothing was heard),
+    "fillers"}. Short and direct is the aim: the answer first, then one reason."""
+    if not answers:
+        return None
+    heard = [a for a in answers if a["first_word_s"] is not None]
+    if not heard:
+        return Advice("The answers are in", "No answer was heard: check the microphone", "Try the round again")
+    q = lambda a: opening(a["question"])  # noqa: E731
+    long = max(heard, key=lambda a: a["duration_s"])
+    slow = max(heard, key=lambda a: a["first_word_s"])
+    if long["duration_s"] > QA.answer_max_s:
+        work = (f"Your answer to {q(long)} ran {mmss(long['duration_s'])}: aim for under "
+                f"{mmss(QA.answer_max_s)}, the answer first, then one reason")
+        nxt = "Say that answer in one sentence first, then add one reason"
+    elif slow["first_word_s"] > QA.slow_start_s:
+        work = f"You took {slow['first_word_s']:.1f} s to start on {q(slow)}: open with the answer itself"
+        nxt = "Practise opening each answer with yes, no or a number"
+    elif (most := max(heard, key=lambda a: a["fillers"]))["fillers"] >= COACH.fillers_in_one + 1:
+        work = f"{most['fillers']} fillers in your answer to {q(most)}"
+        nxt = "Pause instead of filling: a second of quiet reads as thought"
+    else:
+        work = "Short, direct answers: keep it that way"
+        nxt = "Record another full take: new questions follow it"
+    if all(a["duration_s"] <= QA.answer_max_s for a in heard):
+        well = f"{'All ' if len(heard) > 1 else ''}{len(heard)} answer{'s' if len(heard) != 1 else ''} under " \
+               f"{mmss(QA.answer_max_s)}"
+    else:
+        fast = min(heard, key=lambda a: a["first_word_s"])
+        well = f"You started on {q(fast)} after {fast['first_word_s']:.1f} s"
+    return Advice(well, work, nxt)
