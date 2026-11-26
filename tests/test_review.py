@@ -241,3 +241,19 @@ def test_a_silent_take_stays_on_the_alert_line_until_the_next_take_starts(tmp_pa
     assert takes._finish(writer, "saved") == ""
     assert takes.alert_line("review") == "TAKE 1 IS SILENT: CHECK MICROPHONE ACCESS"
     assert takes.alert_line("prepare").startswith("TAKE 1 IS SILENT")  # not a note that fades
+
+
+def test_fading_cards_count_the_takes_that_said_each_word_and_review_says_how_much_came_from_memory():
+    b = Board(parse_text(TEXT))
+    b.add(1, analysed(FULL))
+    assert not any(line.startswith("FROM MEMORY") for line in b.take_table())  # never faded: no row
+    b.add(2, analysed("Good evening everyone. <0.3> Thank you for being here."))
+    lv = b.fade_levels()
+    assert lv[(0, 0)] == 2 and lv[(1, 0)] == 2  # said in both takes
+    assert lv[(2, 0)] == 1  # the third sentence: only take 1 said it, take 2 neither counts nor breaks it
+    # Take 3 had sentence 0's three words blanked; it said them all, one after a prompt.
+    hidden = [[0, 0], [0, 1], [0, 2]]
+    b.add(3, analysed("Good evening everyone."), faded={"hidden": hidden, "prompted": [[0, 2]]})
+    assert abs(b.memory[3] - 2 / 3) < 1e-9
+    row = next(line for line in b.take_table() if line.startswith("FROM MEMORY"))
+    assert row.split()[-2:] == ["67%", "-"]  # take 3, then CHANGE: take 2 wasn't faded

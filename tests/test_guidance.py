@@ -165,3 +165,29 @@ def test_choose_notes_prefers_the_argument_then_the_last_file_then_the_sample(tm
     assert main.choose_notes(None, str(tmp_path / "gone.md"), cancelled) == (main.SAMPLE, False)  # the file went away
     assert main.choose_notes(None, "", cancelled) == (main.SAMPLE, False)  # the Open dialog cancelled
     assert main.choose_notes(None, "", picked) == (tmp_path / "picked.md", False)
+
+
+def test_fading_cards_bring_blanked_words_back_when_the_voice_stalls(monkeypatch):
+    import time
+    from palmcards.render import ViewState
+
+    now = [10.0]
+    monkeypatch.setattr(time, "perf_counter", lambda: now[0])
+    logged = []
+    follow = SimpleNamespace(state="following", heard=4, follower=SimpleNamespace(at=(0, 0)))
+    takes = SimpleNamespace(writer=object(), drill=None, follow=follow, t0=0.0,
+                            fade_dimmed=frozenset(), fade_hidden=frozenset({(0, 1), (0, 2), (1, 0), (1, 1)}),
+                            fade_prompted=[], _fade_quiet=(4, 9.0), log=lambda t, kind, **kw: logged.append(kw))
+    view = ViewState(app="rehearse", current=0, faded=(frozenset(), takes.fade_hidden))
+    main.Takes._fade_prompt(takes, view)
+    assert view.faded[1] == takes.fade_hidden == {(0, 1), (0, 2), (1, 0), (1, 1)}  # quiet only 1 s
+    now[0] = 10.6
+    main.Takes._fade_prompt(takes, view)
+    assert takes.fade_hidden == {(1, 1)} and view.faded[1] == {(1, 1)}  # the next 3 after the voice
+    assert takes.fade_prompted == [[0, 1], [0, 2], [1, 0]] and logged == [{"words": [[0, 1], [0, 2], [1, 0]]}]
+    follow.heard, now[0] = 5, 12.5  # a new word: the quiet starts again
+    main.Takes._fade_prompt(takes, view)
+    assert takes.fade_hidden == {(1, 1)}
+    follow.state = "failed"  # no follow: nothing stays blank
+    main.Takes._fade_prompt(takes, view)
+    assert takes.fade_hidden == frozenset()

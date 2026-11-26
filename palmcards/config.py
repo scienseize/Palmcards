@@ -210,6 +210,19 @@ class Rehearse:
 
 
 @dataclass(frozen=True)
+class Fade:
+    """Fading cards (palmcards.fade; preference `fade`, key w): in a take, a note
+    word said in the newest takes that said its sentence, that many in a row,
+    is dimmed (dim_after) or hidden (hide_after, drawn as a blank). When the
+    voice follow has confirmed no new word for prompt_after_s, the next
+    prompt_words hidden words come back for the rest of the take."""
+    dim_after: int = 1
+    hide_after: int = 2
+    prompt_after_s: float = 1.5
+    prompt_words: int = 3
+
+
+@dataclass(frozen=True)
 class Recording:
     # Takes are streamed to disk as they are recorded (palmcards.recording).
     block_frames: int = 1024  # microphone block size (21 ms at 48 kHz)
@@ -480,3 +493,4 @@ LLM = Llm()
 METRICS = Metrics()
 GAZE = Gaze()
 REVIEW = Review()
+FADE = Fade()

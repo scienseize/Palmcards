@@ -89,7 +89,8 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   e calibrate the eyes again at the next take,
   g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit,
   l open another notes file (Prepare, Review), f full screen,
-  m flip a take's replayed video: mirrored, or as others see you (the default).
+  m flip a take's replayed video: mirrored, or as others see you (the default),
+  w fading cards on or off (also --fade, preferences `fade`).
 Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
 Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
 """
@@ -112,8 +113,8 @@ import numpy as np
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import ANALYSIS, BODY, FOLLOW, LLM, RECORDING, REHEARSE, SPEECH
-from palmcards import features, gaze
+from palmcards.config import ANALYSIS, BODY, FADE, FOLLOW, LLM, RECORDING, REHEARSE, SPEECH
+from palmcards import fade, features, gaze
 from palmcards import prefs as preferences
 from palmcards import render
 from palmcards.gestures import FIST, OPEN, THUMB_UP, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
@@ -434,6 +435,13 @@ class Takes:
         self.replay_marks: list = []
         self.replay_words: list = []
         self.replay_mirrored = False
+        # Fading cards (palmcards.fade; preference `fade`, key w, main.py --fade): the words the
+        # take dims and blanks, what the stall prompt brought back, and since when the voice is quiet.
+        self.fade_on = False
+        self.fade_dimmed: frozenset = frozenset()
+        self.fade_hidden: frozenset = frozenset()
+        self.fade_prompted: list[tuple[int, int]] = []
+        self._fade_quiet: tuple[int, float] = (0, 0.0)  # (live words heard, app time the count last grew)
 
     def status(self, mode: str, view: ViewState) -> str:
         """Second label line when nothing more pressing is shown. In Review
@@ -448,7 +456,8 @@ class Takes:
             return f"SENTENCE {self.drill + 1}"
         if mode in ("count_in", "rehearse"):
             title = self.notes.sections[self.section].title or "untitled"
-            return f"SECTION {self.section + 1}/{len(self.notes.sections)}: {title.upper()}"
+            fading = " · FADING CARDS" if view.faded is not None else ""
+            return f"SECTION {self.section + 1}/{len(self.notes.sections)}: {title.upper()}{fading}"
         if mode == "review" and view.mode == "focus" and view.level == "sentence" and view.focus is not None:
             said = self.board.said_in(view.focus.sentence)
             if len(said) > 1:
@@ -481,7 +490,7 @@ class Takes:
         for take in self.session.takes:
             if take.alignment is not None:
                 self.board.add(take.number, take.alignment, take.metrics, take.drill,
-                               self.session.sentence_map(take), take.duration_s)
+                               self.session.sentence_map(take), take.duration_s, take.fade)
 
     def restore(self) -> bool:
         """A reopened session: its analysed takes onto the board, and takes whose
@@ -923,7 +932,8 @@ class Takes:
             return ""
         self.session.set_result(n, result["transcript"], result["alignment"], result.get("metrics"))
         take = self.session.take(n)
-        self.board.add(n, result["alignment"], result.get("metrics"), take.drill, duration_s=take.duration_s)
+        self.board.add(n, result["alignment"], result.get("metrics"), take.drill, duration_s=take.duration_s,
+                       faded=take.fade)
         self.log(time.perf_counter() - self.t0, "transcribed", take=n, seconds=result["seconds"])
         print(f"take {n} (transcribed and measured in {result['seconds']:.1f} s)\n{result['report']}")
         if take.drill is not None:
@@ -958,6 +968,7 @@ class Takes:
             self.section = 0 if self.drill is None else self.notes.sentences[self.drill].section
             view.current = self.drill if self.drill is not None else self.first_of(self.section)
             view.panel_scroll, view.preview_next = 0.0, False
+            view.faded = self._fade_start()
             if self.drill is None and self._ensure_follow():
                 self.follow.prepare()  # the model loads during the count-in
             check = self.gaze_check and self.drill is None
@@ -994,6 +1005,10 @@ class Takes:
                 self.alert = f"CANNOT RECORD: {short(exc)}  /  OK SIGN TO STOP"
                 return ""
             self.writer.mark_section(ev.t, self.section, "start")
+            if view.faded is not None:
+                self.fade_prompted, self._fade_quiet = [], (0, ev.t)
+                self.writer.meta["fade"] = {"hidden": [list(k) for k in sorted(self.fade_hidden)],
+                                            "prompted": self.fade_prompted}
             self.recorder.start(self.writer)
             self._start_video(number)
             if self.drill is None and self.follow is not None:
@@ -1047,6 +1062,46 @@ class Takes:
             view.scroll = overlay.scroll_to(view.current)
             return ""
         return ""
+
+    def _fade_start(self) -> tuple[frozenset, frozenset] | None:
+        """Fading cards at a count-in: the words this take dims and blanks (None: off).
+        A full take blanks words only with the voice follow on, to bring them back on a stall;
+        a drill (one sentence, no follow) blanks them anyway."""
+        if not self.fade_on:
+            return None
+        dimmed, hidden = fade.faded(self.board.fade_levels())
+        if self.drill is not None:
+            dimmed, hidden = (frozenset(k for k in ks if k[0] == self.drill) for ks in (dimmed, hidden))
+        elif not self.follow_enabled or (self.follow is not None and self.follow.state == "failed"):
+            dimmed, hidden = dimmed | hidden, frozenset()
+        self.fade_dimmed, self.fade_hidden = dimmed, hidden
+        return dimmed, hidden
+
+    def _fade_prompt(self, view: ViewState) -> None:
+        """In a take with words blanked: when the voice has been quiet FADE.prompt_after_s,
+        the next FADE.prompt_words blanked words come back; if the follow fails, all of them."""
+        if view.faded is None or not self.fade_hidden or self.writer is None or self.drill is not None:
+            return
+        now = time.perf_counter() - self.t0
+        if self.follow.state == "failed":
+            words = sorted(self.fade_hidden)
+        else:
+            heard, since = self._fade_quiet
+            if self.follow.heard != heard:
+                self._fade_quiet = (self.follow.heard, now)
+                return
+            if self.follow.state != "following" or now - since < FADE.prompt_after_s:
+                return
+            self._fade_quiet = (heard, now)  # the next prompt after another quiet stretch
+            at = self.follow.follower.at if self.follow.follower is not None else None
+            after = max(at or (view.current, -1), (view.current, -1))
+            words = fade.prompt(self.fade_hidden, sorted(self.fade_hidden), after)
+        if not words:
+            return
+        self.fade_hidden -= set(words)
+        self.fade_prompted += [list(k) for k in words]
+        view.faded = (self.fade_dimmed, self.fade_hidden)
+        self.log(now, "prompt", words=[list(k) for k in words])
 
     def _start_video(self, number: int) -> None:
         """The take's video beside its audio, if asked for and possible."""
@@ -1162,6 +1217,7 @@ class Takes:
         if self.follow.state == "failed" and not self._follow_reported:
             print(f"voice follow off: {self.follow.error}", file=sys.stderr)
             self._follow_reported = True
+        self._fade_prompt(view)
         section = self.section_sentences()
         view.section = self.section
         # The next section shows faint from its predecessor's last sentence on, and
@@ -1448,6 +1504,8 @@ def main() -> int:
     ap.add_argument("--no-follow", action="store_true", help="don't follow the voice during takes")
     ap.add_argument("--video", action="store_true",
                     help="record video of each take (also preferences `video`), replayed in Review")
+    ap.add_argument("--fade", action="store_true",
+                    help="fading cards: in a take, words said take after take dim, then blank (key w)")
     ap.add_argument("--open", metavar="RUN", help="reopen a saved session in Review")
     ap.add_argument("--new", action="store_true",
                     help="start a new session, even if the last one for this notes file could be continued")
@@ -1488,7 +1546,7 @@ def open_notes(path: Path, args, remembered: bool = False) -> int | Path:
     for warning in notes.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     common = dict(lang=args.lang, trace=args.trace, follow=not args.no_follow, gaze_check=args.gaze_check,
-                  video=args.video, devices=devices)
+                  video=args.video, fade=args.fade, devices=devices)
     if not args.new and (folder := latest_session_for(SESSIONS_DIR, path, source)) is not None:
         try:
             session = Session.load(folder)
@@ -1530,7 +1588,7 @@ def reopen(args) -> int:
         return 1
     notes = from_snapshot(session.snapshot(session.current_revision))
     return run_reporting(session.notes, notes, b"", lang=session.language, trace=args.trace,
-                         follow=not args.no_follow, session=session, gaze_check=args.gaze_check, video=args.video,
+                         follow=not args.no_follow, session=session, gaze_check=args.gaze_check, video=args.video, fade=args.fade,
                          devices=Devices(llm=lambda: get_provider(args.llm)))
 
 
@@ -1555,7 +1613,7 @@ def run_reporting(*args, **kwargs) -> int | Path:
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
         devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled,
         session: Session | None = None, prefs_file: Path | None = None, gaze_check: bool = False,
-        video: bool = False, note: str = "") -> int | Path:
+        video: bool = False, note: str = "", fade: bool = False) -> int | Path:
     """Open everything, run the frame loop, close everything.
 
     Every resource is registered for cleanup as soon as it exists, so a
@@ -1585,6 +1643,7 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
         takes = Takes(notes, session, log, devices, follow)
         takes.gaze_check = gaze_check
         takes.video_on = video  # or the preference, read with the others in frame_loop
+        takes.fade_on = fade  # likewise
         show_card(devices, "LOADING FACE AND POSE TRACKING")
         try:
             takes.vision = devices.vision()
@@ -1615,6 +1674,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     takes.frame_size = (w, h)
     takes.replay_mirrored = prefs.replay_mirrored
     takes.video_on = takes.video_on or prefs.video
+    takes.fade_on = takes.fade_on or prefs.fade
     if takes.video_on:
         if devices.video is VideoWriter and (why := video_unavailable()):
             takes.video_off = why
@@ -1866,6 +1926,11 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             prefs.replay_mirrored = takes.replay_mirrored = not prefs.replay_mirrored
             preferences.save(prefs, prefs_file)
             view.note = "REPLAYS MIRRORED" if prefs.replay_mirrored else "REPLAYS AS OTHERS SEE YOU"
+            note_until = time.perf_counter() + NOTE_S
+        elif key == ord("w") and view.app in ("prepare", "review"):  # fading cards, from the next take
+            prefs.fade = takes.fade_on = not prefs.fade
+            preferences.save(prefs, prefs_file)
+            view.note = "FADING CARDS ON: FROM THE NEXT TAKE" if prefs.fade else "FADING CARDS OFF"
             note_until = time.perf_counter() + NOTE_S
         elif key == ord("c"):
             prefs.high_contrast = not prefs.high_contrast

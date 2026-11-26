@@ -112,6 +112,9 @@ class TakeRecord:
     # Video of the take (opt-in; palmcards.video): state, file, t_first (app
     # clock of its first frame), frames, dropped, gaps, codec, size; None: none recorded.
     video: dict | None = None
+    # Fading cards (palmcards.fade) during the take: {"hidden": [[sentence, word], ...] blanked
+    # at its start, "prompted": the ones the stall prompt brought back}, in its revision's indices.
+    fade: dict | None = None
 
     @property
     def silent(self) -> bool:
@@ -517,7 +520,7 @@ class Session:
             duration_s=round(manifest["samples"] / rate, 3), sample_rate=rate, peak=manifest["peak"],
             sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
             status=status, capture=capture, live=manifest.get("live"), vision=manifest.get("vision"),
-            gaze_check=manifest.get("gaze_check"), video=manifest.get("video"),
+            gaze_check=manifest.get("gaze_check"), video=manifest.get("video"), fade=manifest.get("fade"),
         )
         self.takes = [t for t in self.takes if t.number != take.number] + [take]
         self.takes.sort(key=lambda t: t.number)

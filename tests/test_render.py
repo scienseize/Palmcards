@@ -1012,3 +1012,12 @@ def test_a_replay_says_m_flips_it_top_right():
     changed = np.argwhere((frame != 128).any(axis=2))
     assert len(changed) and changed[:, 0].max() < 60 and changed[:, 1].min() > 1280 * 0.75  # top right
     assert changed[:, 1].max() <= 1280 * (1 - 0.06) + 1  # inside the bar's inset
+
+
+def test_fading_cards_dim_and_blank_words_in_a_take():
+    notes = parse_text("Good evening everyone. Thank you all.")
+    ov = TextOverlay(notes.sentences, (1280, 720))
+    plain = ov.panel(ViewState(app="rehearse", section=0)).color.copy()
+    faded = (frozenset({(0, 0)}), frozenset({(0, 1), (0, 2)}))
+    blanked = ov.panel(ViewState(app="rehearse", section=0, faded=faded)).color
+    assert (plain != blanked).any()

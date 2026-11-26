@@ -18,6 +18,7 @@ paragraph from its take.
 
 from __future__ import annotations
 
+from palmcards import fade
 from palmcards.config import METRICS, REVIEW
 from palmcards.metrics import sentence_speech, value
 from palmcards.notes import Notes
@@ -33,13 +34,16 @@ class Board:
         self.durations: dict[int, float] = {}  # take number -> seconds
         self.drills: dict[int, int] = {}  # take number -> drilled sentence
         self.picked: dict[int, int] = {}  # sentence -> take chosen by pointing
+        self.said: dict[int, dict[int, tuple[bool, ...]]] = {}  # take -> sentence it said -> which words
+        self.memory: dict[int, float] = {}  # take -> share of its hidden words said unprompted (fading cards)
 
     @property
     def takes(self) -> list[int]:
         return sorted(self.rows)
 
     def add(self, number: int, alignment: dict, metrics: dict | None = None, drill: int | None = None,
-            sentence_map: dict[int, int] | None = None, duration_s: float | None = None) -> None:
+            sentence_map: dict[int, int] | None = None, duration_s: float | None = None,
+            faded: dict | None = None) -> None:
         """An analysed take. `sentence_map` maps its sentences onto the notes
         shown (a take recorded with an earlier notes revision); sentences
         edited since have no place and are left out."""
@@ -58,6 +62,15 @@ class Board:
                        "start": a.get("start"), "end": a.get("end"),
                        "said_words": sum(w is not None for w in a.get("words", []))}
         self.rows[number] = rows
+        self.said[number] = {}
+        for a in alignment["sentences"]:
+            i, words = place(a["sentence"]), a.get("words", [])
+            if i is not None and i < len(self.notes.sentences) and len(words) == len(self.notes.sentences[i].words) \
+                    and any(w is not None for w in words):
+                self.said[number][i] = tuple(w is not None for w in words)
+        if faded and (share := fade.from_memory(alignment, faded.get("hidden", []), faded.get("prompted", []))) \
+                is not None:
+            self.memory[number] = share
         if metrics is not None:
             self.metrics[number] = metrics
         if duration_s is not None:
@@ -155,6 +168,10 @@ class Board:
             and not lost else "pace -"
         return first, "{}:{:02d} from first word to last".format(*divmod(round(took), 60)), f"{pace}, {fillers}"
 
+    def fade_levels(self) -> dict[tuple[int, int], int]:
+        """Fading cards: each note word's run of takes that said it (palmcards.fade)."""
+        return fade.levels([self.said[n] for n in self.takes])
+
     def latest(self) -> int | None:
         """The newest analysed take."""
         return max(self.rows, default=None)
@@ -175,6 +192,8 @@ class Board:
             head.append("CHANGE")
             cols.append([_change(form, old, new) for form, old, new in zip(METRIC_FORMS, raw[-2], raw[-1])])
         rows = [("", head)] + [(name, [c[k] for c in cols]) for k, name in enumerate(METRIC_ROWS)]
+        if not any(t in self.memory for t in full):  # fading cards never on for these takes
+            rows = [r for r in rows if r[0] != "FROM MEMORY"]
         name_w = max(len(r[0]) for r in rows)
         col_w = max(len(v) for _, vals in rows for v in vals)
         return tuple(f"{name:<{name_w}}" + "".join(f"  {v:>{col_w}}" for v in vals) for name, vals in rows)
@@ -201,14 +220,15 @@ class Board:
             on_screen,
             value(hands, "face_touches"),
             None if tilted is None else 100 * tilted,
+            None if number not in self.memory else 100 * self.memory[number],
         ]
 
 
 METRIC_ROWS = ("LENGTH", "WPM", "FILLERS/MIN", "LONG PAUSES", "RESTARTS", "PITCH (SEMITONES)", "ON SCREEN",
-               "FACE TOUCHES", "SHOULDERS TILTED")
+               "FACE TOUCHES", "SHOULDERS TILTED", "FROM MEMORY")
 
 # How each row's number is written (None: a length, as m:ss).
-METRIC_FORMS = (None, "{:.0f}", "{:g}", "{}", "{}", "{:g}", "{:.0f}%", "{}", "{:.0f}%")
+METRIC_FORMS = (None, "{:.0f}", "{:g}", "{}", "{}", "{:g}", "{:.0f}%", "{}", "{:.0f}%", "{:.0f}%")
 
 
 def _mmss(seconds: float) -> str:

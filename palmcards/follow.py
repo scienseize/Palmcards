@@ -69,6 +69,7 @@ class Follower:
         self.sentence = self._first(section)
         self.tail: list[LiveWord] = []
         self._handoff: tuple[int, int] | None = None  # (sentence handed on from, its word at that moment)
+        self.at: tuple[int, int] | None = None  # the last note word matched: (sentence, word in it)
 
     def _first(self, section: int) -> int:
         return next((i for i, s in enumerate(self.sentences) if s.section >= section), len(self.sentences) - 1)
@@ -136,6 +137,7 @@ class Follower:
         run = self.last_run()
         if run is None:
             return []
+        self.at = (run.sentences[-1], run.last_word)
         t = max(w.confirmed_at if w.confirmed_at is not None else w.end for w in words)
         s = run.sentences[-1]
         if self._handoff is not None and s == self.sentence:
@@ -180,7 +182,7 @@ class Follower:
             return []
         self.section += 1
         self.sentence = self._first(self.section)
-        self.tail, self._handoff = [], None
+        self.tail, self._handoff, self.at = [], None, None
         return [FollowEvent("section", self.section, t, "flick"), FollowEvent("sentence", self.sentence, t, "flick")]
 
 
@@ -289,6 +291,11 @@ class LiveFollow:
             self._fail(f"{type(exc).__name__}: {exc}")
             return []
 
+    @property
+    def heard(self) -> int:
+        """Live words confirmed so far in this take."""
+        return self._words
+
     def flick(self, t: float) -> list[FollowEvent]:
         return self.follower.flick(t) if self.follower else []
 
@@ -296,7 +303,7 @@ class LiveFollow:
         """A manual move (keys): the follow carries on from there."""
         if self.follower is not None:
             self.follower.section, self.follower.sentence, self.follower.tail = section, sentence, []
-            self.follower._handoff = None
+            self.follower._handoff, self.follower.at = None, None
 
     def stop_take(self) -> dict:
         """Stop feeding; the take's live statistics, for session.json."""

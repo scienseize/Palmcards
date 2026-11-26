@@ -177,6 +177,7 @@ KEYS_HELP = (
     "O  EXPORT THE NOTES (IN REVIEW)",
     "E  CALIBRATE EYES AT THE NEXT TAKE",
     "M  FLIP A REPLAYED VIDEO (MIRROR OR NOT)",
+    "W  FADING CARDS ON / OFF",
     "C  HIGH CONTRAST     G  SHOW / HIDE TUTORIAL",
     "L  OPEN ANOTHER NOTES FILE   F  FULL SCREEN",
     "ENTER  SKIP A TUTORIAL STEP",
@@ -413,6 +414,8 @@ class ViewState:
     # Rehearse: the next section shown faint under the current one, while its
     # predecessor's last sentence is being said (hides the follow's lag).
     preview_next: bool = False
+    # Rehearse, fading cards (palmcards.fade): (dimmed, hidden) note words, (sentence, word) pairs.
+    faded: tuple[frozenset, frozenset] | None = None
     # Prepare, the optional LLM: alternatives for the focused word (on the
     # ring) and a request in flight (the word's glyphs scramble).
     alternatives: tuple[str, ...] = ()
@@ -1091,7 +1094,7 @@ class TextOverlay:
     def _focus_panel(self, unit: tuple[int, ...], detail: tuple[str, ...] = (),
                      current: int | None = None, preview_from: int | None = None, width: int | None = None,
                      replacement: str | None = None, editing: bool = False, header_h: int = 0,
-                     detail_first: bool = False) -> Panel:
+                     detail_first: bool = False, faded: tuple[frozenset, frozenset] | None = None) -> Panel:
         """The unit's sentences enlarged, then the detail lines (Review: a line
         per take that said the sentence), faint context rows around them when
         there is room.
@@ -1105,7 +1108,7 @@ class TextOverlay:
         `detail_first` puts the detail lines above the unit (Review's paragraph
         summary: a long paragraph would push it out of view)."""
         width = width or self.box_w
-        key = (unit, detail, current, preview_from, width, replacement, editing, header_h, detail_first)
+        key = (unit, detail, current, preview_from, width, replacement, editing, header_h, detail_first, faded)
         if self._panel_key == key:
             return self._panel
         sents = [parse_sentence(replacement)] if replacement is not None else [self.sentences[i] for i in unit]
@@ -1157,11 +1160,19 @@ class TextOverlay:
         draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
         where: dict[int, tuple[int, int]] = {}
 
-        def draw_rows(rows_, f, colors, y_, bold_=None, strong=lambda si: False):
+        dimmed, hidden = faded if faded is not None and replacement is None else ((), ())
+
+        def draw_rows(rows_, f, colors, y_, bold_=None, strong=lambda si: False, fade_=False):
             for row in rows_:
                 for col, sp in row.spans:
-                    self._draw_span(draw, (self.pad + col * f.advance, y_ + f.dy), sp,
-                                    bold_ if strong(sp.sentence) else f.font, colors(sp.sentence), ud, f.tracking)
+                    color, shown = colors(sp.sentence), sp
+                    if fade_ and sp.word is not None:  # fading cards: a word said take after take
+                        if (sp.sentence, sp.word) in hidden:
+                            color, shown = C.faint, Span("_" * len(sp.text), sp.role, sp.word, sp.sentence)
+                        elif (sp.sentence, sp.word) in dimmed:
+                            color = C.dim
+                    self._draw_span(draw, (self.pad + col * f.advance, y_ + f.dy), shown,
+                                    bold_ if strong(sp.sentence) else f.font, color, ud, f.tracking)
                     top, bottom = where.get(sp.sentence, (y_, y_))
                     where[sp.sentence] = (min(top, y_), max(bottom, y_ + f.line_h))
                 y_ += f.line_h
@@ -1193,7 +1204,7 @@ class TextOverlay:
         block_top = y
         if dlines and detail_first:
             y = draw_detail(y) + self.pad
-        y = draw_rows(rows, ff, unit_colors, y, load_font(ff.size, "semibold"), unit_strong)
+        y = draw_rows(rows, ff, unit_colors, y, load_font(ff.size, "semibold"), unit_strong, fade_=True)
         rows_y = dict(where)
         if dlines and not detail_first:
             y = draw_detail(y + self.pad)
@@ -1242,7 +1253,8 @@ class TextOverlay:
         panel = self._focus_panel(unit, state.detail, self._panel_current(state, unit),
                                  self._preview_from(state, unit), width,
                                  preview.text if preview and not preview.original else None, preview is not None, header_h,
-                                 detail_first=state.app == "review" and state.level == "paragraph")
+                                 detail_first=state.app == "review" and state.level == "paragraph",
+                                 faded=state.faded if state.app in ("count_in", "rehearse") else None)
         panel.header_h = header_h
         return panel
 

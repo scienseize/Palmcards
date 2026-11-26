@@ -19,6 +19,8 @@ sessions (which are evidence and never change with your settings).
   replay_mirrored  Review replays a take's video mirrored, as in the app (key m); by default
                  flipped back, as others see you
   fullscreen     the window fills the screen (key f in the app)
+  fade           fading cards: in a take, words said take after take dim, then blank
+                 (key w in the app; main.py --fade for one run)
   tutorial_done  the first-run gesture tutorial has been seen (key g shows it again)
   last_notes     the notes file opened last (kept by the app); main.py with no file opens it again
 """
@@ -44,6 +46,7 @@ class Prefs:
     video: bool = False  # record video of each take (palmcards.video); main.py --video for one run
     replay_mirrored: bool = False  # Review replays a take's video mirrored (key m); else as others see you
     fullscreen: bool = False  # the window fills the screen (key f)
+    fade: bool = False  # fading cards (palmcards.fade; key w); main.py --fade for one run
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
     done_hold_s: float = REHEARSE.done_hold_s
