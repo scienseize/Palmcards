@@ -412,6 +412,7 @@ class ViewState:
     start_progress: float = 0.0  # fist held to start a take, 0..1
     section: int = 0  # count_in, rehearse: the section on screen
     count_in: int = 0  # 3, 2, 1
+    end_progress: float = 0.0  # rehearse: how far the quiet at the end has got to stopping the take (AutoStop)
     calibration: str | None = None  # count_in: the calibration step, "camera" (look into the lens) or "notes"
     rec_s: float = 0.0  # length of the take so far
     recording_video: bool = False  # the take's video is being recorded too (the REC chip says so)
@@ -740,6 +741,8 @@ class TextOverlay:
             if state.hold_progress > 0:
                 second, progress = f"Keep holding to {'cancel' if state.app == 'count_in' else 'stop'}", \
                     state.hold_progress
+            elif state.end_progress > 0 and state.app == "rehearse":  # the take is ending itself
+                second, progress = f"Stopping{HINT_SEP}Speak to keep recording", state.end_progress
             elif state.note:
                 second = state.note
             elif state.calibration == "camera":

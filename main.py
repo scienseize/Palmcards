@@ -144,7 +144,7 @@ from palmcards.data import latest_session_for, started
 from palmcards.paths import logs_dir
 from palmcards.picker import pick_notes
 from palmcards.asr import get_recognizer
-from palmcards.follow import LiveFollow
+from palmcards.follow import AutoStop, LiveFollow
 from palmcards.speech import make_job
 from palmcards.vision import Backdrop, Watcher
 
@@ -387,6 +387,7 @@ class Takes:
         self.calibrate_next = False  # e: calibrate the eyes again at the next count-in
         self.gaze_check = False  # main.py --gaze-check: every full take is a gaze check
         self.check: dict | None = None  # the gaze check being run: {"seed", "t0", "prompts"}
+        self.stopper = AutoStop()  # the take ending itself after the last sentence (a drill: after it)
         self.video_on = False  # record video of each take (preferences `video`, main.py --video)
         self.video_off = ""  # why video was asked for and isn't recorded
         self.frame_size: tuple[int, int] | None = None  # the camera's, for the video
@@ -976,6 +977,7 @@ class Takes:
                 self.writer.meta["fade"] = {"hidden": [list(k) for k in sorted(self.fade_hidden)],
                                             "prompted": self.fade_prompted}
             self.recorder.start(self.writer)
+            self.stopper = AutoStop()
             self._start_video(number)
             if self.drill is None and self.follow is not None:
                 self.follow.start_take(self.section)
@@ -1018,15 +1020,18 @@ class Takes:
             return ""
         if ev.kind == "take_stop":
             writer = self._stop_recording()
+            note = ""
             if writer is not None:
                 self.log(ev.t, "take_stop", take=writer.number, duration_s=round(writer.seconds, 3), wav=writer.wav)
+                kind = "Practice" if self.drill is not None else "Take"
+                note = f"{kind} {writer.number} saved · " + "{}:{:02d}".format(*divmod(round(writer.seconds), 60))
             if self.drill is not None:
                 view.current = self.drill
             else:
                 view.current = next(i for i, s in enumerate(overlay.sentences) if s.section == self.section)
             self.drill = None
             view.scroll = overlay.scroll_to(view.current)
-            return ""
+            return note
         return ""
 
     def _fade_start(self) -> tuple[frozenset, frozenset] | None:
@@ -1093,6 +1098,32 @@ class Takes:
         if first and self.video.t_first is not None:  # the audio's manifest knows, should the app die mid-take
             self.writer.meta["video"] = {"state": "recording", "file": self.video.file,
                                          "t_first": round(self.video.t_first, 3), "codec": self.video.codec}
+
+    def quick_count_in(self) -> bool:
+        """The short count-in (REHEARSE.count_in_again_s): the session has a take and
+        nothing needs the full one (the eye calibration, a gaze check)."""
+        return bool(self.session.takes) and not self.gaze_check and not self.calibrate_next \
+            and (self.vision is None or self.session.calibration is not None)
+
+    def auto_stop(self, t: float) -> bool:
+        """The take ends itself: quiet after the notes' last sentence (a drill: after
+        speech), see AutoStop. Never during a gaze check, which ends on its own."""
+        if self.writer is None or self.recorder is None or self.check is not None:
+            return False
+        if self.drill is not None:
+            at_end = self.stopper.heard_s >= REHEARSE.end_heard_s
+        else:
+            f = self.follow.follower if self.follow is not None and self.follow.state == "following" else None
+            last = len(self.notes.sentences) - 1
+            # On the last sentence and near its end (reached in other words: wherever it is in it).
+            at_end = f is not None and f.sentence == last and (
+                f.at is None or f.at[0] != last
+                or f.at[1] >= len(self.notes.sentences[last].words) - 1 - FOLLOW.handoff_words)
+        if not self.stopper.update(t, self.recorder.level, at_end):
+            return False
+        self.writer.meta["stopped"] = "auto"
+        self.log(t, "auto_stop", drill=self.drill)
+        return True
 
     def check_over(self, t: float) -> bool:
         """A gaze check stops its take after the last prompt."""
@@ -1760,6 +1791,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 trace.write(json.dumps({"t": round(t_hand, 3), "hands": [
                     {"label": hd.handedness, "points": hd.points.round(1).tolist()} for hd in hands]}) + "\n")
             modes.undo_ready = modes.mode == "prepare" and takes.can_undo()
+            modes.quick_count_in = takes.quick_count_in()
             modes.retry_ready = modes.mode == "review" and bool(takes.analysis.failed())
             events = modes.update(*result)
             if takes.vision is not None:
@@ -1767,7 +1799,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         else:
             events = []
         events += modes.tick(start - t0)
-        if modes.mode == "rehearse" and takes.check_over(start - t0):  # a gaze check ends itself
+        if modes.mode == "rehearse" and (takes.check_over(start - t0)  # a gaze check ends itself
+                                         or takes.auto_stop(start - t0)):  # so does a take, quiet at the end
             modes.enter("review", start - t0)
             events.append(GestureEvent("take_stop", start - t0))
         snap_panel = snap_panel or any(ev.source == "key" for ev in queued)
@@ -1830,6 +1863,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.count_in = max(1, math.ceil(modes.count_in_end - (start - t0)))
             view.rec_s = takes.recorder.seconds if modes.mode == "rehearse" and takes.recorder else 0.0
             view.mic = takes.recorder.level if takes.recorder else 0.0
+            view.end_progress = takes.stopper.progress if modes.mode == "rehearse" else 0.0
             view.recording_video = takes.video is not None
             view.start_progress = 0.0
             view.detail = ()

@@ -1,3 +1,5 @@
+import pytest
+
 from palmcards.asr import LiveWord
 from palmcards.follow import FollowEvent, Follower
 from palmcards.notes import parse_text
@@ -168,3 +170,54 @@ def test_going_on_in_other_words_after_a_handoff_does_not_pull_it_back():
     # "the" reads close to "They" and ended the handoff; the old run then pulled it back to 0.
     sp.say("with this the camera")
     assert f.sentence >= 1
+
+
+def test_auto_stop_waits_for_the_end_then_for_quiet():
+    from palmcards.config import REHEARSE
+    from palmcards.follow import AutoStop
+
+    stop, t = AutoStop(), 0.0
+    for _ in range(90):  # 3 s of speech at 30 fps, not yet at the end
+        assert not stop.update(t, 0.75, at_end=False)
+        t += 1 / 30
+    for _ in range(150):  # quiet, but not at the end: never stops
+        assert not stop.update(t, 0.15, at_end=False)
+        t += 1 / 30
+    assert stop.heard_s == pytest.approx(3.0, abs=0.1)
+    stopped_at = None
+    for _ in range(150):  # at the end, quiet
+        if stop.update(t, 0.15, at_end=True):
+            stopped_at = t
+            break
+        t += 1 / 30
+    assert stopped_at is not None and 0 < stop.progress == 1.0
+
+
+def test_auto_stop_speech_starts_the_quiet_over():
+    from palmcards.config import REHEARSE
+    from palmcards.follow import AutoStop
+
+    stop, t = AutoStop(), 0.0
+    for level in [0.75] * 30 + [0.15] * 60:  # 2 s of quiet at the end: not yet
+        assert not stop.update(t, level, at_end=True)
+        t += 1 / 30
+    assert stop.progress > 0.5
+    assert not stop.update(t, 0.8, at_end=True) and stop.progress == 0.0  # a word: over again
+    t += 1 / 30
+    for _ in range(int(REHEARSE.end_silence_s * 30) - 5):
+        assert not stop.update(t, 0.15, at_end=True)
+        t += 1 / 30
+
+
+def test_auto_stop_works_over_a_noisy_room():
+    from palmcards.follow import AutoStop
+
+    stop, t = AutoStop(), 0.0
+    for level in [0.45, 0.8] * 60:  # room noise at 0.45 (-33 dBFS), speech at 0.8
+        stop.update(t, level, at_end=False)
+        t += 1 / 30
+    got = False
+    for _ in range(120):
+        got = got or stop.update(t, 0.47, at_end=True)  # the room's noise only: quiet
+        t += 1 / 30
+    assert got

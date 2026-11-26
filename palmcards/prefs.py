@@ -6,6 +6,7 @@ sessions (which are evidence and never change with your settings).
 
   reach          the hand box's size (0.6 .. 1.4): smaller, less movement to cross the notes
   start_hold_s   how long a fist is held to start a take
+  count_in_again_s  the count-in once the session has a take (0 .. 3 s; the first one is 3 s)
   done_hold_s    how long the OK sign is held to stop a take or cancel a count-in
                  (was stop_hold_s: an old prefs.json with it still works)
   high_contrast  brighter dimmed text and a darker backing (key c in the app)
@@ -52,6 +53,7 @@ class Prefs:
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
     done_hold_s: float = REHEARSE.done_hold_s
+    count_in_again_s: float = REHEARSE.count_in_again_s
     last_notes: str = ""  # absolute path of the notes file opened last; "" until one was
 
     def checked(self) -> "Prefs":
@@ -59,7 +61,8 @@ class Prefs:
         return replace(self, reach=min(max(float(self.reach), 0.6), 1.4),
                        room_dim=min(max(float(self.room_dim), 0.0), 1.0),
                        start_hold_s=min(max(float(self.start_hold_s), 0.3), 3.0),
-                       done_hold_s=min(max(float(self.done_hold_s), 0.5), 4.0))
+                       done_hold_s=min(max(float(self.done_hold_s), 0.5), 4.0),
+                       count_in_again_s=min(max(float(self.count_in_again_s), 0.0), 3.0))
 
 
 def path() -> Path:
@@ -101,7 +104,8 @@ def apply(prefs: Prefs) -> None:
     prefs = prefs.checked()
     # Only the fields preferences own; the rest of each setting stays as it is.
     gestures.CURSOR = replace(gestures.CURSOR, hand_box=hand_box(prefs.reach))
-    gestures.REHEARSE = replace(gestures.REHEARSE, start_hold_s=prefs.start_hold_s, done_hold_s=prefs.done_hold_s)
+    gestures.REHEARSE = replace(gestures.REHEARSE, start_hold_s=prefs.start_hold_s, done_hold_s=prefs.done_hold_s,
+                                count_in_again_s=prefs.count_in_again_s)
     render.set_contrast(prefs.high_contrast)
     render.set_reduced_motion(system_reduce_motion() if prefs.reduced_motion is None else prefs.reduced_motion)
 

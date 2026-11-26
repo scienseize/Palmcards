@@ -1394,6 +1394,7 @@ class ModeMachine:
         self.mode = "prepare"  # prepare | count_in | rehearse | review
         self.start_progress = 0.0  # fist hold, 0..1
         self.count_in_end = 0.0
+        self.quick_count_in = False  # set by the app: the session has a take, so REHEARSE.count_in_again_s
         self.drill = False  # the count-in or take is a drill
         self._back_to = "prepare"
         self._fist_since: float | None = None
@@ -1546,7 +1547,7 @@ class ModeMachine:
     def _enter(self, mode: str, t: float) -> None:
         if mode == "count_in":
             self._back_to = self.mode
-            self.count_in_end = t + REHEARSE.count_in_s
+            self.count_in_end = t + (REHEARSE.count_in_again_s if self.quick_count_in else REHEARSE.count_in_s)
         self.mode = mode
         self.drill = self.drill and mode in ("count_in", "rehearse")
         self.grammar.reset()

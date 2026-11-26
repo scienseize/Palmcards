@@ -43,7 +43,7 @@ import numpy as np
 
 from palmcards.align import STOPWORDS, align, content_hits, content_words, stem
 from palmcards.asr import LiveWord
-from palmcards.config import ALIGN, FOLLOW
+from palmcards.config import ALIGN, FOLLOW, REHEARSE
 from palmcards.notes import Notes, normalize
 
 
@@ -372,3 +372,49 @@ class LiveFollow:
                 self.stream.close()
             except Exception:
                 pass
+
+
+class AutoStop:
+    """A take that ends itself (REHEARSE.end_*): once the speaker is at the end
+    (`at_end`, from the app: the follow on the notes' last sentence; for a drill,
+    once it has heard speech for REHEARSE.end_heard_s), REHEARSE.end_silence_s of
+    quiet stops it. Quiet is the microphone level (0..1, as AudioRecorder.level)
+    under the take's own noise floor plus REHEARSE.end_margin, so a noisy room
+    or a quiet microphone works the same. Any sound starts the quiet over.
+
+        stop = AutoStop()
+        stop.update(t, level, at_end) -> True once it should stop
+        stop.progress                 0..1, for the label's bar
+    """
+
+    def __init__(self):
+        self._levels: list[float] = []
+        self._quiet_since: float | None = None
+        self._last_t: float | None = None
+        self.heard_s = 0.0  # seconds above the floor so far
+        self.progress = 0.0
+
+    def quiet(self, level: float) -> bool:
+        """Under the take's noise floor plus the margin, and the margin under its speech
+        (the 90th percentile): with only speech heard so far, nothing is quiet yet."""
+        if not self._levels:
+            return False
+        floor, speech = np.percentile(self._levels, [REHEARSE.end_floor_pct, 90.0])
+        return level < min(floor + REHEARSE.end_margin, speech - REHEARSE.end_margin)
+
+    def update(self, t: float, level: float, at_end: bool) -> bool:
+        dt = 0.0 if self._last_t is None else t - self._last_t
+        self._last_t = t
+        self._levels.append(level)
+        if len(self._levels) > 20_000:  # ~10 min of frames: plenty for the floor
+            self._levels = self._levels[-10_000:]
+        if not self.quiet(level):
+            self.heard_s += dt
+            self._quiet_since, self.progress = None, 0.0
+            return False
+        if not at_end:
+            self._quiet_since, self.progress = None, 0.0
+            return False
+        self._quiet_since = t if self._quiet_since is None else self._quiet_since
+        self.progress = min(1.0, (t - self._quiet_since) / REHEARSE.end_silence_s)
+        return self.progress >= 1.0

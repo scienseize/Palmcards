@@ -2339,3 +2339,23 @@ Tests: pytest (full) -> 654 passed. New: a reworded sentence is own_words betwee
   recognition confirmed only 46% of the words, a recogniser problem, not the matching.
 Not checked: a paraphrased pitch take on the camera (no recording of one exists yet).
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: Rehearse/Review plan, stage B: lighter takes (the user checked stage A: "Works")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: the count-in is REHEARSE.count_in_again_s (1 s; preference count_in_again_s, 0-3 s) once the
+  session has a take and nothing needs the full one (the eye calibration, a gaze check):
+  ModeMachine.quick_count_in, set by the app each frame (Takes.quick_count_in); replays keep 3 s.
+  follow.AutoStop: a take ends itself after REHEARSE.end_silence_s (2.5 s) of quiet once the follow is
+  on the last sentence near its end (or reached it in other words); a drill once it heard end_heard_s
+  of speech. Quiet: the mic level under min(the take's 10th percentile + end_margin, its 90th
+  percentile - end_margin), so a noisy room works and speech alone is never quiet. The label says
+  "Stopping · Speak to keep recording" with a bar; logged auto_stop, the take keeps stopped: "auto".
+  Every stop says "Take N saved · m:ss" in the label.
+Tests: pytest (full) -> 660 passed. New: the short count-in; AutoStop waits for the end and for quiet,
+  speech starts it over, a noisy room still stops; with fake devices, a take whose notes were all read
+  ends itself in quiet, one that never reached the end doesn't. python -m palmcards.replay: all ok.
+Not checked: on the camera; whether 2.5 s is right for a pitch's last line (a long pause before the
+  final sentence's last words would stop it), and the noise floor on the real microphone.
+```

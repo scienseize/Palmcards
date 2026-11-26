@@ -405,3 +405,69 @@ def test_a_slow_collection_is_seen_and_handed_over_once():
     slow = watch.drain()
     assert len(slow) == 1 and slow[0][1] == 2 and slow[0][0] >= main.GC_SLOW_MS
     assert watch.drain() == []
+
+
+class FakeLiveReading:
+    """A live stream that hears the whole of NOTES read, once, then nothing."""
+    state, errors, where = "ready", [], "fake"
+
+    def __init__(self, clock):
+        self.clock, self.said = clock, False
+
+    @property
+    def ready(self):
+        return True
+
+    def reset(self):
+        pass
+
+    def feed(self, samples, t_end):
+        pass
+
+    def poll(self):
+        from palmcards.asr import LiveWord
+        if self.said:
+            return []
+        self.said = True
+        now = self.clock()
+        words = "Hello there friend. Good night all. See you soon.".split()
+        return [LiveWord(w, now - 3 + 0.3 * i, now - 2.8 + 0.3 * i, 0.9, confirmed_at=now) for i, w in enumerate(words)]
+
+    def close(self):
+        self.state = "closed"
+
+
+class QuietingRecorder(FakeRecorder):
+    """Speech for the take's first second, then the room's quiet."""
+
+    @property
+    def level(self):
+        return 0.8 if self.writer is not None and self.writer.seconds < 1.0 else 0.1
+
+    @level.setter
+    def level(self, value):
+        pass
+
+
+def test_a_take_ends_itself_in_quiet_after_the_last_sentence(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from palmcards import follow
+    monkeypatch.setattr(follow, "REHEARSE", replace(follow.REHEARSE, end_silence_s=0.3))
+    rig = Rig(tmp_path, monkeypatch, live=lambda language, clock, hints: FakeLiveReading(clock), keys={200: ord("q")})
+    rig.devices.recorder = lambda clock: rig.recorders.append(QuietingRecorder(clock)) or rig.recorders[-1]
+    assert rig.run() == 0
+    (take,) = rig.session().takes
+    assert take.duration_s < 3.0  # stopped well before q, at frame 200
+    log = (tmp_path / "log.jsonl").read_text()
+    assert '"auto_stop"' in log
+
+
+def test_a_take_without_the_end_reached_does_not_end_itself(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from palmcards import follow
+    monkeypatch.setattr(follow, "REHEARSE", replace(follow.REHEARSE, end_silence_s=0.3))
+    rig = Rig(tmp_path, monkeypatch, keys={120: ord("q")})  # FakeLive hears nothing
+    assert rig.run() == 0
+    assert '"auto_stop"' not in (tmp_path / "log.jsonl").read_text()

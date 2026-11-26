@@ -241,6 +241,17 @@ class Knob:
 class Rehearse:
     start_hold_s: float = 1.0  # closed fist held this long (Prepare, Review) starts a take
     count_in_s: float = 3.0  # 3-2-1 before recording
+    # Once the session has a take (and the eyes are calibrated): a short count-in, a take is
+    # practice, not a ceremony. The calibration's count-in and a gaze check keep the full one.
+    count_in_again_s: float = 1.0
+    # A take ends itself (palmcards.follow.AutoStop): on the notes' last sentence (a drill: once
+    # it has heard speech for end_heard_s), end_silence_s of quiet stops it. Quiet: the
+    # microphone level under the take's noise floor (its end_floor_pct percentile so far)
+    # plus end_margin (of the 0..1 level scale: 60 dB) for that long. Speech cancels it.
+    end_silence_s: float = 2.5
+    end_heard_s: float = 1.0
+    end_floor_pct: float = 10.0
+    end_margin: float = 0.2
     # The OK sign held this long, anywhere in the frame ("done"): stops a take
     # or drill, cancels the count-in. In Rehearse nothing else a hand does is
     # a command.

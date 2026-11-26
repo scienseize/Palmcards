@@ -677,6 +677,16 @@ def test_fist_held_one_second_starts_the_count_in():
     assert kinds(m.tick(t + REHEARSE.count_in_s)) == ["take_start"] and m.mode == "rehearse"
 
 
+def test_once_the_session_has_a_take_the_count_in_is_short():
+    m = ModeMachine((W, H))
+    m.quick_count_in = True  # the app says so: a take is recorded and the eyes are calibrated
+    events, t = run(m, hold(fist, 1.3))
+    assert kinds(events) == ["count_in"]
+    assert t < m.count_in_end <= t + REHEARSE.count_in_again_s + 1e-6
+    assert REHEARSE.count_in_again_s < REHEARSE.count_in_s
+    assert kinds(m.tick(m.count_in_end)) == ["take_start"]
+
+
 def test_fist_while_focused_does_not_start_a_take():
     m = ModeMachine((W, H))
     _, t = run(m, hold(one, 0.3) + hold(pinch, 0.3))
