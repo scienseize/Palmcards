@@ -160,16 +160,17 @@ LLM_NOTE_S = 3.0  # an LLM answer or failure arrives while you're doing somethin
 HINT_EVERY_S = 6.0  # a hint about a gesture that didn't act is shown at most this often
 CAPTION_LINGER_S = 0.15  # a replay's caption still marks a word as being said this long after it ends
 ENTER = 13
-IN_LOG = "(DETAILS IN THE LOG)"
-KEY_REJECTED = "CLOUD AI: API KEY REJECTED: CHECK ANTHROPIC_API_KEY"
+IN_LOG = "(details in the log)"
+KEY_REJECTED = "Cloud AI: the API key was rejected. Check ANTHROPIC_API_KEY."
 
 
 def short(reason: BaseException | str | None, limit: int = 40) -> str:
-    """A problem's reason, short enough for the label or the alert line, in
-    capitals like the rest of it. The whole of it goes to the log."""
+    """A problem's reason, short enough for the label or the alert line.
+    The whole of it goes to the log."""
     if isinstance(reason, BaseException):
         reason = getattr(reason, "strerror", None) or str(reason) or type(reason).__name__
-    text = (str(reason or "").strip().splitlines() or [""])[0].upper()
+    text = (str(reason or "").strip().splitlines() or [""])[0]
+    text = text[:1].lower() + text[1:] if text[1:2].islower() else text  # it follows a colon
     if not text:
         return IN_LOG
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
@@ -196,9 +197,9 @@ def hear_sentence(sentence: int, overlay: TextOverlay, speaker, log: GestureLog,
             speaker.say_words(words)
     except OSError as exc:
         print(f"text to speech failed: {exc}", file=sys.stderr)
-        return f"COULD NOT SPEAK: {short(exc)}"
+        return f"Couldn't speak it: {short(exc)}"
     log(t, "hear", sentence=sentence)
-    return "SPEAKING SENTENCE"
+    return "Speaking the sentence…"
 
 
 def play_focus(view: ViewState, overlay: TextOverlay, log: GestureLog, speaker, takes: "Takes | None",
@@ -237,10 +238,10 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
     return "review", (sentence,), board.shown(sentence)
 
 
-FIST_HINT = "NEW TAKE: DROP THE HAND, RAISE\u00a0A\u00a0FIST"  # it wraps at the comma, not before "A FIST"
-FOLD_HINT = "FOLD IN ONE QUICK MOVE: FOCUS"  # a slow fold closes into a fist: no focus, and no take
-PALM_HINT = {"rehearse": "A PALM DOESN'T STOP A TAKE", "count_in": "A PALM DOESN'T CANCEL"}
-THUMB_HINT = {"rehearse": "A THUMBS-UP DOESN'T STOP A TAKE", "count_in": "A THUMBS-UP DOESN'T CANCEL"}
+FIST_HINT = "To record, lower your hand, then raise a\u00a0fist"  # never "fist" alone on a row
+FOLD_HINT = "To select, fold your fingers in one quick move"  # a slow fold closes into a fist: no focus, no take
+PALM_HINT = {"rehearse": "An open palm doesn't stop recording", "count_in": "An open palm doesn't cancel"}
+THUMB_HINT = {"rehearse": "A thumbs-up doesn't stop recording", "count_in": "A thumbs-up doesn't cancel"}
 HINT_DWELL_S = 0.6  # a gesture that does nothing held this long before its hint (a fist formed from
 #                     another pose: a fold or a slow pinch passes through a fist on its way to a focus;
 #                     an open palm in a take)
@@ -291,9 +292,9 @@ def sync_view(grammar: Grammar, view: ViewState, overlay: TextOverlay) -> None:
 
 
 COMMIT_FIRST = {  # a pinch + lift with nothing to use yet, in Prepare: what comes first
-    ("prepare", "word"): "NOTHING TO USE YET: OPEN PALM, HELD: ALTERNATIVES",
-    ("prepare", "sentence"): "NOTHING TO USE YET: L-HAND: TONE",
-    ("prepare", "paragraph"): "NOTHING TO USE YET: TWO L-HANDS: LENGTH",
+    ("prepare", "word"): "Nothing to use yet. Hold an open palm for other words first.",
+    ("prepare", "sentence"): "Nothing to use yet. Make an L to change the tone first.",
+    ("prepare", "paragraph"): "Nothing to use yet. Make an L with each hand to change the length first.",
 }
 
 
@@ -316,7 +317,7 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         return None
     if ev.kind == "commit_ignored":  # nothing to commit yet: the focus stays, and what comes first
         view.note = COMMIT_FIRST.get((view.app, ev.level), "") if view.app == "prepare" else \
-            "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
+            "To practise, select a sentence, then pinch and lift"
         return time.perf_counter() + NOTE_S if view.note else None
     if ev.kind == "rewind":  # a pinch took the pointer back to before the curl: the pick goes back too
         if takes is not None:
@@ -327,12 +328,12 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         return time.perf_counter() + NOTE_S if view.note else None
     if ev.kind == "palm_stop":  # a new open palm while it plays: stop it; the focus stays
         if takes is not None and takes.stop_playback("palm", ev.t):
-            view.note = "STOPPED"
+            view.note = "Stopped"
             return time.perf_counter() + NOTE_S
         return None
     if ev.kind == "commit" and view.app == "review":
         if ev.level != "sentence":  # a sentence commit is a drill, which the mode events start
-            view.note = "TO DRILL: FOCUS A SENTENCE, PINCH + LIFT"
+            view.note = "To practise, select a sentence, then pinch and lift"
     elif ev.kind == "commit":
         sentence = view.focus.sentence if view.focus else None
         unit = tuple(overlay.unit(ev.level, sentence)) if sentence is not None else ()
@@ -351,10 +352,10 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         elif ev.op is None and takes is not None and unit in takes.proposals:
             view.note = takes.use_proposal(unit)
         elif ev.op in ("tone", "stretch"):
-            view.note = "PREVIEW NOT READY: SET UP THE OPTIONAL AI"
+            view.note = "No preview yet: this needs the optional AI"
             return time.perf_counter() + NOTE_S
         else:
-            view.note = "NO CHANGE"
+            view.note = "Nothing changed"
     if ev.kind == "back" and takes is not None and view.focus is not None:  # backing out discards a proposal
         takes.proposals.pop(tuple(overlay.unit(ev.level, view.focus.sentence)), None)
     if takes is not None:
@@ -453,29 +454,29 @@ class Takes:
             i = next((k for k, p in enumerate(prompts) if now < p["t1"]), len(prompts) - 1)
             return f"{gaze.prompt_text(prompts[i])}  {i + 1}/{len(prompts)}"
         if mode in ("count_in", "rehearse") and self.drill is not None:
-            return f"SENTENCE {self.drill + 1}"
+            return f"Sentence {self.drill + 1}"
         if mode in ("count_in", "rehearse"):
-            title = self.notes.sections[self.section].title or "untitled"
-            fading = " · FADING CARDS" if view.faded is not None else ""
-            return f"SECTION {self.section + 1}/{len(self.notes.sections)}: {title.upper()}{fading}"
+            title = self.notes.sections[self.section].title or "Untitled"
+            fading = " · Fading cards" if view.faded is not None else ""
+            return f"Section {self.section + 1} of {len(self.notes.sections)}: {title}{fading}"
         if mode == "review" and view.mode == "focus" and view.level == "sentence" and view.focus is not None:
             said = self.board.said_in(view.focus.sentence)
             if len(said) > 1:
                 return self.board.take_label(view.focus.sentence)
             if said and len(self.board.rows) == 1:  # one take in all: nothing to compare it with
                 return self.board.take_name(said[0])
-            return f"ONLY TAKE {said[0]} SAID THIS SENTENCE" if said else "NO TAKE SAID THIS SENTENCE"
+            return f"Only take {said[0]} has this sentence" if said else "No take has this sentence yet"
         if mode == "review" and view.mode == "focus" and view.level == "paragraph" and view.focus is not None:
             n = self.board.paragraph_shown(self.paragraph(view.focus.sentence))
-            return self.board.take_name(n) if n is not None else "NO TAKE SAID THIS PARAGRAPH"
+            return self.board.take_name(n) if n is not None else "No take has this paragraph yet"
         if self.finalizing:
-            return f"TAKE {self.finalizing[0].number}: SAVING…"
+            return f"Saving take {self.finalizing[0].number}…"
         queue = list(self.analysis.pending)
         queue += [n for n in self.deferred if n not in queue]
         if queue:
             dots = "." * (int(time.perf_counter() * 2) % 4)
-            waiting = f" · {len(queue) - 1} WAITING" if len(queue) > 1 else ""
-            return f"TAKE {queue[0]}: ANALYSING{dots:<3}{waiting}"
+            waiting = f" · {len(queue) - 1} waiting" if len(queue) > 1 else ""
+            return f"Analysing take {queue[0]}{dots:<3}{waiting}"
         if mode == "review":
             return self.last_saved
         return ""  # Prepare: the renderer says how to begin (render.BROWSE_ENTRY, NEW_TAKE)
@@ -521,11 +522,13 @@ class Takes:
 
     # --- the optional LLM: requests from explicit actions, answers as previews ---
 
-    LLM_WHAT = {"meaning": "MEANING", "alternatives": "ALTERNATIVES", "tone": "TONE REWRITE", "length": "LENGTH REWRITE"}
+    LLM_WHAT = {"meaning": "the meaning", "alternatives": "other words", "tone": "a new tone",
+                "length": "a new length"}
 
     @property
     def no_llm(self) -> str:
-        return f"NEED THE OPTIONAL AI ({short(self.llm_off) if self.llm_off else 'NOT SET UP, SEE README'}): NOTHING SENT"
+        why = short(self.llm_off) if self.llm_off else "not set up, see the README"
+        return f"this needs the optional AI ({why}). Nothing was sent."
 
     @property
     def llm(self) -> str:
@@ -623,28 +626,30 @@ class Takes:
     def commit_preview(self, view: ViewState, unit: tuple[int, ...], value: float, now: float) -> tuple[bool, str]:
         op = self.previews.operation
         if op is None or op.source_revision != self._llm_revision() or op.unit != unit:
-            return False, "PREVIEW NOT READY"
+            return False, "The preview isn't ready yet"
         if not self.previews.can_commit(view.edit_preview, value):
             if op.error:
                 self.previews.retry(now)
-                return False, "RETRYING PREVIEW" if op.loading else op.error
-            return False, "PREVIEW NOT READY"
+                return False, "Trying the preview again…" if op.loading else op.error
+            return False, "The preview isn't ready yet"
         if op.displayed_target == op.original_target or op.displayed_candidate == op.original:
             self.previews.cancel()
-            return True, "ORIGINAL KEPT: NO CHANGE"
+            return True, "Kept the original: nothing changed"
         error = self._save_edit(replace_text(self.notes, list(unit), op.displayed_candidate),
                                 f"{op.kind} preview committed", op=op.kind, sentences=list(unit))
-        return (False, error) if error else (True, f"EDIT SAVED  /  {UNDO_HINT}")
+        return (False, error) if error else (True, f"Edit saved  /  {UNDO_HINT}")
 
     def ask_rewrite(self, kind: str, unit: tuple[int, ...], amount: float) -> str:
-        what = "TONE" if kind == "tone" else "LENGTH"
+        what = "Tone" if kind == "tone" else "Length"
         if self.assistant is None:
-            return f"{what} EDITS {self.no_llm}"
+            return f"{what} edits: {self.no_llm}"
         text = " ".join(self.notes.sentences[i].text for i in unit)
         self.assistant.ask(kind, unit, self._llm_revision(),
                            rewrite_request(kind, text, amount), lambda reply: parse_rewrite(reply, text, kind, amount))
         self.log(time.perf_counter() - self.t0, "llm", ask=kind, sentences=list(unit), amount=amount)
-        return f"ASKING FOR A {'WARMER' if kind == 'tone' and amount > 0 else 'COOLER' if kind == 'tone' else 'LONGER' if amount > 1 else 'SHORTER'} VERSION..."
+        which = "warmer" if kind == "tone" and amount > 0 else "more formal" if kind == "tone" else \
+            "longer" if amount > 1 else "shorter"
+        return f"Asking for a {which} version…"
 
     def reset_pick(self) -> None:
         """A new focus, or leaving one: Review's take picker starts again on the
@@ -668,13 +673,13 @@ class Takes:
             if self.previews.accept(a, self._llm_revision()):
                 continue
             if a.revision != self._llm_revision():
-                note = "THE NOTES CHANGED: SUGGESTION DROPPED"
+                note = "The notes changed, so the suggestion was dropped"
                 continue
             if a.error:
                 print(f"LLM {a.kind}: {a.error}", file=sys.stderr)
                 if a.reason == "API KEY REJECTED":
                     self.llm_alert = KEY_REJECTED
-                note = f"{self.LLM_WHAT.get(a.kind, a.kind.upper())} FAILED: {a.reason}, NOTHING CHANGED"
+                note = f"Couldn't get {self.LLM_WHAT.get(a.kind, a.kind)}: {a.reason.lower().replace("api ", "API ")}. Nothing changed."
                 self.llm_failed.add((a.kind, a.key))
                 continue
             if a.kind == "meaning":
@@ -684,7 +689,7 @@ class Takes:
                 self.alternatives[a.key] = tuple(a.value)
                 continue
             self.proposals[a.key] = (a.kind, a.value, a.value)
-            note = "PROPOSAL READY: FOCUS IT AGAIN TO SEE IT"
+            note = "A suggestion is ready: select it again to see it"
         return note
 
     def _log_llm_usage(self, abandoned: bool = False) -> None:
@@ -711,7 +716,7 @@ class Takes:
             rid = self.session.edit(notes, note=what)
         except (OSError, SessionError) as exc:
             print(f"could not save the edit: {exc}", file=sys.stderr)
-            return f"EDIT NOT SAVED: {short(exc)}"
+            return f"The edit wasn't saved: {short(exc)}"
         self._use_notes(self.session.current_notes())
         self.log(time.perf_counter() - self.t0, "edit", revision=rid, **log)
         return ""
@@ -720,13 +725,13 @@ class Takes:
         old = self.notes.sentences[sentence].words[word].text
         note = self._save_edit(replace_word(self.notes, sentence, word, text), f'"{old}" -> "{text}"',
                                op="alternative", sentence=sentence, word=word, text=text)
-        return note or f'"{old.upper()}" → "{text.upper()}"  /  {UNDO_HINT}'
+        return note or f'“{old}” → “{text}”  /  {UNDO_HINT}'
 
     def use_proposal(self, unit: tuple[int, ...]) -> str:
         kind, value, _ = self.proposals.pop(unit)
         note = self._save_edit(replace_text(self.notes, list(unit), value), f"{kind} proposal used", op=kind,
                                sentences=list(unit))
-        return note or f"{kind.upper()} PROPOSAL USED  /  {UNDO_HINT}"
+        return note or f"{kind.capitalize()} suggestion used  /  {UNDO_HINT}"
 
     def can_undo(self) -> bool:
         """An edit to undo: the current notes revision has a parent."""
@@ -735,13 +740,13 @@ class Takes:
 
     def undo(self) -> str:
         if self.session.current_revision is None or self.session._parsed is not None:
-            return "NOTHING TO UNDO"
+            return "Nothing to undo"
         rid = self.session.undo()
         if rid is None:
-            return "NOTHING TO UNDO"
+            return "Nothing to undo"
         self._use_notes(self.session.current_notes())
         self.log(time.perf_counter() - self.t0, "undo", revision=rid)
-        return "UNDONE"
+        return "Undone"
 
     def export_notes(self, t: float) -> str:
         """Key o in Review: the current notes revision to a new file in the session's exports/ folder,
@@ -750,20 +755,20 @@ class Takes:
 
         rid = self.session.current_revision
         if rid is None or self.session._parsed is not None:  # nothing saved yet
-            return "NOTHING TO EXPORT YET"
+            return "Nothing to export yet"
         fmt = self.session.notes.suffix.lower().lstrip(".").replace("markdown", "md")
         fmt = fmt if fmt in export.FORMATS else "txt"
         dest = self.session.dir / "exports" / f"{self.session.notes.stem}-{rid}.{fmt}"
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
             export.write(self.notes, dest, fmt, self.session.notes)
-            note = f"EXPORTED TO EXPORTS/{dest.name.upper()}"
+            note = f"Exported to exports/{dest.name}"
         except FileExistsError:  # this revision was exported before: it is still there
-            note = f"ALREADY EXPORTED: EXPORTS/{dest.name.upper()}"
+            note = f"Already exported: exports/{dest.name}"
         except OSError as exc:
             print(f"cannot export: {exc}", file=sys.stderr)
             self.log(t, "key", command="export", mode="review", acted=False, error=str(exc))
-            return f"EXPORT FAILED: {short(exc)}"
+            return f"Export failed: {short(exc)}"
         print(f"exported {dest}")
         self.log(t, "key", command="export", mode="review", acted=True, path=str(dest))
         return note
@@ -772,22 +777,22 @@ class Takes:
         """Play a sentence (current notes' index) from the take Review shows for it."""
         n = self.board.shown(sentence)
         if n is None:
-            return "NO TAKE TO PLAY"
+            return "No take to play"
         if not self._play(n, [sentence]):
-            return self._play_error or f"TAKE {n}: SENTENCE NOT SAID"
+            return self._play_error or f"Take {n} doesn't have this sentence"
         self.log(time.perf_counter() - self.t0, "play", take=n, sentence=sentence)
-        return f"PLAYING TAKE {n}"
+        return f"Playing take {n}"
 
     def play_paragraph(self, sentences: list[int]) -> str:
         """Play a paragraph (current notes' indices) from the take Review shows for it:
         from its first word said to its last."""
         n = self.board.paragraph_shown(sentences)
         if n is None:
-            return "NO TAKE TO PLAY"
+            return "No take to play"
         if not self._play(n, sentences):
-            return self._play_error or f"TAKE {n}: PARAGRAPH NOT SAID"
+            return self._play_error or f"Take {n} doesn't have this paragraph"
         self.log(time.perf_counter() - self.t0, "play", take=n, sentences=list(sentences))
-        return f"PLAYING TAKE {n}"
+        return f"Playing take {n}"
 
     def _play(self, n: int, sentences: list[int]) -> bool:
         """Play take n's audio for these sentences (current notes' indices;
@@ -815,7 +820,7 @@ class Takes:
                                      video=reader, video_t0=span[0])
         except Exception as exc:  # no output device
             print(f"could not play: {exc}", file=sys.stderr)
-            self._play_error = f"COULD NOT PLAY: {short(exc)}"
+            self._play_error = f"Couldn't play it: {short(exc)}"
             return False
         return True
 
@@ -883,9 +888,9 @@ class Takes:
             return self.llm_alert
         if mode in ("count_in", "rehearse") and self.follow is not None and self.follow.state == "failed" \
                 and self.drill is None:
-            return f"VOICE FOLLOW OFF: {short(self.follow.error)}  /  N: NEXT SECTION"
+            return f"Voice follow is off: {short(self.follow.error)}  /  N: next section"
         if failed := self.analysis.failed():
-            return f"TAKE {failed[0]}: ANALYSIS FAILED {IN_LOG}  /  OPEN PALM, HELD, OR R: RETRY"
+            return f"Couldn't analyse take {failed[0]} {IN_LOG}  /  Hold an open palm or press R to retry"
         return ""
 
     def sync_review(self, grammar: Grammar, view: ViewState, overlay: "TextOverlay | None" = None,
@@ -899,7 +904,7 @@ class Takes:
             shown = self.board.shown(focused)
             if gs.point is None:
                 picker.index = said.index(shown) if shown in said else len(said) - 1
-            view.takes = tuple(f"TAKE {n}" + (" (DRILL)" if n in self.board.drills else "") for n in said)
+            view.takes = tuple(f"Take {n}" + (" (practice)" if n in self.board.drills else "") for n in said)
             view.take_shown = picker.index
             if gs.op == "take":
                 picker.update(t, gs.point, overlay.take_points(view), (overlay.box_w, overlay.box_h))
@@ -938,12 +943,12 @@ class Takes:
         print(f"take {n} (transcribed and measured in {result['seconds']:.1f} s)\n{result['report']}")
         if take.drill is not None:
             row = self.board.rows[n].get(take.drill, {})
-            pace = f"{row['wpm']:.0f} WPM" if row.get("wpm") is not None else "NOT SAID"
-            self.last_saved = f"TAKE {n} (DRILL): {pace}"
+            pace = f"{row['wpm']:.0f} words a minute" if row.get("wpm") is not None else "the sentence wasn't heard"
+            self.last_saved = f"Take {n} (practice): {pace}"
             return ""
         # The take table beside the notes has the measures; the label only says the take is in.
         c = counts(result["alignment"])
-        self.last_saved = f"TAKE {n}: {c['spoken']} OF {len(result['alignment']['sentences'])} SENTENCES SAID"
+        self.last_saved = f"Take {n}: you said {c['spoken']} of {len(result['alignment']['sentences'])} sentences"
         return ""
 
     def handle(self, ev: GestureEvent, modes: ModeMachine, view: ViewState, overlay: TextOverlay) -> str:
@@ -964,7 +969,7 @@ class Takes:
                 self.log(ev.t, "mic_error", error=str(exc))
                 modes.cancel_count_in(ev.t)
                 self.drill = None
-                return "MICROPHONE UNAVAILABLE"
+                return "The microphone isn't available"
             self.section = 0 if self.drill is None else self.notes.sentences[self.drill].section
             view.current = self.drill if self.drill is not None else self.first_of(self.section)
             view.panel_scroll, view.preview_next = 0.0, False
@@ -989,7 +994,7 @@ class Takes:
                 self.vision.cancel()
             self.recorder.close()
             self.drill = None
-            return "TAKE CANCELLED"
+            return "Recording cancelled"
         if ev.kind == "take_start":
             self.alert = ""
             note = self._finish_calibration(ev.t) \
@@ -1002,7 +1007,7 @@ class Takes:
             except (OSError, SessionError) as exc:
                 print(f"cannot record: {exc}", file=sys.stderr)
                 self.log(ev.t, "record_error", error=str(exc))
-                self.alert = f"CANNOT RECORD: {short(exc)}  /  OK SIGN TO STOP"
+                self.alert = f"Can't record: {short(exc)}  /  Hold an OK sign to stop"
                 return ""
             self.writer.mark_section(ev.t, self.section, "start")
             if view.faded is not None:
@@ -1021,7 +1026,7 @@ class Takes:
                 if self.vision is None:
                     print(f"gaze check: face tracking is off ({self.vision_off}); recording a plain take",
                           file=sys.stderr)
-                    return f"GAZE CHECK NEEDS FACE TRACKING: {short(self.vision_off)}"
+                    return f"The gaze check needs face tracking: {short(self.vision_off)}"
                 seed = secrets.randbelow(1 << 30)
                 self.check = {"seed": seed, "t0": round(ev.t, 3), "prompts": gaze.prompt_schedule(seed)}
                 self.writer.meta["gaze_check"] = self.check
@@ -1029,7 +1034,7 @@ class Takes:
             return note
         if ev.kind == "next_section":
             if self.section + 1 >= len(self.notes.sections):
-                return "LAST SECTION"
+                return "This is the last section"
             source = "key"  # sections move with the voice, or by key
             self.section += 1
             view.current, view.panel_scroll, view.preview_next = self.first_of(self.section), 0.0, False
@@ -1041,7 +1046,7 @@ class Takes:
             return ""
         if ev.kind == "previous_section":  # a key: undo a wrong move
             if self.section == 0:
-                return "FIRST SECTION"
+                return "This is the first section"
             self.section -= 1
             view.current, view.panel_scroll, view.preview_next = self.first_of(self.section), 0.0, False
             if self.writer is not None:
@@ -1144,14 +1149,14 @@ class Takes:
             return ""
         print(f"eye calibration {cid} {summary['status']}: {summary['reason']}; it runs again at the next take",
               file=sys.stderr)
-        return "EYE CALIBRATION DIDN'T WORK: AGAIN AT THE NEXT TAKE"
+        return "Eye calibration didn't work. It runs again at the next take."
 
     def recalibrate(self) -> str:
         """e: calibrate the eyes again at the next count-in."""
         if self.vision is None:
-            return f"FACE TRACKING IS OFF: {short(self.vision_off)}"
+            return f"Face tracking is off: {short(self.vision_off)}"
         self.calibrate_next = True
-        return "EYES CALIBRATED AGAIN AT THE NEXT TAKE"
+        return "Your eyes are calibrated again at the next take"
 
     def _save_vision(self, writer: TakeWriter) -> dict:
         """The take's face, pose and hand features to take-NN.face.npz; what to note on the take."""
@@ -1252,7 +1257,7 @@ class Takes:
         if self.writer is not None and self.writer.error and not self.alert:
             print(f"take {self.writer.number}: recording failed: {self.writer.error}; the audio up to here is kept",
                   file=sys.stderr)
-            self.alert = f"RECORDING FAILED: {short(self.writer.error)}  /  AUDIO SO FAR KEPT"
+            self.alert = f"Recording failed: {short(self.writer.error)}  /  The audio so far is kept"
 
     def poll(self) -> str:
         """Add takes that finished writing to the session. Returns a label note."""
@@ -1274,7 +1279,7 @@ class Takes:
         manifest = writer.manifest()
         if manifest["samples"] == 0:
             print(f"take {writer.number}: no audio was written ({writer.error or 'none arrived'})", file=sys.stderr)
-            self.alert = f"TAKE NOT SAVED: {short(writer.error) if writer.error else 'NO AUDIO ARRIVED'}"
+            self.alert = f"The take wasn't saved: {short(writer.error) if writer.error else 'no audio arrived'}"
             return ""
         take = self.session.finish_take(manifest, None if status == "saved" else status)
         m, s = divmod(round(take.duration_s), 60)
@@ -1282,16 +1287,16 @@ class Takes:
         print(f"saved {self.session.dir / take.wav} ({take.duration_s:.1f} s, {take.status}"
               + (f", {gaps:.2f} s of audio lost" if gaps else "") + ")")
         if take.status != "saved":
-            self.alert = f"TAKE {take.number} {take.status.upper()}: KEPT, NOT ANALYSED {IN_LOG}"
+            self.alert = f"Take {take.number} was {take.status}: kept, not analysed {IN_LOG}"
             print(f"take {take.number} is {take.status}; analyse it anyway with: python -m palmcards.speech "
                   f"{self.session.dir} --take {take.number} --incomplete", file=sys.stderr)
             return ""
         self._submit(take.number)
-        self.last_saved = f"TAKE {take.number} SAVED ({m}:{s:02d})"
+        self.last_saved = f"Take {take.number} saved ({m}:{s:02d})"
         if take.silent:
             print("warning: the take is silent. On macOS, allow Microphone access for your terminal "
                   "app in System Settings > Privacy & Security > Microphone.", file=sys.stderr)
-            self.alert = f"TAKE {take.number} IS SILENT: CHECK MICROPHONE ACCESS"  # until the next take starts
+            self.alert = f"Take {take.number} is silent. Check microphone access."  # until the next take starts
         return ""
 
     def _submit(self, number: int) -> None:
@@ -1316,7 +1321,7 @@ class Takes:
 
     def retry(self) -> str:
         n = self.analysis.retry_failed()
-        return f"RETRYING ANALYSIS OF {n} TAKE{'S' if n != 1 else ''}" if n else "NOTHING TO RETRY"
+        return f"Analysing {n} take{'s' if n != 1 else ''} again…" if n else "Nothing to retry"
 
     def close(self) -> None:
         """Finish any take (kept as "interrupted" when closing on an error), release
@@ -1412,7 +1417,7 @@ def show_error(devices: Devices, title: str, rows: tuple[str, ...] = (), can_pic
     terminal has nowhere else to say it), until q, Esc or the window closes.
     With `can_pick`, l opens another notes file: that file is returned."""
     devices.named_window(WINDOW, *CARD_SIZE)
-    rows = (*rows, "", "L: CHOOSE ANOTHER FILE  ·  Q: QUIT" if can_pick else "Q: QUIT")
+    rows = (*rows, "", "L  Choose another file   ·   Q  Quit" if can_pick else "Q  Quit")
     try:
         while True:
             show_card(devices, title, rows)
@@ -1427,11 +1432,11 @@ def show_error(devices: Devices, title: str, rows: tuple[str, ...] = (), can_pic
 
 def camera_problem(exc: CameraError) -> tuple[str, tuple[str, ...]]:
     if "stopped delivering" in str(exc):
-        return "THE CAMERA STOPPED", ("CHECK THAT NO OTHER APP IS USING IT, THEN OPEN PALMCARDS AGAIN.",)
-    return "NO CAMERA PICTURE", (
-        "IF CAMERA ACCESS IS OFF: SYSTEM SETTINGS > PRIVACY & SECURITY > CAMERA. ALLOW THE APP YOU STARTED "
-        "PALMCARDS FROM (YOUR TERMINAL), QUIT IT AND OPEN IT AGAIN.",
-        "IF THE MAC HAS NO CAMERA: CONNECT ONE.")
+        return "The camera stopped", ("Check that no other app is using it, then open PalmCards again.",)
+    return "No camera picture", (
+        "If camera access is off: open System Settings > Privacy & Security > Camera. Allow the app you started "
+        "PalmCards from (your terminal), then quit it and open it again.",
+        "If the Mac has no camera, connect one.")
 
 
 class Tee:
@@ -1538,7 +1543,7 @@ def open_notes(path: Path, args, remembered: bool = False) -> int | Path:
         notes = notes_from_bytes(source, path)
     except (OSError, ValueError) as exc:
         print(f"Could not open notes: {exc}", file=sys.stderr)
-        return show_error(devices, "COULD NOT OPEN THE NOTES", (str(path), short(exc, 120)), can_pick=True)
+        return show_error(devices, "Couldn't open the notes", (str(path), short(exc, 120)), can_pick=True)
     if remembered:
         print(f"opening the notes file from last time: {path}")
     prefs = preferences.load()
@@ -1563,8 +1568,8 @@ def open_notes(path: Path, args, remembered: bool = False) -> int | Path:
 
 def continue_note(session: Session) -> str:
     n = len(session.takes)
-    when = f"{started(session.dir):%-d %b}".upper()
-    return f"CONTINUING YOUR SESSION OF {when} · {n} TAKE{'' if n == 1 else 'S'}"
+    when = f"{started(session.dir):%-d %B}"
+    return f"Welcome back. Continuing your session of {when} · {n} take{'' if n == 1 else 's'}"
 
 
 def reopen(args) -> int:
@@ -1605,9 +1610,9 @@ def run_reporting(*args, **kwargs) -> int | Path:
         if "download_models" not in str(exc):
             raise
         print(f"error: {exc}", file=sys.stderr)
-        return show_error(devices, "MODELS NOT DOWNLOADED", (
-            "IN THE PALMCARDS FOLDER, RUN:", ".venv/bin/python scripts/download_models.py",
-            "THEN OPEN PALMCARDS AGAIN."))
+        return show_error(devices, "The models aren't downloaded", (
+            "In the PalmCards folder, run:", ".venv/bin/python scripts/download_models.py",
+            "Then open PalmCards again."))
 
 
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
@@ -1626,10 +1631,10 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
     with ExitStack() as stack:
         devices.named_window(WINDOW, *CARD_SIZE)  # at once: a card says what is loading
         stack.callback(guarded(devices.destroy_windows, "the window"))
-        show_card(devices, "OPENING THE CAMERA")
+        show_card(devices, "Opening the camera…")
         camera = devices.camera()
         stack.callback(guarded(camera.release, "the camera"))
-        show_card(devices, "LOADING HAND TRACKING")
+        show_card(devices, "Loading hand tracking…")
         tracker = devices.tracker()
         stack.callback(guarded(tracker.close, "hand tracking"))
         log = devices.log()
@@ -1644,7 +1649,7 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
         takes.gaze_check = gaze_check
         takes.video_on = video  # or the preference, read with the others in frame_loop
         takes.fade_on = fade  # likewise
-        show_card(devices, "LOADING FACE AND POSE TRACKING")
+        show_card(devices, "Loading face and pose tracking…")
         try:
             takes.vision = devices.vision()
         except Exception as exc:  # a model missing or failing to load: the takes go on without
@@ -1653,7 +1658,7 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
         if takes.vision is not None:
             stack.callback(guarded(takes.vision.close, "face and pose tracking"))
         stack.callback(guarded(takes.close, "the takes"))
-        show_card(devices, "GETTING READY")
+        show_card(devices, "Getting ready…")
         review = takes.restore()
         takes.warm()
         try:
@@ -1776,7 +1781,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         ring_turn_seen = grammar.state.ring_turn
         view.llm = takes.llm
         view.llm_busy = bool(takes.assistant and takes.assistant.pending)
-        view.title = "GAZE CHECK" if takes.gaze_check and modes.mode in ("count_in", "rehearse") \
+        view.title = "Gaze check" if takes.gaze_check and modes.mode in ("count_in", "rehearse") \
             and takes.drill is None else ""
         view.calibration = takes.vision.phase(start - t0) \
             if takes.vision is not None and modes.mode == "count_in" else None
@@ -1891,7 +1896,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             break
         now_t = time.perf_counter() - t0
         if key == ord("x") and takes.stop_playback("key", now_t):  # x stops any playback first
-            view.note, note_until = "STOPPED", time.perf_counter() + NOTE_S
+            view.note, note_until = "Stopped", time.perf_counter() + NOTE_S
         elif key in KEY_COMMANDS:
             queued += modes.command(KEY_COMMANDS[key], now_t)
         elif key in (ord(" "), ord("j"), ord("k")):
@@ -1925,12 +1930,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         elif key == ord("m"):  # a replay: mirrored, or as others see you (the default)
             prefs.replay_mirrored = takes.replay_mirrored = not prefs.replay_mirrored
             preferences.save(prefs, prefs_file)
-            view.note = "REPLAYS MIRRORED" if prefs.replay_mirrored else "REPLAYS AS OTHERS SEE YOU"
+            view.note = "Replays are mirrored" if prefs.replay_mirrored else "Replays show you as others see you"
             note_until = time.perf_counter() + NOTE_S
         elif key == ord("w") and view.app in ("prepare", "review"):  # fading cards, from the next take
             prefs.fade = takes.fade_on = not prefs.fade
             preferences.save(prefs, prefs_file)
-            view.note = "FADING CARDS ON: FROM THE NEXT TAKE" if prefs.fade else "FADING CARDS OFF"
+            view.note = "Fading cards on, from the next take" if prefs.fade else "Fading cards off"
             note_until = time.perf_counter() + NOTE_S
         elif key == ord("c"):
             prefs.high_contrast = not prefs.high_contrast
@@ -1940,7 +1945,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         elif key == ord("u") and view.app == "prepare":
             view.note, note_until = takes.undo(), time.perf_counter() + NOTE_S
         elif key == ord("a") and view.app in ("prepare", "review"):  # play, or stop what plays
-            view.note = "STOPPED" if takes.stop_playback("key", now_t) \
+            view.note = "Stopped" if takes.stop_playback("key", now_t) \
                 else play_focus(view, overlay, log, speaker, takes, now_t)
             note_until = time.perf_counter() + NOTE_S
         elif key == ord("o") and view.app == "review":  # write the notes out, as palmcards.export does
@@ -1960,7 +1965,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         elif key == ord("r"):
             if takes.previews.operation is not None and takes.previews.operation.error:
                 takes.previews.retry(time.perf_counter() - t0)
-                view.note = "RETRYING PREVIEW" if takes.previews.operation.loading else takes.previews.operation.error
+                view.note = "Trying the preview again…" if takes.previews.operation.loading \
+                    else takes.previews.operation.error
             else:
                 view.note = takes.retry()
             note_until = time.perf_counter() + NOTE_S

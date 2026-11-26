@@ -343,9 +343,9 @@ def test_alternatives_become_ring_nodes_and_a_revision(tmp_path, monkeypatch):
     takes.ask_alternatives(0, 4)  # asked once only
     poll_until(takes, lambda: (0, 4) in takes.alternatives)
     assert takes.alternatives[(0, 4)] == ("present", "around") and len(provider.calls) == 1
-    assert takes.use_alternative(0, 4, "present").startswith('"HERE" → "PRESENT"')
+    assert takes.use_alternative(0, 4, "present").startswith('“here” → “present”')
     assert takes.notes.sentences[0].words[4].text == "present" and takes.alternatives == {}
-    assert takes.undo() == "UNDONE" and takes.notes.sentences[0].words[4].text == "here"
+    assert takes.undo() == "Undone" and takes.notes.sentences[0].words[4].text == "here"
 
 
 def test_word_selection_shows_meaning_before_palm_requests_alternatives(tmp_path, monkeypatch):
@@ -407,11 +407,11 @@ def test_meaning_answer_for_old_notes_is_dropped(tmp_path, monkeypatch):
 
 def test_a_tone_rewrite_is_a_proposal_until_used(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, FakeProvider(json.dumps({"text": "Thanks so much for being here."})))
-    assert takes.ask_rewrite("tone", (0,), 0.6) == "ASKING FOR A WARMER VERSION..."
+    assert takes.ask_rewrite("tone", (0,), 0.6) == "Asking for a warmer version…"
     notes = poll_until(takes, lambda: (0,) in takes.proposals)
-    assert "PROPOSAL READY: FOCUS IT AGAIN TO SEE IT" in notes
+    assert "A suggestion is ready: select it again to see it" in notes
     assert takes.proposals[(0,)][2] == "Thanks so much for being here."
-    assert takes.use_proposal((0,)).startswith("TONE PROPOSAL USED")
+    assert takes.use_proposal((0,)).startswith("Tone suggestion used")
     assert takes.notes.sentences[0].text == "Thanks so much for being here."
 
 
@@ -421,13 +421,13 @@ def test_an_answer_about_notes_that_changed_is_dropped(tmp_path, monkeypatch):
     takes.ask_rewrite("tone", (0,), 0.6)
     takes.use_alternative(0, 0, "Thanks")  # the notes change while it is thinking
     notes = poll_until(takes, lambda: not takes.assistant.pending)
-    assert "THE NOTES CHANGED: SUGGESTION DROPPED" in notes and takes.proposals == {}
+    assert "The notes changed, so the suggestion was dropped" in notes and takes.proposals == {}
 
 
 def test_without_a_provider_nothing_is_sent_and_it_says_so(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, None)
     assert takes.assistant is None
-    assert "NEED THE OPTIONAL AI" in takes.ask_rewrite("tone", (0,), 0.5)
+    assert "needs the optional AI" in takes.ask_rewrite("tone", (0,), 0.5)
     takes.ask_alternatives(0, 1)  # silently nothing: the ring just has no alternatives
     assert takes.alternatives == {} and takes.poll_llm() == ""
 
@@ -436,7 +436,7 @@ def test_the_cloud_without_a_key_is_off_and_says_so(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, None, make=lambda: llm.get_provider("anthropic"))
     assert takes.assistant is None and takes.llm == "" and "ANTHROPIC_API_KEY" in takes.llm_off
     said = takes.ask_rewrite("tone", (0,), 0.5)
-    assert "NEED THE OPTIONAL AI (" in said and "ANTHROPIC_API_KEY" in said and said.endswith(": NOTHING SENT")
+    assert "needs the optional AI (" in said and "ANTHROPIC_API_KEY" in said and said.endswith("Nothing was sent.")
 
 
 def usage_lines(takes):
@@ -453,7 +453,7 @@ def test_every_call_is_logged_with_its_tokens_never_its_text(tmp_path, monkeypat
     assert provider.schemas == [llm.SCHEMAS["alternatives"]]
     takes.ask_rewrite("tone", (0,), 0.6)
     notes = poll_until(takes, lambda: not takes.assistant.pending)
-    assert "TONE REWRITE FAILED: BAD ANSWER, NOTHING CHANGED" in notes
+    assert "Couldn't get a new tone: bad answer. Nothing changed." in notes
     lines = usage_lines(takes)
     assert [(e["action"], e["ok"], e["input_tokens"], e["output_tokens"], e["error"]) for e in lines] == \
         [("alternatives", True, 120, 30, None), ("tone", False, 120, 30, "BAD ANSWER")]
@@ -481,7 +481,7 @@ def test_making_the_session_folder_does_not_make_answers_stale(tmp_path, monkeyp
     poll_until(takes, lambda: (0, 4) in takes.alternatives)
     assert takes.session.current_revision is not None
     notes = poll_until(takes, lambda: (0,) in takes.proposals)
-    assert "THE NOTES CHANGED: SUGGESTION DROPPED" not in notes and len(usage_lines(takes)) == 2
+    assert "The notes changed, so the suggestion was dropped" not in notes and len(usage_lines(takes)) == 2
 
 
 def test_a_failed_call_says_why_and_changes_nothing(tmp_path, monkeypatch):
@@ -491,7 +491,7 @@ def test_a_failed_call_says_why_and_changes_nothing(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, FakeProvider(fail))
     takes.ask_rewrite("tone", (0,), 0.6)
     notes = poll_until(takes, lambda: not takes.assistant.pending)
-    assert notes == ["TONE REWRITE FAILED: TIMED OUT, NOTHING CHANGED"]
+    assert notes == ["Couldn't get a new tone: timed out. Nothing changed."]
     assert takes.proposals == {} and takes.notes.sentences[0].text == "Thank you for being here tonight."
     assert [r["provenance"] for r in takes.session.revisions] == ["imported"]  # no edit
     (entry,) = usage_lines(takes)
@@ -509,7 +509,7 @@ def test_a_rejected_key_stays_on_the_alert_line(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, FakeProvider(rejected, cloud=True))
     takes.ask_alternatives(0, 1)
     notes = poll_until(takes, lambda: not takes.assistant.pending)
-    assert notes == ["ALTERNATIVES FAILED: API KEY REJECTED, NOTHING CHANGED"]
+    assert notes == ["Couldn't get other words: API key rejected. Nothing changed."]
     assert takes.alert_line("prepare") == takes.alert_line("review") == main.KEY_REJECTED
     assert takes.alert_line("rehearse") == ""  # a take has nothing to do with it
 

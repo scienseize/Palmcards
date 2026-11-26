@@ -34,32 +34,32 @@ def test_hints_follow_what_the_state_machine_does():
     ov = overlay()
     # Review, one finger browsing sentences: a pinch closes it, not a fold.
     one = ViewState(app="review", mode="browse", level="sentence", shape="ONE")
-    assert ov.label_lines(one)[1].endswith("PINCH: DETAILS · V SIGN: PREPARE")
-    assert ov.label_lines(replace(one, shape="TWO"))[1].endswith("FOLD: DETAILS · V SIGN: PREPARE")
+    assert ov.label_lines(one)[1].endswith("Pinch for details · Hold a V sign to edit")
+    assert ov.label_lines(replace(one, shape="TWO"))[1].endswith("Fold your fingers for details · Hold a V sign to edit")
     # Playing: the palm that started it must leave first; browsing, moving on stops it.
     playing = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), playing=True,
                         palm_spent=True, status="TAKE 1")
-    assert "LOWER HAND, THEN" in ov.label_lines(playing)[1]
-    assert ov.label_lines(replace(playing, palm_spent=False))[1] == "TAKE 1  /  OPEN PALM: STOP"
+    assert "Lower your hand, then" in ov.label_lines(playing)[1]
+    assert ov.label_lines(replace(playing, palm_spent=False))[1] == "TAKE 1  /  Hold an open palm to stop"
     hear = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None), playing=True, palm_spent=True)
-    assert ov.label_lines(hear)[1] == "LOWER HAND, THEN OPEN PALM: STOP"
+    assert ov.label_lines(hear)[1] == "Lower your hand, then hold an open palm to stop"
     browsing = ViewState(app="review", mode="browse", level="sentence", playing=True)
-    assert "MOVE TO ANOTHER SENTENCE · A: STOP" in ov.label_lines(browsing)[1]
+    assert "Move to another sentence to stop · A: stop" in ov.label_lines(browsing)[1]
     # The hand box's edges scroll: the label says so.
     scrolling = ViewState(mode="browse", level="word", scrolling=1)
-    assert ov.label_lines(scrolling)[1] == "SCROLLING DOWN  /  MOVE TO THE MIDDLE: STOP"
+    assert ov.label_lines(scrolling)[1] == "Scrolling down  /  Move to the middle to stop"
     # An edit to undo: the idle hint offers the thumbs-up; while held, a bar.
-    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("RAISE A FIST: NEW TAKE · V SIGN: UNDO")
-    assert ov.label_lines(ViewState(undo_progress=0.5))[1] == "UNDO: HOLD"
-    assert ov.label_lines(ViewState(app="review", hold_progress=0.5))[1] == "BACK TO PREPARE: HOLD"
-    assert ov.label_lines(ViewState(app="review", retry_progress=0.5))[1] == "RETRY ANALYSIS: HOLD"
+    assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("Raise a fist to record · Hold a V sign to undo")
+    assert ov.label_lines(ViewState(undo_progress=0.5))[1] == "Keep holding to undo"
+    assert ov.label_lines(ViewState(app="review", hold_progress=0.5))[1] == "Keep holding to edit"
+    assert ov.label_lines(ViewState(app="review", retry_progress=0.5))[1] == "Keep holding to retry"
     # A preview: heard as shown; with no provider, nothing to retry.
     p = SimpleNamespace(kind="tone", target_label="WARM", requested_target=1.0, actual_words=9, target_words=9,
                         error="", loading=False, original=False)
-    assert ov._preview_line(p).endswith("PINCH + LIFT: USE IT · DROP HAND: BACK · HOLD OPEN PALM: HEAR IT")
-    p.error = "PROVIDER UNAVAILABLE: SET UP --llm (SEE README)"
+    assert ov._preview_line(p).endswith("Pinch and lift to use it · Lower your hand to go back · Hold an open palm to hear it")
+    p.error = "The optional AI isn't set up (see the README)"
     line = ov._preview_line(p, llm=False)
-    assert "RETRY" not in line and line == "TONE: WARM · PREVIEW ONLY  /  NEEDS THE OPTIONAL AI · DROP HAND: BACK"
+    assert "retry" not in line and line == "Tone: warm · preview only  /  Needs the optional AI · Lower your hand to go back"
 
 
 def test_the_hand_box_marks_its_scroll_bands():
@@ -156,26 +156,26 @@ def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     # Browsing: the gesture that focuses, then the other levels' shapes; nothing up: how to begin.
     assert ov.label_lines(ViewState(mode="browse", level="word")) == (
-        "BROWSE BY WORD", "PINCH: FOCUS  /  TWO FINGERS: SENTENCES · FLAT HAND: PARAGRAPHS")
-    assert ov.label_lines(ViewState(mode="browse", level="sentence"))[1].startswith("FOLD: FOCUS, THEN HEAR IT  /  ")
-    assert ov.label_lines(ViewState()) == ("PREPARE", "FINGER UP: BROWSE  /  RAISE A FIST: NEW TAKE")
+        "Browsing words", "Pinch to select a word  /  Two fingers: sentences · Flat hand: paragraphs")
+    assert ov.label_lines(ViewState(mode="browse", level="sentence"))[1].startswith("Fold your fingers to select and hear it  /  ")
+    assert ov.label_lines(ViewState()) == ("Prepare", "Raise a finger to browse  /  Raise a fist to record")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), llm="local")
-    assert ov.label_lines(focus) == ('FOCUS BY WORD  "being"', "L-HAND, THEN TURN: PICK  /  DROP HAND: BACK")
+    assert ov.label_lines(focus) == ('Selected: “being”', "Make an L and turn it to choose  /  Lower your hand to go back")
     assert ov.ring_labels(focus) == ("being",)
     focus.alternatives = ("present",)
     focus.ops.pointing, focus.ops.picked = True, 1
-    assert ov.label_lines(focus)[1] == 'PINCH + LIFT: USE "PRESENT"  /  DROP HAND: BACK'
-    assert ov.label_lines(focus)[0] == 'FOCUS BY WORD  "being"'  # the word as it is, not the pick
+    assert ov.label_lines(focus)[1] == 'Pinch and lift to use “present”  /  Lower your hand to go back'
+    assert ov.label_lines(focus)[0] == 'Selected: “being”'  # the word as it is, not the pick
     focus.ops.picked = 0
-    assert ov.label_lines(focus)[1] == "ORIGINAL WORD: NO CHANGE  /  DROP HAND: BACK"
+    assert ov.label_lines(focus)[1] == "The original word: nothing changes  /  Lower your hand to go back"
     focus.ops = OpsView()
-    assert ov.label_lines(focus)[1].startswith("HOLD OPEN PALM: ALTERNATIVES")
+    assert ov.label_lines(focus)[1].startswith("Hold an open palm for other words")
     tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=0.6))
-    assert ov.label_lines(tone) == ("FOCUS BY SENTENCE",
-                                    "TONE: WARM  /  PREVIEW ONLY: NEED THE OPTIONAL AI · DROP HAND: BACK")
+    assert ov.label_lines(tone) == ("Sentence selected",
+                                    "Tone: warm  /  Preview only: needs the optional AI · Lower your hand to go back")
     # The hand is down: what is happening, and how to stay, with the drop timer as a bar.
     tone.drop_progress = 0.4
-    assert ov.label_lines(tone)[1] == "BACKING OUT  /  RAISE HAND TO STAY"
+    assert ov.label_lines(tone)[1] == "Going back  /  Raise your hand to stay"
     assert ov.label_progress(tone) == 0.4
 
 
@@ -186,14 +186,14 @@ def test_labels_promise_a_rewrite_only_when_an_llm_is_on():
     for llm in ("cloud", "local"):
         tone = ViewState(mode="focus", level="sentence", focus=Hit(1, None), ops=OpsView(kind="tone", tone=-0.6),
                          llm=llm)
-        assert ov.label_lines(tone)[1] == "TONE: FORMAL  /  DROP HAND: BACK"
+        assert ov.label_lines(tone)[1] == "Tone: formal  /  Lower your hand to go back"
         stretch = ViewState(mode="focus", level="paragraph", focus=Hit(4, None), ops=OpsView(kind="stretch", stretch=1.5),
                             llm=llm)
-        assert ov.label_lines(stretch)[1] == "LENGTH: FULLER +50%  /  DROP HAND: BACK"
+        assert ov.label_lines(stretch)[1] == "Length: fuller +50%  /  Lower your hand to go back"
         word = ViewState(mode="focus", level="word", focus=Hit(0, 1), llm=llm)
-        assert ov.label_lines(word)[1].startswith("HOLD OPEN PALM: ALTERNATIVES")
+        assert ov.label_lines(word)[1].startswith("Hold an open palm for other words")
     stretch.llm = ""
-    assert "PREVIEW ONLY: NEED THE OPTIONAL AI" in ov.label_lines(stretch)[1]
+    assert "Preview only: needs the optional AI" in ov.label_lines(stretch)[1]
 
 
 def test_the_cloud_chip_shows_while_the_cloud_llm_is_on():
@@ -248,44 +248,44 @@ def test_section_unit_and_rehearse_panel_shows_the_section():
 def test_label_lines_for_takes():
     ov = overlay()
     assert ov.label_lines(ViewState(status="TAKE 1: SAVING…")) == (
-        "PREPARE", "TAKE 1: SAVING…  /  FINGER UP: BROWSE · RAISE A FIST: NEW TAKE")
-    assert ov.label_lines(ViewState(start_progress=0.5))[1] == "NEW TAKE: HOLD"
+        "Prepare", "TAKE 1: SAVING…  /  Raise a finger to browse · Raise a fist to record")
+    assert ov.label_lines(ViewState(start_progress=0.5))[1] == "Keep holding to record"
     assert ov.label_progress(ViewState(start_progress=0.5)) == 0.5  # drawn as a bar after the text
     assert ov.label_progress(ViewState(status="TAKE 1: SAVING…")) is None
     # In a take the only command is a thumbs-up: the hint line says so.
-    assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("REHEARSE", "STARTING IN 2  /  OK SIGN: CANCEL")
-    assert ov.label_lines(ViewState(app="count_in", hold_progress=0.3))[1] == "CANCEL: HOLD"
+    assert ov.label_lines(ViewState(app="count_in", count_in=2)) == ("Get ready", "Starting in 2  /  Hold an OK sign to cancel")
+    assert ov.label_lines(ViewState(app="count_in", hold_progress=0.3))[1] == "Keep holding to cancel"
     rehearse = ViewState(app="rehearse", status="SECTION 1/2: ONE")
-    assert ov.label_lines(rehearse) == ("REHEARSE", "SECTION 1/2: ONE  /  OK SIGN: STOP")
-    assert [text for line, text in ov.label_rows(rehearse) if line == 2] == ["OK SIGN: STOP"]
+    assert ov.label_lines(rehearse) == ("Recording", "SECTION 1/2: ONE  /  Hold an OK sign to stop")
+    assert [text for line, text in ov.label_rows(rehearse) if line == 2] == ["Hold an OK sign to stop"]
     rehearse.note = "LAST SECTION"
-    assert ov.label_lines(rehearse)[1] == "LAST SECTION  /  OK SIGN: STOP"
+    assert ov.label_lines(rehearse)[1] == "LAST SECTION  /  Hold an OK sign to stop"
     rehearse.note, rehearse.hold_progress = "", 0.5
-    assert ov.label_lines(rehearse)[1] == "STOP: HOLD" and ov.label_progress(rehearse) == 0.5
+    assert ov.label_lines(rehearse)[1] == "Keep holding to stop" and ov.label_progress(rehearse) == 0.5
     review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None))
-    assert ov.label_lines(review)[1] == "  /  PINCH + LIFT: DRILL · DROP HAND: BACK"  # no Prepare operations in Review
-    assert ov.label_lines(ViewState(app="review"))[0] == "REVIEW"
+    assert ov.label_lines(review)[1] == "  /  Pinch and lift to practise it · Lower your hand to go back"  # no Prepare operations in Review
+    assert ov.label_lines(ViewState(app="review"))[0] == "Review"
 
 
 def test_review_labels_list_the_gestures_that_act():
     ov = overlay()
     browse = ViewState(app="review", mode="browse", level="sentence", status="TAKE 2 SAVED (0:41)")
-    assert ov.label_lines(browse) == ("BROWSE BY SENTENCE", "TAKE 2 SAVED (0:41)  /  FOLD: DETAILS · V SIGN: PREPARE")
+    assert ov.label_lines(browse) == ("Browsing sentences", "TAKE 2 SAVED (0:41)  /  Fold your fingers for details · Hold a V sign to edit")
     browse.level = "paragraph"
-    assert ov.label_lines(browse)[1].endswith("FOLD: SUMMARY · V SIGN: PREPARE")
+    assert ov.label_lines(browse)[1].endswith("Fold your fingers for a summary · Hold a V sign to edit")
     assert ov.label_lines(ViewState(app="review"))[1] == \
-        "  /  FINGER UP: BROWSE · RAISE A FIST: NEW TAKE · V SIGN: PREPARE"
+        "  /  Raise a finger to browse · Raise a fist to record · Hold a V sign to edit"
     focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2 (2 OF 3)",
                       takes=("TAKE 1", "TAKE 2", "TAKE 3"), take_shown=1, playable=True)
     assert ov.label_lines(focus)[1] == \
-        "TAKE 2 (2 OF 3)  /  OPEN PALM: PLAY · L, POINT: PICK A TAKE · PINCH + LIFT: DRILL · DROP HAND: BACK"
+        "TAKE 2 (2 OF 3)  /  Hold an open palm to play · Make an L and point to pick a take · Pinch and lift to practise it · Lower your hand to go back"
     focus.takes, focus.take_shown = ("TAKE 1",), 0
-    assert ov.label_lines(focus)[1].endswith("  /  OPEN PALM: PLAY · PINCH + LIFT: DRILL · DROP HAND: BACK")
+    assert ov.label_lines(focus)[1].endswith("  /  Hold an open palm to play · Pinch and lift to practise it · Lower your hand to go back")
     paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), status="TAKE 3",
                           playable=True)
-    assert ov.label_lines(paragraph)[1] == "TAKE 3  /  OPEN PALM: PLAY · DROP HAND: BACK"
+    assert ov.label_lines(paragraph)[1] == "TAKE 3  /  Hold an open palm to play · Lower your hand to go back"
     paragraph.playable = False
-    assert ov.label_lines(paragraph)[1] == "TAKE 3  /  DROP HAND: BACK"
+    assert ov.label_lines(paragraph)[1] == "TAKE 3  /  Lower your hand to go back"
 
 
 def hint_rows(ov, view):
@@ -299,11 +299,11 @@ def test_review_hints_take_the_short_form_when_the_long_one_does_not_fit_a_row(s
                       takes=("TAKE 1", "TAKE 2", "TAKE 3"), take_shown=1, playable=True)
     rows = hint_rows(ov, focus)  # the long form needs more than a row: the short one, its hints packed whole
     assert 1 <= len(rows) <= 2
-    assert " · ".join(rows) == "PALM: PLAY · L: PICK A TAKE · PINCH + LIFT: DRILL · DROP HAND: BACK"
+    assert " · ".join(rows) == "Palm: play · L: pick a take · Pinch + lift: practise · Hand down: back"
     browse = ViewState(app="review", mode="browse", level="sentence")
-    assert " · ".join(hint_rows(ov, browse)) == "FOLD: DETAILS · V SIGN: PREPARE"
+    assert " · ".join(hint_rows(ov, browse)) == "Fold your fingers for details · Hold a V sign to edit"
     paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), playable=True)
-    assert hint_rows(ov, paragraph) == ["OPEN PALM: PLAY · DROP HAND: BACK"]
+    assert hint_rows(ov, paragraph) == ["Palm: play · Hand down: back"]
     assert all(" / " not in row for row in rows + hint_rows(ov, ViewState(mode="focus", level="sentence",
                                                                       focus=Hit(1, None), llm="local")))
 
@@ -312,14 +312,14 @@ def test_while_it_plays_the_hint_is_stop_and_a_held_palm_fills_the_stop_bar():
     ov = overlay()
     review = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2",
                        takes=("TAKE 1", "TAKE 2"), take_shown=1, playable=True, playing=True, play_progress=0.4)
-    assert ov.label_lines(review)[1] == "TAKE 2  /  OPEN PALM: STOP"
+    assert ov.label_lines(review)[1] == "TAKE 2  /  Hold an open palm to stop"
     review.palm_progress = 0.5
-    assert ov.label_lines(review)[1] == "STOP: HOLD"
+    assert ov.label_lines(review)[1] == "Keep holding to stop"
     assert ov.label_progress(review) == 0.5
     prepare = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None), playing=True)
-    assert ov.label_lines(prepare)[1] == "OPEN PALM: STOP"
+    assert ov.label_lines(prepare)[1] == "Hold an open palm to stop"
     browse = ViewState(app="review", mode="browse", level="sentence", playing=True)
-    assert ov.label_lines(browse)[1].endswith("A: STOP")  # no palm stop while browsing: the key
+    assert ov.label_lines(browse)[1].endswith("A: stop")  # no palm stop while browsing: the key
 
 
 def test_a_thin_progress_bar_under_the_focused_unit_while_it_plays():
@@ -381,7 +381,7 @@ def test_a_drill_shows_only_its_sentence():
     ov = TextOverlay(parse_text(SECTIONS, "md").sentences, (1280, 720))
     view = ViewState(app="rehearse", section=0, drill=1, status="SENTENCE 2")
     assert ov._panel_unit(view) == (1,)
-    assert ov.label_lines(view) == ("DRILL", "SENTENCE 2  /  OK SIGN: STOP")
+    assert ov.label_lines(view) == ("Practising a sentence", "SENTENCE 2  /  Hold an OK sign to stop")
 
 
 # --- everything reachable (review finding F2) -------------------------------------
@@ -458,9 +458,9 @@ def test_the_alert_line_and_keys_help_are_drawn():
 def test_the_calibration_steps_in_the_count_in():
     ov = overlay()
     view = ViewState(app="count_in", count_in=5, calibration="camera", current=0)
-    assert ov.label_lines(view) == ("REHEARSE", "LOOK INTO THE CAMERA LENS  /  OK SIGN: CANCEL")
+    assert ov.label_lines(view) == ("Get ready", "Look into the camera lens  /  Hold an OK sign to cancel")
     view = ViewState(app="count_in", count_in=2, calibration="notes", current=0)
-    assert ov.label_lines(view)[1] == "READ THE ORANGE SENTENCE\u00a0·\u00a02  /  OK SIGN: CANCEL"
+    assert ov.label_lines(view)[1] == "Read the orange sentence\u00a0·\u00a02  /  Hold an OK sign to cancel"
     # No big count digit while calibrating: it would pull the eyes away.
     calibrating, counting = (np.full((720, 1280, 3), 128, np.uint8) for _ in range(2))
     ov.draw(calibrating, view)
@@ -612,31 +612,31 @@ def test_a_new_word_scrambles_into_the_sentence_but_never_the_label():
     ov = overlay()
     view = knob_view(now=3.0)
     ov.follow_ring(view, "being", 0)
-    assert ov.label_lines(view)[0] == 'FOCUS BY WORD  "being"'
+    assert ov.label_lines(view)[0] == 'Selected: “being”'
     ov.follow_ring(view, "present", 1)
     mid = replace(view, now=3.0 + KNOB.scramble_s / 3)
-    assert ov.label_lines(mid)[0] == 'FOCUS BY WORD  "being"'
+    assert ov.label_lines(mid)[0] == 'Selected: “being”'
     assert ov.focus_word(mid) != "present" and len(ov.focus_word(mid)) == len("present")
     view.now = 3.0 + KNOB.scramble_s + 0.001
     assert ov.focus_word(view) == "present"
-    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', 'PINCH + LIFT: USE "PRESENT"  /  DROP HAND: BACK')
+    assert ov.label_lines(view) == ('Selected: “being”', 'Pinch and lift to use “present”  /  Lower your hand to go back')
     # Returning to the original word restores it as a live preview.
     ov.follow_ring(view, "being", 3)
     view.ops.pointing = True
     view.now += KNOB.scramble_s + 0.001
-    assert ov.label_lines(view) == ('FOCUS BY WORD  "being"', "ORIGINAL WORD: NO CHANGE  /  DROP HAND: BACK")
+    assert ov.label_lines(view) == ('Selected: “being”', "The original word: nothing changes  /  Lower your hand to go back")
 
 
 def test_the_label_never_cuts_the_focused_word_or_a_quoted_pick():
     ov = TextOverlay(parse_text("It was forgiving, remarkably so.").sentences, (1280, 720))
     view = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), llm="local",
                      alternatives=("stand-in number two",))
-    assert "…" not in ov.label_lines(view)[0] and '"remarkably"' in ov.label_lines(view)[0]
+    assert "…" not in ov.label_lines(view)[0] and '“remarkably”' in ov.label_lines(view)[0]
     view.focus = Hit(0, 2)
-    assert ov.label_lines(view)[0].endswith('"forgiving"')  # its punctuation left off
+    assert ov.label_lines(view)[0].endswith('“forgiving”')  # its punctuation left off
     view.ops.pointing, view.ops.picked = True, 1
     rows = [text for line, text in ov.label_rows(view) if line == 1]
-    assert any('"STAND-IN\u00a0NUMBER\u00a0TWO"' in row for row in rows)  # the quote kept whole on a row
+    assert any('“stand-in\u00a0number\u00a0two”' in row for row in rows)  # the quote kept whole on a row
 
 
 def test_the_picked_node_is_highlighted_at_once_and_while_turning():
@@ -678,7 +678,7 @@ def test_hear_it_is_offered_for_sentences_only():
     for llm in ("", "local", "cloud"):
         for mode in ("browse", "focus"):
             sentence = ViewState(mode=mode, level="sentence", focus=Hit(0, None), llm=llm)
-            assert "HEAR IT" in ov.label_lines(sentence)[1]
+            assert "hear it" in ov.label_lines(sentence)[1]
 
 
 def test_meaning_fits_below_word_and_disappears_when_alternatives_open():

@@ -39,7 +39,7 @@ from palmcards.config import BODY, GAZE
 VERSION = 2  # 2: screen vs away; the camera/notes split not validated
 CLASSES = ("camera", "notes", "away", "unclear")
 FEATURES = ("yaw", "pitch", "iris_x", "iris_y")
-AWAY_HINTS = ("DOWN AT THE DESK", "TO YOUR LEFT", "TO YOUR RIGHT", "UP AT THE CEILING")
+AWAY_HINTS = ("down at the desk", "to your left", "to your right", "up at the ceiling")
 
 
 def scales(calibration: dict) -> dict[str, float]:
@@ -185,8 +185,8 @@ def prompt_schedule(seed: int, each: int | None = None, step_s: float | None = N
 
 
 def prompt_text(prompt: dict) -> str:
-    return {"camera": "LOOK INTO THE CAMERA", "notes": "READ THE NOTES",
-            "away": f"LOOK AWAY: {prompt['hint']}"}[prompt["target"]]
+    return {"camera": "Look into the camera", "notes": "Read the notes",
+            "away": f"Look away: {prompt['hint']}"}[prompt["target"]]
 
 
 def check_agreement(arrays: dict[str, np.ndarray], calibration: dict | None, prompts: list[dict],

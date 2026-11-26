@@ -98,7 +98,7 @@ def test_the_prompt_schedule_is_shuffled_without_repeats_and_reproducible():
     assert a[0]["t0"] == 0.0 and a[-1]["t1"] == pytest.approx(len(a) * GAZE.check_step_s)
     hints = [p["hint"] for p in a if p["target"] == "away"]
     assert hints == list(gaze.AWAY_HINTS[:len(hints)])
-    assert gaze.prompt_text(a[0]).startswith(("LOOK INTO", "READ", "LOOK AWAY"))
+    assert gaze.prompt_text(a[0]).startswith(("Look into", "Read", "Look away"))
 
 
 def test_the_check_compares_prompts_with_the_classes_after_settling():

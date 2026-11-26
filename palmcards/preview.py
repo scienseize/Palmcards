@@ -120,11 +120,11 @@ class Previews:
             op.loading = False
             return
         if self.assistant is None:
-            op.error, op.loading = "PROVIDER UNAVAILABLE: SET UP --llm (SEE README)", False
+            op.error, op.loading = "The optional AI isn't set up (see the README)", False
             return
         # Never silently truncate the original paragraph before rewriting it.
         if len(op.original) > LLM.max_chars:
-            op.error, op.loading = "PASSAGE TOO LONG FOR PROVIDER; EDIT SMALLER UNITS", False
+            op.error, op.loading = "This passage is too long for the AI. Edit smaller pieces.", False
             return
         if op.error or op.request_id is not None or now - op.stable_since < self.config.debounce_s:
             return
@@ -148,7 +148,7 @@ class Previews:
             return True
         op.request_id, op.loading = None, False
         if answer.error:
-            op.error = f"{answer.reason or 'FAILED'}: PINCH + LIFT TO RETRY"
+            op.error = f"Couldn't make a preview, {(answer.reason or 'failed').lower()}: pinch and lift to retry"
         else:
             op.displayed_candidate, op.displayed_target = answer.value, op.requested_target
             op.cached_candidates[op.requested_target] = answer.value

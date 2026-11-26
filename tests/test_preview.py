@@ -169,7 +169,7 @@ def test_failure_keeps_readable_candidate_and_explicit_retry():
     assert ORIGINAL in a.calls[2][3][1] and WARM not in a.calls[2][3][1]
     a.complete(2, error="NO CONNECTION")
     receive(p, a)
-    assert p.view().text == WARM and "RETRY" in p.view().error
+    assert p.view().text == WARM and "retry" in p.view().error
     assert not p.can_commit(p.view(), -1)
     sync(p, -1, 10)
     assert len(a.calls) == 2
@@ -186,7 +186,7 @@ def test_original_needs_no_provider_and_unavailable_is_explicit():
     sync(p, 0, 0)
     assert p.can_commit(p.view(), 0)
     sync(p, 1, 1)
-    assert "PROVIDER UNAVAILABLE" in p.view().error and p.view().text == ORIGINAL
+    assert "isn't set up" in p.view().error and p.view().text == ORIGINAL
     assert not p.can_commit(p.view(), 1)
 
 
@@ -239,7 +239,7 @@ def test_commit_requires_a_complete_visible_candidate_and_stays_open_while_loadi
     warm_up(app)
     event = GestureEvent("commit", .35, "sentence", "tone", value=1)
     main.apply_event(event, view, ov, takes.log, takes=takes)
-    assert view.focus == Hit(0, None) and view.note == "PREVIEW NOT READY"
+    assert view.focus == Hit(0, None) and view.note == "The preview isn't ready yet"
     assert takes.notes_version == 0
     a.complete(1, WARM)
     takes.poll_llm()
@@ -249,7 +249,7 @@ def test_commit_requires_a_complete_visible_candidate_and_stays_open_while_loadi
     assert not takes.commit_preview(view, (0,), -1, .5)[0]  # gesture moved to another target
     main.apply_event(event, view, ov, takes.log, takes=takes)
     assert view.focus is None and takes.notes.sentences[0].text == WARM
-    assert takes.undo() == "UNDONE" and takes.notes.sentences[0].text == ORIGINAL
+    assert takes.undo() == "Undone" and takes.notes.sentences[0].text == ORIGINAL
 
 
 def test_preview_and_commit_preserve_historical_notes(app):
@@ -267,7 +267,7 @@ def test_preview_and_commit_preserve_historical_notes(app):
     assert take.revision == original_revision
     assert takes.session.notes_for(take).sentences[0].text == ORIGINAL
     assert json.dumps(takes.session.snapshot(original_revision), sort_keys=True) == before
-    assert takes.undo() == "UNDONE"
+    assert takes.undo() == "Undone"
     assert takes.session.current_revision == original_revision
 
 
@@ -277,7 +277,7 @@ def test_original_commit_is_no_revision_and_cancel_invalidates_answer(app):
     view.ops.tone = 0
     takes.sync_edit(view, ov, .4)
     assert view.edit_preview.text == ORIGINAL
-    assert takes.commit_preview(view, (0,), 0, .5) == (True, "ORIGINAL KEPT: NO CHANGE")
+    assert takes.commit_preview(view, (0,), 0, .5) == (True, "Kept the original: nothing changed")
     assert takes.notes_version == 0
     a.complete(1, WARM)
     takes.poll_llm()
@@ -364,7 +364,7 @@ def test_pinch_lift_retries_error_without_committing_previous_candidate(app):
     a.complete(1, error="TIMED OUT")
     takes.poll_llm()
     takes.sync_edit(view, ov, .4)
-    assert takes.commit_preview(view, (0,), 1, .5) == (False, "RETRYING PREVIEW")
+    assert takes.commit_preview(view, (0,), 1, .5) == (False, "Trying the preview again…")
     assert view.focus is not None and takes.notes_version == 0
     takes.sync_edit(view, ov, .8)
     assert len(a.calls) == 2
@@ -385,7 +385,7 @@ def test_notes_change_and_save_failure_cannot_commit_an_invalid_preview(app, mon
         raise SessionError("disk full")
     with monkeypatch.context() as m:
         m.setattr(takes.session, "edit", fail)
-        assert takes.commit_preview(view, (0,), 1, .5) == (False, "EDIT NOT SAVED: DISK FULL")
+        assert takes.commit_preview(view, (0,), 1, .5) == (False, "The edit wasn't saved: disk full")
     assert takes.previews.operation and view.focus is not None and takes.notes_version == 0
     takes.use_alternative(0, 0, "Thanks")
     assert takes.previews.operation is None
@@ -406,7 +406,7 @@ def test_paragraph_commit_cancel_and_exact_original_undo(app):
     takes.sync_edit(view, ov, .4)
     assert [s.text for s in takes.notes.sentences] == original
     assert takes.commit_preview(view, unit, 1.3, .5)[0]
-    assert takes.undo() == "UNDONE"
+    assert takes.undo() == "Undone"
     assert [s.text for s in takes.notes.sentences] == original
 
 
@@ -451,7 +451,7 @@ def test_long_preview_viewport_reaches_last_line_without_covering_header():
         assert not np.array_equal(first, last)
         x0, x1 = (int(f * w) for f in LAYOUT.face)
         assert (last[:, x0:x1] == 80).all()
-        assert "NOT SAVED" in " ".join(text for _, text in ov.label_rows(view))
+        assert "not saved" in " ".join(text for _, text in ov.label_rows(view))
 
 
 def test_long_original_is_not_silently_truncated_for_provider():
@@ -460,7 +460,7 @@ def test_long_original_is_not_silently_truncated_for_provider():
     p = Previews(a)
     sync(p, 1, 0, original="word " * LLM.max_chars)
     sync(p, 1, .3, original="word " * LLM.max_chars)
-    assert "TOO LONG" in p.view().error and not a.calls
+    assert "too long" in p.view().error and not a.calls
 
 
 def test_legacy_snapshot_marks_without_raw_markup_are_flagged(app, monkeypatch):

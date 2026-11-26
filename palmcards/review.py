@@ -96,18 +96,18 @@ class Board:
         return max(full or self.takes, default=None)
 
     def take_name(self, number: int) -> str:
-        return f"TAKE {number}" + (" (DRILL)" if number in self.drills else "")
+        return f"Take {number}" + (" (practice)" if number in self.drills else "")
 
     def take_label(self, sentence: int) -> str:
         """ "TAKE 3 (2 OF 3)", "TAKE 3 (DRILL, 2 OF 3)" for the label while a sentence is focused."""
         n = self.shown(sentence)
         if n is None:
-            return "NO TAKE ANALYSED YET"
+            return "No take analysed yet"
         said = self.said_in(sentence)
         if n in said and len(said) > 1:
-            drill = "DRILL, " if n in self.drills else ""
-            return f"TAKE {n} ({drill}{said.index(n) + 1} OF {len(said)})"
-        return self.take_name(n) + ("" if n in said else ": NOT SAID")
+            drill = "practice, " if n in self.drills else ""
+            return f"Showing take {n} ({drill}{said.index(n) + 1} of {len(said)})"
+        return self.take_name(n) + ("" if n in said else " doesn't have it")
 
     def detail(self, sentence: int) -> tuple[str, ...]:
         """The focus panel's lines: the sentence in every take that said it,
@@ -187,13 +187,13 @@ class Board:
             return ()
         raw = [self._take_values(t) for t in full]
         cols = [[_show(form, v) for form, v in zip(METRIC_FORMS, vals)] for vals in raw]
-        head = [f"TAKE {t}" for t in full]
+        head = [f"Take {t}" for t in full]
         if len(full) > 1:
-            head.append("CHANGE")
+            head.append("Change")
             cols.append([_change(form, old, new) for form, old, new in zip(METRIC_FORMS, raw[-2], raw[-1])])
         rows = [("", head)] + [(name, [c[k] for c in cols]) for k, name in enumerate(METRIC_ROWS)]
         if not any(t in self.memory for t in full):  # fading cards never on for these takes
-            rows = [r for r in rows if r[0] != "FROM MEMORY"]
+            rows = [r for r in rows if r[0] != "From memory"]
         name_w = max(len(r[0]) for r in rows)
         col_w = max(len(v) for _, vals in rows for v in vals)
         return tuple(f"{name:<{name_w}}" + "".join(f"  {v:>{col_w}}" for v in vals) for name, vals in rows)
@@ -224,8 +224,8 @@ class Board:
         ]
 
 
-METRIC_ROWS = ("LENGTH", "WPM", "FILLERS/MIN", "LONG PAUSES", "RESTARTS", "PITCH (SEMITONES)", "ON SCREEN",
-               "FACE TOUCHES", "SHOULDERS TILTED", "FROM MEMORY")
+METRIC_ROWS = ("Length", "Words a minute", "Fillers a minute", "Long pauses", "Restarts", "Pitch range (st)",
+               "On screen", "Face touches", "Shoulders tilted", "From memory")
 
 # How each row's number is written (None: a length, as m:ss).
 METRIC_FORMS = (None, "{:.0f}", "{:g}", "{}", "{}", "{:g}", "{:.0f}%", "{}", "{:.0f}%", "{:.0f}%")

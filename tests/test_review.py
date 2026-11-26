@@ -24,9 +24,9 @@ def test_each_sentence_shows_its_latest_take_until_another_is_picked():
     b.add(3, analysed("Thank you for being here."), drill=1)
     assert [b.shown(i) for i in range(3)] == [2, 3, 1]  # latest take that said each sentence
     assert b.said_in(1) == [1, 2, 3]
-    assert b.take_label(1) == "TAKE 3 (DRILL, 3 OF 3)"
+    assert b.take_label(1) == "Showing take 3 (practice, 3 of 3)"
     b.picked[1] = 2  # pointed at take 2's chip
-    assert b.shown(1) == 2 and b.take_label(1) == "TAKE 2 (2 OF 3)"
+    assert b.shown(1) == 2 and b.take_label(1) == "Showing take 2 (2 of 3)"
     # A newer take that says the sentence again shows instead of the pick.
     b.add(4, analysed(FULL))
     assert b.shown(1) == 4
@@ -39,7 +39,7 @@ def test_a_focused_sentence_lists_every_take_that_said_it():
     b.add(2, analysed(FULL))
     b.add(3, analysed("Thank you for being here."), drill=1)
     lines = b.detail(1)
-    assert len(lines) == 3 and lines[2].startswith("▸ Take 3 (drill): ")  # the take it shows, marked
+    assert len(lines) == 3 and lines[2].startswith("▸ Take 3 (practice): ")  # the take it shows, marked
     assert lines[0].startswith("  Take 1: ") and "wpm" in lines[0] and "no fillers" in lines[0]
     assert "1 filler" in b.detail(2)[0]  # the "um" before it: its hesitation
     assert b.detail(2)[1] == "▸ " + b._sentence_line(2, 2)
@@ -48,7 +48,7 @@ def test_a_focused_sentence_lists_every_take_that_said_it():
 def test_a_sentence_not_said_in_any_take():
     b = Board(parse_text(TEXT))
     b.add(1, analysed("Good evening everyone."))
-    assert b.shown(2) == 1 and b.take_label(2) == "TAKE 1: NOT SAID"
+    assert b.shown(2) == 1 and b.take_label(2) == "Take 1 doesn't have it"
     assert b.detail(2) == ("Not said in any take yet.",) and b.said_in(2) == []
 
 
@@ -107,15 +107,15 @@ def test_the_take_table_sets_the_last_full_takes_side_by_side():
     table = b.take_table()
     assert len({len(line) for line in table}) == 1  # every line the same width: the columns line up
     rows = {line.split("  ")[0].strip(): line.split() for line in table[1:]}
-    assert table[0].split() == ["TAKE", "1", "TAKE", "2", "TAKE", "4", "CHANGE"]
-    assert rows["LENGTH"][-4:-1] == ["1:01", "0:58", "0:40"]
-    assert rows["WPM"][-4:-1] == ["142", "131", "-"]
-    assert rows["FILLERS/MIN"][-4:-1] == ["1.5", "0.5", "-"]
-    assert rows["PITCH (SEMITONES)"][-4:-1] == ["6.2", "8", "-"]
-    assert rows["ON SCREEN"][-4:-1] == ["82%", "50%", "-"]
-    assert rows["FACE TOUCHES"][-4:-1] == ["1", "2", "-"]
-    assert rows["SHOULDERS TILTED"][-4:-1] == ["-", "13%", "-"]
-    assert rows["LENGTH"][-1] == "-0:18" and rows["WPM"][-1] == "-"  # take 4 less take 2; nothing measured for 4
+    assert table[0].split() == ["Take", "1", "Take", "2", "Take", "4", "Change"]
+    assert rows["Length"][-4:-1] == ["1:01", "0:58", "0:40"]
+    assert rows["Words a minute"][-4:-1] == ["142", "131", "-"]
+    assert rows["Fillers a minute"][-4:-1] == ["1.5", "0.5", "-"]
+    assert rows["Pitch range (st)"][-4:-1] == ["6.2", "8", "-"]
+    assert rows["On screen"][-4:-1] == ["82%", "50%", "-"]
+    assert rows["Face touches"][-4:-1] == ["1", "2", "-"]
+    assert rows["Shoulders tilted"][-4:-1] == ["-", "13%", "-"]
+    assert rows["Length"][-1] == "-0:18" and rows["Words a minute"][-1] == "-"  # take 4 less take 2; nothing measured for 4
     for n in (5, 6):
         b.add(n, analysed(FULL))
     assert b.take_table()[0].split()[1::2] == ["2", "4", "5", "6"]  # the last four
@@ -124,13 +124,13 @@ def test_the_take_table_sets_the_last_full_takes_side_by_side():
 def test_the_take_table_shows_the_change_from_the_previous_take_as_a_signed_difference():
     b = Board(parse_text(TEXT))
     b.add(1, analysed(FULL), metrics([(8, 2, 0)] * 3, pace=140.0, fillers=1.5, pitch=6.0, touches=2), duration_s=60.0)
-    assert b.take_table()[0].split() == ["TAKE", "1"]  # one take: nothing to change from
+    assert b.take_table()[0].split() == ["Take", "1"]  # one take: nothing to change from
     b.add(2, analysed(FULL), metrics([(8, 2, 0)] * 3, pace=152.0, fillers=0.5, pitch=6.0, touches=2), duration_s=75.0)
     table = b.take_table()
-    assert len({len(line) for line in table}) == 1 and table[0].split()[-1] == "CHANGE"
+    assert len({len(line) for line in table}) == 1 and table[0].split()[-1] == "Change"
     change = {line.split("  ")[0].strip(): line.split()[-1] for line in table[1:]}
-    assert change["LENGTH"] == "+0:15" and change["WPM"] == "+12" and change["FILLERS/MIN"] == "-1"
-    assert change["PITCH (SEMITONES)"] == "0" and change["FACE TOUCHES"] == "0"  # the same: no sign
+    assert change["Length"] == "+0:15" and change["Words a minute"] == "+12" and change["Fillers a minute"] == "-1"
+    assert change["Pitch range (st)"] == "0" and change["Face touches"] == "0"  # the same: no sign
     assert not any(ch in " ".join(change.values()) for ch in "↑↓")  # plain numbers, nothing says better or worse
     assert max(len(line) for line in table) <= 57  # the width the table was checked at 720p with
 
@@ -152,8 +152,8 @@ def test_review_points_at_take_chips_and_says_when_there_is_nothing_to_choose(tm
     view = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None))
 
     takes.sync_review(g, view, ov, 0.0)
-    assert view.takes == ("TAKE 1", "TAKE 2", "TAKE 3 (DRILL)") and view.take_shown == 2  # the latest said it
-    assert takes.status("review", view) == "TAKE 3 (DRILL, 3 OF 3)" and view.playable  # the hints are render's
+    assert view.takes == ("Take 1", "Take 2", "Take 3 (practice)") and view.take_shown == 2  # the latest said it
+    assert takes.status("review", view) == "Showing take 3 (practice, 3 of 3)" and view.playable  # the hints are render's
     assert len(view.detail) == 3 and view.detail[2].startswith("▸ ")
     g.state.op, g.state.point = "take", (0.0, 0.0)  # an L: pointing starts on the take shown
     takes.sync_review(g, view, ov, 0.1)
@@ -166,20 +166,20 @@ def test_review_points_at_take_chips_and_says_when_there_is_nothing_to_choose(tm
 
     view.focus = Hit(2, None)  # said only in take 1
     takes.sync_review(g, view, ov, 0.3)
-    assert view.takes == ("TAKE 1",) and takes.status("review", view).startswith("ONLY TAKE 1 SAID THIS SENTENCE")
+    assert view.takes == ("Take 1",) and takes.status("review", view).startswith("Only take 1 has this sentence")
     b2 = Board(notes)
     b2.add(1, analysed("Good evening everyone."))
     takes.board = b2
     takes.sync_review(g, view, ov, 0.4)
-    assert view.takes == () and takes.status("review", view).startswith("NO TAKE SAID THIS SENTENCE")
+    assert view.takes == () and takes.status("review", view).startswith("No take has this sentence yet")
     assert not view.playable
     view.focus = Hit(0, None)  # one take in all, and it said the sentence: nothing to compare it with
     takes.sync_review(g, view, ov, 0.5)
-    assert takes.status("review", view) == "TAKE 1"
+    assert takes.status("review", view) == "Take 1"
 
     view.focus, view.mode = None, "browse"  # browsing: the take table
     takes.sync_review(g, view, ov, 0.5)
-    assert view.summary == b2.take_table() and view.summary[0].split() == ["TAKE", "1"]
+    assert view.summary == b2.take_table() and view.summary[0].split() == ["Take", "1"]
 
 
 def test_a_focused_paragraph_sums_up_the_newest_full_take_that_said_it():
@@ -219,11 +219,11 @@ def test_the_label_counts_the_takes_waiting_for_analysis(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, None)
     view = ViewState(app="prepare")
     takes.analysis.pending = [3]
-    assert takes.status("prepare", view).startswith("TAKE 3: ANALYSING") and "WAITING" not in takes.status("prepare", view)
+    assert takes.status("prepare", view).startswith("Analysing take 3") and "waiting" not in takes.status("prepare", view)
     takes.analysis.pending = [3, 4, 5]
-    assert takes.status("prepare", view).endswith(" · 2 WAITING")
+    assert takes.status("prepare", view).endswith(" · 2 waiting")
     takes.deferred = [5, 6]  # the queue had no room for 6; 5 is counted once
-    assert takes.status("prepare", view).endswith(" · 3 WAITING")
+    assert takes.status("prepare", view).endswith(" · 3 waiting")
 
 
 def test_a_silent_take_stays_on_the_alert_line_until_the_next_take_starts(tmp_path, monkeypatch):
@@ -239,14 +239,14 @@ def test_a_silent_take_stays_on_the_alert_line_until_the_next_take_starts(tmp_pa
     monkeypatch.setattr(takes.session, "finish_take", lambda manifest, status: take)
     writer = SimpleNamespace(number=1, error=None, manifest=lambda: {"samples": 800})
     assert takes._finish(writer, "saved") == ""
-    assert takes.alert_line("review") == "TAKE 1 IS SILENT: CHECK MICROPHONE ACCESS"
-    assert takes.alert_line("prepare").startswith("TAKE 1 IS SILENT")  # not a note that fades
+    assert takes.alert_line("review") == "Take 1 is silent. Check microphone access."
+    assert takes.alert_line("prepare").startswith("Take 1 is silent")  # not a note that fades
 
 
 def test_fading_cards_count_the_takes_that_said_each_word_and_review_says_how_much_came_from_memory():
     b = Board(parse_text(TEXT))
     b.add(1, analysed(FULL))
-    assert not any(line.startswith("FROM MEMORY") for line in b.take_table())  # never faded: no row
+    assert not any(line.startswith("From memory") for line in b.take_table())  # never faded: no row
     b.add(2, analysed("Good evening everyone. <0.3> Thank you for being here."))
     lv = b.fade_levels()
     assert lv[(0, 0)] == 2 and lv[(1, 0)] == 2  # said in both takes
@@ -255,5 +255,5 @@ def test_fading_cards_count_the_takes_that_said_each_word_and_review_says_how_mu
     hidden = [[0, 0], [0, 1], [0, 2]]
     b.add(3, analysed("Good evening everyone."), faded={"hidden": hidden, "prompted": [[0, 2]]})
     assert abs(b.memory[3] - 2 / 3) < 1e-9
-    row = next(line for line in b.take_table() if line.startswith("FROM MEMORY"))
+    row = next(line for line in b.take_table() if line.startswith("From memory"))
     assert row.split()[-2:] == ["67%", "-"]  # take 3, then CHANGE: take 2 wasn't faded

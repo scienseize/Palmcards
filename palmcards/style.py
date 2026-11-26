@@ -36,30 +36,32 @@ class Colors:
     # fill in dark text, the rest of its paragraph on a slate-blue fill, one
     # tight fill per row; an orange bar beside the paragraph. Without a hand
     # the current sentence is orange. Dimmed while something else has focus.
-    text: RGBA = (238, 238, 238, 245)
-    unit_fill: RGBA = (255, 140, 0, 235)
-    unit_text: RGBA = (20, 20, 20, 255)
-    context_fill: RGBA = (62, 74, 122, 215)  # white on it holds 5:1 even where the scrim fades on a pale wall
-    orange: RGBA = (255, 140, 0, 255)
-    # Highlighted text (the current sentence, the focused word): a little
-    # deeper than the fills' orange, so it holds up on a bright wall.
-    orange_text: RGBA = (240, 112, 0, 255)
-    # The label, brightest to dimmest (with weight and size: TYPE.label, operation, hint).
-    label_state: RGBA = (255, 140, 0, 255)  # BROWSE BY WORD
-    label_operation: RGBA = (255, 140, 0, 225)  # what the operation is doing
-    # The gesture hint: smallest, but what tells you what you can do, so not
-    # faint (at 155 it measured 3.6:1 in a dark room, ~1.5:1 on a pale wall).
-    label_hint: RGBA = (255, 140, 0, 205)
-    # Dimmed text is white made see-through, not grey: grey vanishes on a pale wall.
-    dim: RGBA = (255, 255, 255, 179)  # Rehearse: the section's other sentences; a focused word's sentence
-    faint: RGBA = (255, 255, 255, 60)  # context around a focused unit
+    # Apple's dark-mode system colours, on glass (GLASS): labels in white at
+    # Apple's label opacities (primary, secondary 60%, tertiary 30%), the
+    # accent in system orange. The unit under the hand on an orange fill in
+    # white, the rest of its paragraph on a faint white fill, an orange bar
+    # beside it; with no hand up the current sentence is orange.
+    text: RGBA = (255, 255, 255, 240)
+    unit_fill: RGBA = (230, 110, 0, 245)  # deeper than system orange: white semibold on it holds 3:1
+    unit_text: RGBA = (255, 255, 255, 255)
+    context_fill: RGBA = (255, 255, 255, 36)
+    orange: RGBA = (255, 159, 10, 255)  # system orange (dark)
+    orange_text: RGBA = (255, 159, 10, 255)  # the current sentence, the focused word
+    # The label: a title, the status in the accent, the hints secondary
+    # (with weight and size: TYPE.label, operation, hint).
+    label_state: RGBA = (255, 255, 255, 255)  # what you are doing: "Browsing sentences"
+    label_operation: RGBA = (255, 159, 10, 255)  # the status of what you are doing
+    label_hint: RGBA = (235, 235, 245, 165)  # what you can do next: secondary label
+    # Dimmed text is white made see-through, not grey.
+    dim: RGBA = (235, 235, 245, 160)  # secondary: Rehearse's other sentences; a focused word's sentence
+    faint: RGBA = (235, 235, 245, 80)  # tertiary: context around a focused unit
     focus_text: RGBA = (245, 245, 245, 255)  # enlarged unit in the focus panel
     # While the options ring is open the text stays readable, dimmed, under the bubble map.
     ring_sentence: RGBA = (255, 255, 255, 150)
     ring_context: RGBA = (255, 255, 255, 70)  # what peeks out between the nodes stays in the background
     # A soft dark halo around every glyph instead of a box behind the text:
     # the video stays visible between the lines. Its alpha is the halo's strength.
-    shadow: RGBA = (0, 0, 0, 110)
+    shadow: RGBA = (0, 0, 0, 70)
     # A dark outline round every glyph drawn straight on the video (its width: OUTLINE),
     # as strong as the text is opaque (OUTLINE.gamma), so dimmed text stays dim on a pale wall.
     outline: RGBA = (0, 0, 0, 150)
@@ -68,34 +70,34 @@ class Colors:
     # pale wall they would vanish, in a dark room it doesn't show.
     rim: RGBA = (0, 0, 0, 110)
     # Chips and nodes.
-    chip_fill: RGBA = (255, 140, 0, 235)  # word under the cursor, picked ring node
-    chip_text: RGBA = (20, 20, 20, 255)
-    dark_fill: RGBA = (15, 15, 18, 215)
-    node_text: RGBA = (240, 240, 240, 255)
-    node_outline: RGBA = (240, 240, 240, 200)
-    node_fill: RGBA = (12, 14, 34, 235)  # the options ring's nodes: Kat's navy boxes
-    connector: RGB = (255, 196, 40)  # the options ring's spokes
+    chip_fill: RGBA = (230, 110, 0, 245)  # word under the cursor, picked ring node
+    chip_text: RGBA = (255, 255, 255, 255)
+    dark_fill: RGBA = (28, 28, 30, 225)  # system gray 6 (dark): the take table, the keys
+    node_text: RGBA = (255, 255, 255, 240)
+    node_outline: RGBA = (255, 255, 255, 46)  # a hairline: light catching the edge
+    node_fill: RGBA = (44, 44, 46, 240)  # the options ring's nodes: system gray 5 (dark)
+    connector: RGB = (255, 159, 10)  # the options ring's spokes, in the accent
     # Review.
     detail_text: RGBA = (235, 235, 235, 235)  # the takes' lines under a focused sentence
     # Persistent alert line (recording or analysis trouble) and the panel's scrollbar.
-    alert_fill: RGBA = (170, 40, 30, 230)
-    label_fill: RGBA = (10, 10, 12, 190)  # behind the bottom-left pills
+    alert_fill: RGBA = (215, 0, 21, 235)  # system red, darkened for white text
+    label_fill: RGBA = (28, 28, 30, 200)  # behind the bottom-left pills
     alert_text: RGBA = (255, 255, 255, 255)
     scroll_track: RGB = (160, 160, 160)
     # Every progress bar (BAR): a faint white track, filled in orange.
-    bar_track: RGBA = (255, 255, 255, 64)
-    bar_fill: RGBA = (255, 140, 0, 255)
+    bar_track: RGBA = (120, 120, 128, 92)  # system fill (dark)
+    bar_fill: RGBA = (255, 159, 10, 255)
     scroll_thumb: RGB = (235, 235, 235)
     # Accents drawn with OpenCV.
-    yellow: RGB = (255, 215, 0)  # active fingertip, ring connectors, active zone, progress
-    cyan: RGB = (0, 230, 255)  # second hand's fingertips
-    cold: RGB = (60, 150, 255)  # tone gauge, top
-    warm: RGB = (255, 140, 0)  # tone gauge, bottom
+    yellow: RGB = (255, 214, 10)  # system yellow: the active fingertip
+    cyan: RGB = (100, 210, 255)  # system teal: the second hand's fingertips
+    cold: RGB = (10, 132, 255)  # system blue: the tone gauge, top
+    warm: RGB = (255, 159, 10)  # the tone gauge, bottom
     knob_fill: RGB = (20, 20, 20)
     knob_outline: RGB = (245, 245, 245)
     stretch_line: RGB = (245, 245, 245)
     zone: RGB = (170, 170, 170)
-    rec: RGB = (230, 60, 60)  # recording dot
+    rec: RGB = (255, 69, 58)  # system red: the recording dot
     # Debug drawings (`d` key, python -m palmcards.gestures).
     landmark_line: RGB = (200, 200, 200)
     landmark_point: RGB = (255, 255, 255)
@@ -117,11 +119,11 @@ class Layout:
 
 @dataclass(frozen=True)
 class Scrim:
-    """Kat's dark left side: the video is darkened from the frame's left
-    edge, fully up to `full`, then fading out to nothing by the text
-    column's right edge (LAYOUT.text), so nothing darkens the face.
+    """How bright the room is under the text column, which sets how dark the
+    glass panels are tinted (GLASS.alpha_min..alpha_max). `full` is unused
+    since the glass replaced the dark left side.
 
-    How dark follows the room: every `sample_every` frames the camera image
+    How it is measured: every `sample_every` frames the camera image
     under the text column is measured (the `percentile` of its brightness,
     every `sample_step` px), mapped from `dark`..`bright` onto
     `alpha_min`..`alpha_max`, and the scrim moves `smooth` of the way there,
@@ -139,10 +141,30 @@ class Scrim:
 
 
 @dataclass(frozen=True)
+class Glass:
+    """Apple's material under the text: rounded panels of the camera image
+    blurred (shrunk by `shrink`, Gaussian `sigma` px there) and tinted dark
+    (Colors' `tint`), as dark as the room is bright (SCRIM's sampling, mapped
+    onto alpha_min..alpha_max), edged with a hairline of light (`edge`).
+    One panel holds the label, one the notes (its column, LAYOUT.text); the
+    take table, the tutorial and the pills have their own."""
+    tint: RGB = (22, 22, 26)
+    alpha_min: float = 0.42  # dark room
+    alpha_max: float = 0.78  # white wall
+    shrink: int = 6
+    sigma: float = 2.5
+    radius: float = 0.75  # x the notes' line height
+    edge: RGBA = (255, 255, 255, 34)
+    pad: float = 0.6  # x the notes' line height: the label panel round its text
+    gap: int = 8  # px between the label's panel and the notes'
+
+
+@dataclass(frozen=True)
 class Fill:
     """The tight fills behind a highlighted unit's rows, and the bar beside its paragraph."""
-    pad_x: int = 2  # px beyond the row's text
-    bar_w: int = 2  # px
+    pad_x: int = 3  # px beyond the row's text
+    radius: int = 4  # px: each row's fill is a rounded rectangle
+    bar_w: int = 3  # px
     bar_x: int = 1  # px from the text box's left edge
 
 
@@ -152,7 +174,7 @@ class Outline:
     stroke; colour and opacity: Colors.outline). Text on a fill has none.
     Its opacity follows the text's: x (text alpha) ** gamma, so faint context
     is not a dark outline round nothing on a pale wall."""
-    width: int = 2  # px; 0 turns it off
+    width: int = 0  # px; 0 turns it off (text sits on glass now)
     gamma: float = 0.75
 
 
@@ -174,6 +196,7 @@ class TypeStep:
     weight: str
     tracking: float
     leading: float
+    family: str = "mono"  # "mono": SF Mono, the notes' grid; "ui": SF Pro, the interface (TEXT.fonts)
 
 
 @dataclass(frozen=True)
@@ -182,23 +205,23 @@ class TypeScale:
     size, weight and brightness together (Colors.label_*). Tracking tightens as
     text grows and is slightly positive on the small all-caps labels and hints;
     leading is tight on the enlarged focus text, comfortable on the notes."""
-    display: TypeStep = TypeStep("ui", 5.0, "semibold", -0.04, 1.0)  # the count-in's 3-2-1
+    display: TypeStep = TypeStep("ui", 5.0, "semibold", -0.03, 1.0, "ui")  # the count-in's 3-2-1
     # The focus panel's enlarged unit and a focused word's zoomed notes: x the
     # size the panel fits (TEXT.focus_scales) or TEXT.word_zoom. Its current
     # sentence (the focused unit, Rehearse's orange one) in semibold.
     focus: TypeStep = TypeStep("notes", 1.0, "medium", -0.01, 1.1)
-    label: TypeStep = TypeStep("ui", 0.9, "semibold", 0.06, 1.25)  # the state: BROWSE BY WORD; the tutorial's step
+    label: TypeStep = TypeStep("ui", 1.0, "semibold", -0.01, 1.25, "ui")  # the state: BROWSE BY WORD; the tutorial's step
     # The notes (the current sentence and the unit under the hand in semibold);
     # rows 24 px apart at 720p. Review's take lines are these at DETAIL.scale.
     notes: TypeStep = TypeStep("notes", 1.0, "medium", 0.0, 1.2)
-    operation: TypeStep = TypeStep("ui", 0.72, "medium", 0.04, 1.25)  # the label's operation, the alert line, REC
+    operation: TypeStep = TypeStep("ui", 0.8, "medium", 0.0, 1.25, "ui")  # the label's operation, the alert line, REC
     # The label's gesture hint. Review's short hint (39 characters) must fit a
     # row of the text column at 1080p: at +0.01 em it does (+0.02 em pushes it
     # onto two: Plex is 14 px a character there).
-    hint: TypeStep = TypeStep("ui", 0.6, "medium", 0.01, 1.25)
+    hint: TypeStep = TypeStep("ui", 0.7, "regular", 0.01, 1.3, "ui")
     # Pills, the keys, the take table, take chips, zone hints, gauge ends, more
     # markers: medium over the video, regular on a solid fill (SMALL_ON_FILL).
-    small: TypeStep = TypeStep("ui", 0.56, "medium", 0.04, 1.2)
+    small: TypeStep = TypeStep("ui", 0.62, "medium", 0.01, 1.2, "ui")
 
 
 SMALL_ON_FILL = "regular"
@@ -206,13 +229,21 @@ SMALL_ON_FILL = "regular"
 
 @dataclass(frozen=True)
 class Text:
-    # IBM Plex Mono, shipped with the app in three weights (licence and sources
-    # beside it): the notes in medium, the current sentence and the state label
-    # in semibold. Every weight is 0.6 em wide, so the grid is the same in all.
+    # Apple's system fonts, variable, from macOS (not shipped): SF Mono for the
+    # notes' grid (every weight the same width), SF Pro for the interface (its
+    # optical size follows the text size). Where macOS lacks them, IBM Plex Mono
+    # (shipped, licence and sources beside it) stands in for both.
     fonts: dict[str, Path] = field(default_factory=lambda: {
+        "mono": Path("/System/Library/Fonts/SFNSMono.ttf"),
+        "ui": Path("/System/Library/Fonts/SFNS.ttf"),
+    })
+    weights: dict[str, int] = field(default_factory=lambda: {"regular": 400, "medium": 510, "semibold": 590,
+                                                              "bold": 700})
+    plex: dict[str, Path] = field(default_factory=lambda: {
         "regular": FONTS_DIR / "IBMPlexMono-Regular.ttf",
         "medium": FONTS_DIR / "IBMPlexMono-Medium.ttf",
         "semibold": FONTS_DIR / "IBMPlexMono-SemiBold.ttf",
+        "bold": FONTS_DIR / "IBMPlexMono-SemiBold.ttf",
     })
     # Characters Plex lacks (▸ ▲ ▼ ● ○, scripts it doesn't cover) come from
     # DejaVu Sans Mono, drawn in the same cell on the same baseline.
@@ -258,7 +289,7 @@ class Chips:
     are x the notes' size (word chip, ring nodes) or x the UI size (the rest)."""
     pad_x: tuple[int, int] = (4, 4)  # (min px, text size // this)
     pad_y: tuple[int, int] = (2, 8)
-    radius: tuple[int, int] = (3, 5)
+    radius: tuple[int, int] = (5, 2)  # (min px, text size // this): nearly a capsule
     hover_scale: float = 1.0  # x the notes' size: word under the cursor
 
 
@@ -306,7 +337,7 @@ class Ring:
     ry: float = 3.4
     node_scale: float = 0.8  # x the zoomed text's size
     node_pad: tuple[float, float] = (0.45, 0.22)  # x the node's text size
-    node_radius: int = 1  # px: nearly square
+    node_radius: int = 7  # px: rounded
     node_outline_w: int = 2  # px
     node_gap: int = 6  # px kept between nodes, and between a node and the word
     relax_steps: int = 30
@@ -356,7 +387,7 @@ class Playbar:
     caption_above: int = 26  # px from the bar's centre up to the line's bottom
     caption_band: RGBA = (0, 0, 0, 140)  # behind the line, for any video
     caption_max: float = 0.8  # x the frame width: older words scroll off the left
-    flip_hint: str = "M: FLIP VIDEO"  # top right of a replay: the key that mirrors it or not
+    flip_hint: str = "M  Flip video"  # top right of a replay: the key that mirrors it or not
     hint_top: int = 16  # px from the frame's top edge
     gap: float = 0.5  # its centre below the unit's last enlarged row, x the padding (Review's take lines start a padding below)
 
@@ -373,7 +404,7 @@ class Gauge:
     knob_outline: int = 2
     closing_knob_outline: int = 3  # while the thumb closes into a pinch: the value is held
     rubber_max: float = 0.3  # past an end the knob goes at most this far on, x the half track
-    labels: tuple[str, str] = ("FORMAL", "WARM")  # the label's words for the same ends (render.TONE_NAMES)
+    labels: tuple[str, str] = ("Formal", "Warm")  # the label's words for the same ends (render.TONE_NAMES)
 
 
 @dataclass(frozen=True)
@@ -534,6 +565,7 @@ class Player:
 COLORS = Colors()
 LAYOUT = Layout()
 SCRIM = Scrim()
+GLASS = Glass()
 FILL = Fill()
 SHADOW = Shadow()
 OUTLINE = Outline()
@@ -543,7 +575,7 @@ HIGH_CONTRAST = replace(COLORS, text=(255, 255, 255, 255),
                         dim=(255, 255, 255, 215), faint=(255, 255, 255, 130),
                         ring_sentence=(255, 255, 255, 215), ring_context=(255, 255, 255, 55),
                         shadow=(0, 0, 0, 240), outline=(0, 0, 0, 220),
-                        label_operation=(255, 140, 0, 245), label_hint=(255, 140, 0, 235), context_fill=(50, 62, 115, 235),
+                        label_hint=(255, 255, 255, 230), context_fill=(255, 255, 255, 60),
                         bar_track=(255, 255, 255, 110),
                         label_fill=(0, 0, 0, 230), detail_text=(255, 255, 255, 255))
 TEXT = Text()

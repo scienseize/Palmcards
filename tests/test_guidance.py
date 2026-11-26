@@ -112,7 +112,7 @@ def test_contrast_tutorial_card_and_hand_area_are_drawn(restore):
 
 def test_the_last_tutorial_step_says_what_stops_a_take_and_stays_below_the_hand_box(restore):
     text = STEPS[-1][1]
-    assert "FIST" in text and "OK SIGN" in text and "STOP" in text
+    assert "fist" in text and "OK sign" in text and "stop" in text
     sentences = parse_text("Hello there. Good night all.").sentences
     ov = TextOverlay(sentences, (1280, 720))
     base = np.full((720, 1280, 3), 128, np.uint8)

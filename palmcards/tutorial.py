@@ -9,13 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 STEPS = (
-    ("hand", "HOLD A HAND UP IN THE BOX ON THE RIGHT"),
-    ("word", "RAISE ONE FINGER: THE HIGHLIGHT FOLLOWS IT, WORD BY WORD"),
-    ("sentence", "TWO FINGERS TOGETHER: WHOLE SENTENCES"),
-    ("focus", "FOLD THE TWO FINGERS ONTO YOUR THUMB: FOCUS THE SENTENCE"),
-    ("back", "DROP YOUR HAND FOR A SECOND TO COME BACK"),
-    ("start", "READY: RAISE A CLOSED FIST AND HOLD IT TO START A TAKE (OR PRESS T). "
-              "IN A TAKE, HOLD THE OK SIGN TO STOP."),
+    ("hand", "Hold one hand up inside the box on the right."),
+    ("word", "Raise one finger. The highlight follows it, word by word."),
+    ("sentence", "Now hold two fingers together to move by sentence."),
+    ("focus", "Fold the two fingers onto your thumb to select the sentence."),
+    ("back", "Lower your hand for a second to go back."),
+    ("start", "You're ready. Raise a fist and hold it to record (or press T). "
+              "To stop, hold an OK sign."),
 )
 
 
