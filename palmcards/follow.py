@@ -24,6 +24,10 @@ earlier sentence), they are aligned again on their own.
   - a run with FOLLOW.forward_words in the next section's opening advances
     the section. Sections only ever move forward.
 
+Said in other words, no run moves it; then the newest live words' content
+words are matched in any order against the later sentences (see
+FOLLOW.content_*): a sentence reworded still takes the highlight, though a
+little later, and a reworded opening of the next section moves the section.
 Going off script matches nothing, so the follow stalls, which is correct.
 
 LiveFollow runs it during a take: microphone blocks in, events out.
@@ -37,7 +41,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from palmcards.align import align
+from palmcards.align import STOPWORDS, align, content_hits, content_words, stem
 from palmcards.asr import LiveWord
 from palmcards.config import ALIGN, FOLLOW
 from palmcards.notes import Notes, normalize
@@ -70,6 +74,8 @@ class Follower:
         self.tail: list[LiveWord] = []
         self._handoff: tuple[int, int] | None = None  # (sentence handed on from, its word at that moment)
         self.at: tuple[int, int] | None = None  # the last note word matched: (sentence, word in it)
+        fillers = set(ALIGN.fillers)
+        self._content = [content_words([w.norm for w in s.words], fillers) for s in self.sentences]
 
     def _first(self, section: int) -> int:
         return next((i for i, s in enumerate(self.sentences) if s.section >= section), len(self.sentences) - 1)
@@ -134,11 +140,15 @@ class Follower:
         if not words:
             return []
         self.tail = (self.tail + list(words))[-FOLLOW.tail_words:]
+        t = max(w.confirmed_at if w.confirmed_at is not None else w.end for w in words)
+        return self._by_run(t) or self._by_content(t)
+
+    def _by_run(self, t: float) -> list[FollowEvent]:
+        """Where a run of note words said as written moves the follow."""
         run = self.last_run()
         if run is None:
             return []
         self.at = (run.sentences[-1], run.last_word)
-        t = max(w.confirmed_at if w.confirmed_at is not None else w.end for w in words)
         s = run.sentences[-1]
         if self._handoff is not None and s == self.sentence:
             self._handoff = None  # the voice has reached the new sentence: the handoff is over
@@ -154,7 +164,9 @@ class Follower:
             self.sentence, self._handoff = s, None
             return [FollowEvent("sentence", s, t)]
         finishing = self._handoff is not None and s == self._handoff[0] and run.last_word >= self._handoff[1]
-        if s < self.sentence and run.length >= FOLLOW.back_words and not finishing:
+        # A re-read is the newest words: a run with more than run_gap words after it that matched
+        # nothing is stale (going on in other words after a handoff pulled it back before).
+        if s < self.sentence and run.length >= FOLLOW.back_words and not finishing and run.trailing <= FOLLOW.run_gap:
             self.sentence, self._handoff = s, None
             self.tail = self.tail[run.first_word:]  # the later words were read before the re-read
             return [FollowEvent("sentence", s, t)]
@@ -166,6 +178,37 @@ class Follower:
             self.sentence, self._handoff = s + 1, (s, run.last_word)
             return [FollowEvent("sentence", s + 1, t)]
         return []
+
+    def _by_content(self, t: float) -> list[FollowEvent]:
+        """A later sentence said in other words (see FOLLOW.content_*)."""
+        fillers = set(ALIGN.fillers)
+        stems = [stem(n) for w in self.tail[-FOLLOW.content_tail:]
+                 if (n := normalize(w.text)) and n not in fillers and n not in STOPWORDS]
+        if len(stems) < FOLLOW.content_words:
+            return []
+
+        def found(i: int) -> int:
+            return len(set().union(*content_hits(self._content[i], stems).values()))
+
+        here = found(self.sentence)
+        best = None
+        for i, s in enumerate(self.sentences):
+            if i <= self.sentence or s.section > self.section + 1:
+                continue
+            need = FOLLOW.content_words if s.section == self.section else FOLLOW.content_words_section
+            got = found(i)
+            if got >= need and got > here and (best is None or got > best[1]):
+                best = (i, got)
+        if best is None:
+            return []
+        i = best[0]
+        events = []
+        if self.sentences[i].section != self.section:
+            self.section = self.sentences[i].section
+            events.append(FollowEvent("section", self.section, t))
+        self.sentence, self._handoff, self.at = i, None, None
+        self.tail = []  # these words were used up: they don't move it again
+        return events + [FollowEvent("sentence", i, t)]
 
     def _words_ahead(self, now: float) -> float:
         """Words the voice has probably said since the newest confirmed one:

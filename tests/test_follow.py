@@ -122,3 +122,49 @@ def test_flick_is_the_manual_override():
     assert f.tail == []
     assert moves(sp.say("uniform victor whiskey")) == [("sentence", 4)]
     assert f.flick(10.0) == []  # the last section
+
+
+PITCH = parse_text("""# Problem
+
+Most founders rehearse their pitch silently in their heads. They walk into the room having never said it aloud.
+
+# Product
+
+PalmCards puts your notes beside your mirrored camera image. Each take measures pace, fillers and pauses.
+""", "md")
+
+
+def test_a_sentence_in_other_words_takes_the_highlight():
+    f = Follower(PITCH)
+    sp = Speaker(f)
+    sp.say("most founders rehearse their pitch")
+    assert (f.section, f.sentence) == (0, 0)
+    # Sentence 1 reworded: "never", "said", "aloud", "walk", "room" in another order.
+    got = moves(sp.say("so they actually walk in never having said a word of it aloud in the room"))
+    assert ("sentence", 1) in got and f.sentence == 1 and f.section == 0
+
+
+def test_a_reworded_opening_moves_the_section():
+    f = Follower(PITCH)
+    sp = Speaker(f)
+    sp.say("most founders rehearse their pitch silently in their heads")
+    got = moves(sp.say("with this the camera image is mirrored and your notes float beside it"))
+    assert got[0] == ("section", 1) and f.sentence == 2
+
+
+def test_a_stray_shared_word_does_not_move_it():
+    f = Follower(PITCH)
+    sp = Speaker(f)
+    sp.say("most founders rehearse their pitch")
+    assert moves(sp.say("and honestly the camera is scary for many people")) == []
+    assert (f.section, f.sentence) == (0, 0)
+
+
+def test_going_on_in_other_words_after_a_handoff_does_not_pull_it_back():
+    f = Follower(PITCH)
+    sp = Speaker(f)
+    sp.say("most founders rehearse their pitch silently in their heads")
+    assert f.sentence == 1  # handed on as the sentence ended
+    # "the" reads close to "They" and ended the handoff; the old run then pulled it back to 0.
+    sp.say("with this the camera")
+    assert f.sentence >= 1

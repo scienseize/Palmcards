@@ -171,7 +171,7 @@ def test_split_and_joined_words():
 def test_empty_transcript():
     r = align(notes_words(NOTES), [])
     assert [s["status"] for s in r["sentences"]] == ["skipped"] * 4
-    assert counts(r) == {"spoken": 0, "partial": 0, "skipped": 4, "fillers": 0, "restarts": 0, "extras": 0}
+    assert counts(r) == {"spoken": 0, "own_words": 0, "partial": 0, "skipped": 4, "fillers": 0, "restarts": 0, "extras": 0}
 
 
 def test_punctuation_case_and_markup_ignored():
@@ -204,3 +204,44 @@ def test_summary():
     words = transcript("Um good evening everyone. We know where we know where and we know when.")
     r = align(notes_words(NOTES), words)
     assert summary(r) == "2/4 sentences spoken, 2 skipped, 1 filler, 1 restart"
+
+
+PITCH = """\
+Most founders rehearse their pitch silently in their heads.
+PalmCards puts your notes beside your mirrored camera image.
+Each take measures pace, fillers and pauses.
+We are raising one million dollars to reach ten thousand users.
+"""
+
+
+def test_a_sentence_reworded_counts_as_said_in_own_words():
+    words = transcript("Most founders rehearse their pitch silently in their heads. | "
+                       "the camera image is mirrored and the notes float beside it | "
+                       "Each take measures pace, fillers and pauses.")
+    r = align(notes_words(PITCH), words)
+    assert [s["status"] for s in r["sentences"]] == ["spoken", "own_words", "spoken", "skipped"]
+    mid = r["sentences"][1]
+    assert mid["coverage"] < 0.25 and mid["content"] >= 0.5  # little in order, most of its content
+    assert r["sentences"][0]["end"] < mid["start"] < mid["end"] < r["sentences"][2]["start"]
+    assert mid["heard"] == 11
+    assert r["extras"] == []  # the rewording, small words and all, is not an ad-lib
+    assert counts(r)["own_words"] == 1 and "1 in own words" in summary(r)
+
+
+def test_loose_paraphrases_are_said_too():
+    words = transcript("so honestly most founders just rehearse the pitch in their heads silently | "
+                       "with PalmCards your notes sit right beside the mirrored image from your camera | "
+                       "every take gets measured for pace and fillers and pauses | "
+                       "and we're raising a million dollars so we can reach ten thousand users")
+    r = align(notes_words(PITCH), words)
+    assert all(s["status"] in ("spoken", "partial", "own_words") for s in r["sentences"])
+
+
+def test_an_ad_lib_is_not_said_in_own_words():
+    words = transcript("Most founders rehearse their pitch silently in their heads. | "
+                       "my cat walked across the keyboard yesterday | "
+                       "Each take measures pace, fillers and pauses.")
+    r = align(notes_words(PITCH), words)
+    assert [s["status"] for s in r["sentences"]] == ["spoken", "skipped", "spoken", "skipped"]
+    assert r["sentences"][1]["content"] == 0.0
+    assert len(r["extras"]) == 1

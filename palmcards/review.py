@@ -126,7 +126,7 @@ class Board:
         if row["pitch_range_st"] is not None:
             parts.append(f"pitch range {row['pitch_range_st']:g} semitones")
         parts.append(self._gaze_part(number, row["gaze"]))
-        partly = " (partly said)" if row["status"] == "partial" else ""
+        partly = {"partial": " (partly said)", "own_words": " (in own words)"}.get(row["status"], "")
         return f"{self.take_name(number).capitalize()}{partly}: {', '.join(p for p in parts if p)}"
 
     def _gaze_part(self, number: int, g: dict | None) -> str:
@@ -221,14 +221,15 @@ class Board:
             value(hands, "face_touches"),
             None if tilted is None else 100 * tilted,
             None if number not in self.memory else 100 * self.memory[number],
+            None if value(speech, "key_points") is None else 100 * value(speech, "key_points"),
         ]
 
 
 METRIC_ROWS = ("Length", "Words a minute", "Fillers a minute", "Long pauses", "Restarts", "Pitch range (st)",
-               "On screen", "Face touches", "Shoulders tilted", "From memory")
+               "On screen", "Face touches", "Shoulders tilted", "From memory", "Key points")
 
 # How each row's number is written (None: a length, as m:ss).
-METRIC_FORMS = (None, "{:.0f}", "{:g}", "{}", "{}", "{:g}", "{:.0f}%", "{}", "{:.0f}%", "{:.0f}%")
+METRIC_FORMS = (None, "{:.0f}", "{:g}", "{}", "{}", "{:g}", "{:.0f}%", "{}", "{:.0f}%", "{:.0f}%", "{:.0f}%")
 
 
 def _mmss(seconds: float) -> str:

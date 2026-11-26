@@ -5,8 +5,9 @@
 Every metric is an observation with what it rests on, never a judgment of
 the speaker. One without enough to go on is None with the reason.
 
-  speech   pace over the sentences said (words per minute of speaking
-           time), fillers per minute of the take, long pauses (silences
+  speech   key points (the share of note sentences said: as written, partly,
+           or in the speaker's own words), pace over the sentences said (words
+           per minute of speaking time), fillers per minute of the take, long pauses (silences
            between words over METRICS.long_pause_s; a count, and per minute
            of the take), restarts and ad-libs. From the transcript. Per
            sentence (`sentences`): whether it was said, its pace from its
@@ -49,7 +50,8 @@ from palmcards.config import BODY, METRICS
 from palmcards.notes import normalize
 from palmcards.prosody import Prosody
 
-VERSION = 5  # 2: gaze; 3: posture, hands, face touches; 4: speech per sentence, voice; 5: long pauses, all of them
+VERSION = 6  # 2: gaze; 3: posture, hands, face touches; 4: speech per sentence, voice; 5: long pauses, all of them;
+# 6: key points (sentences said, own words included), own-words sentences counted in pace
 
 
 def _none(reason: str) -> dict:
@@ -73,6 +75,12 @@ def _sentence_fillers(alignment: dict) -> dict[int, list[str]]:
     return out
 
 
+def heard(s: dict) -> int:
+    """Words said for a sentence: its note words matched, or for one said in
+    other words (own_words) the words of its stretch."""
+    return s.get("heard", 0) if s["status"] == "own_words" else sum(i is not None for i in s["words"])
+
+
 def sentence_speech(alignment: dict, gaps=()) -> list[dict]:
     """Per note sentence: its status, pace (words per minute from its first to
     its last word said; None with `why` under METRICS.sentence_min_words
@@ -81,7 +89,7 @@ def sentence_speech(alignment: dict, gaps=()) -> list[dict]:
     fillers = _sentence_fillers(alignment)
     out = []
     for s in alignment["sentences"]:
-        said = sum(i is not None for i in s["words"])
+        said = heard(s)
         entry = {"sentence": s["sentence"], "status": s["status"], "wpm": None, "fillers": fillers.get(s["sentence"], [])}
         if s["status"] == "skipped":
             pass
@@ -98,9 +106,16 @@ def sentence_speech(alignment: dict, gaps=()) -> list[dict]:
 def speech(alignment: dict, words: list[dict], duration_s: float, lost=()) -> dict:
     """`lost`: (start, end) app times the recording lost."""
     said = [s for s in alignment["sentences"] if s["status"] != "skipped" and s["start"] is not None]
-    n_words = sum(sum(i is not None for i in s["words"]) for s in said)
+    n_words = sum(heard(s) for s in said)
     speaking_s = sum(s["end"] - s["start"] for s in said)
     out = {}
+    total = len(alignment["sentences"])
+    own = sum(s["status"] == "own_words" for s in said)
+    if total:
+        out["key_points"] = {"value": round(len(said) / total, 3), "said": len(said), "of": total,
+                             "basis": f"{len(said)} of {total} sentences said" + (f", {own} in own words" if own else "")}
+    else:
+        out["key_points"] = _none("no sentences in the notes")
     if speaking_s >= METRICS.min_speaking_s and n_words >= METRICS.min_words:
         out["pace_wpm"] = {"value": round(60 * n_words / speaking_s, 1),
                            "basis": f"{n_words} words over {speaking_s:.1f} s of sentences said"}

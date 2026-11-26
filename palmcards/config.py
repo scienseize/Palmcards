@@ -375,6 +375,12 @@ class Align:
     min_probability: float = 0.1  # Whisper word probability; below it the word is left out as unsure
     spoken_min: float = 0.8  # sentence coverage for "spoken"
     skipped_max: float = 0.25  # below this coverage the sentence is "skipped"
+    # Said in your own words (a pitch is rarely word for word): a skipped sentence becomes
+    # "own_words" when this share of its content words (no stopwords, stemmed) was said,
+    # in any order, in one stretch of the transcript between the sentences said as written.
+    cover_min: float = 0.5
+    cover_sim: float = 0.8  # rapidfuzz ratio for two stems to count as the same word
+    cover_span: float = 2.0  # the stretch may run this many times the sentence's words, plus 4
     fillers: tuple[str, ...] = ("um", "umm", "uh", "uhh", "uhm", "er", "erm", "ah", "hmm", "mm", "like", "so")
 
 
@@ -408,6 +414,14 @@ class Follow:
     # this many of its words are still unconfirmed.
     handoff_words: int = 2
     run_gap: int = 1  # note words missing, or odd words heard, between two matches in a row
+    # Said in your own words: when no run moves it, the newest content_tail live words'
+    # content words (palmcards.align.content_words) are matched, in any order, against the
+    # later sentences of this section and every sentence of the next one. A sentence with
+    # content_words of its content words heard (content_words_section in the next section),
+    # and more than the current sentence has, takes the highlight. Forward only.
+    content_tail: int = 8
+    content_words: int = 3
+    content_words_section: int = 4
     tap_blocks: int = 256  # microphone blocks waiting for the feeder (~5 s at 48 kHz, 1024-frame blocks)
     feed_s: float = 0.1  # the feeder hands the live stream what arrived this often
 

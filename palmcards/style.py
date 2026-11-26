@@ -548,7 +548,8 @@ class Player:
     strip_top: int = 44  # px above the bottom
     strip_bottom: int = 24
     strip_frame: RGB = (70, 70, 70)
-    status: dict[str, RGB] = field(default_factory=lambda: {"spoken": (90, 190, 90), "partial": (255, 140, 0)})
+    status: dict[str, RGB] = field(default_factory=lambda: {"spoken": (90, 190, 90), "own_words": (90, 160, 220),
+                                                                   "partial": (255, 140, 0)})
     status_other: RGB = (90, 90, 90)
     span_inset: int = 3
     section: RGB = (200, 200, 200)

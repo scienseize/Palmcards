@@ -112,7 +112,7 @@ def test_without_face_features_gaze_posture_and_touches_say_why():
     al, words, _ = aligned("Good evening everyone thank you.")
     m = metrics.take_metrics(al, words, 0.0, 30.0)
     assert m["gaze"]["value"] is None and "no face features" in m["gaze"]["reason"]
-    assert m["posture"]["value"] is None and "no face features" in m["posture"]["reason"] and m["version"] == 5
+    assert m["posture"]["value"] is None and "no face features" in m["posture"]["reason"] and m["version"] == 6
     assert "no face features" in m["hands"]["face_touches"]["reason"]
 
 
@@ -206,3 +206,20 @@ def test_posture_says_why_when_it_cannot_be_measured():
     assert "too few pose readings" in metrics.posture(pose_rows([2.0] * 5, [0.45] * 5), CAL)["reason"]
     assert "too few pose readings" in metrics.posture(pose_rows([2.0] * 20, [0.45] * 20, vis=0.2), CAL)["reason"]
     assert metrics.posture(None, CAL, "face tracking was off: x")["reason"] == "face tracking was off: x"
+
+
+def test_key_points_and_pace_count_a_sentence_said_in_own_words():
+    from palmcards.align import align
+    from palmcards.metrics import speech
+    from tests.test_align import PITCH, notes_words, transcript
+
+    words = transcript("Most founders rehearse their pitch silently in their heads. | "
+                       "the camera image is mirrored and the notes float beside it | "
+                       "Each take measures pace, fillers and pauses.")
+    al = align(notes_words(PITCH), words)
+    m = speech(al, words, duration_s=words[-1]["end"] - words[0]["start"])
+    assert m["key_points"]["value"] == 0.75 and m["key_points"]["said"] == 3 and m["key_points"]["of"] == 4
+    assert "1 in own words" in m["key_points"]["basis"]
+    own = next(s for s in m["sentences"] if s["status"] == "own_words")
+    assert own["wpm"] is not None  # paced on its own stretch of words
+    assert m["pace_wpm"]["value"] is not None

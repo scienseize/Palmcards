@@ -2309,3 +2309,33 @@ Tests: pytest (full) -> 646 passed. New: latest_session_for (same file finds the
 Not checked: the Open dialog, full screen and the warm-up on the camera; whether the dialog comes to the
   front over the terminal; the warm-up's cost to the frame rate in Prepare.
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: Rehearse/Review plan, stage A: content coverage and a follow that accepts your own
+  words (plan ~/.claude/plans/i-need-a-plan-parallel-marble-of-751c19a4-d286-4ec7-9121-2fd7e0d791e0.md;
+  the user rehearses a pitch with Q&A and named four problems: no next step in Review, heavy takes, an
+  unreliable follow, no sense of progress)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: align.py version 2: between the sentences said as written, each run of skipped sentences gets
+  stretches of the transcript (a DP, in order, no overlap) holding the most of their content words
+  (STOPWORDS and fillers left out, a rough stem, rapidfuzz at ALIGN.cover_sim, any order); a sentence
+  with ALIGN.cover_min (0.5) of them is own_words, with the stretch's start/end, content and heard, and
+  the stretch's words are no longer ad-libs. Everything that reads "not skipped" (pace, gaze, voice,
+  Review's takes that said it, playback) now counts it. metrics v6: speech.key_points (share of sentences
+  said, own words included); pace counts an own_words sentence's stretch. Take table: a Key points row;
+  a sentence line says "(in own words)". follow.py: when no run moves it, the newest FOLLOW.content_tail
+  live words' content words, any order, move the highlight forward to a later sentence (content_words
+  3; 4 into the next section; more than the current sentence has). Fixed: after a handoff, a word that
+  reads close to the new sentence's first word ("the" for "They") ended the handoff, and the old run,
+  with words after it that matched nothing, pulled the highlight back; a move back now needs the run to
+  be the newest words (trailing <= FOLLOW.run_gap).
+Tests: pytest (full) -> 654 passed. New: a reworded sentence is own_words between verbatim neighbours,
+  its small words included, no ad-libs; loose paraphrases count as said; an unrelated aside stays an
+  ad-lib; key points and pace with own words; the follow moves on a reworded sentence and a reworded
+  section opening, not on a stray shared word, and doesn't pull back after a handoff.
+  bench_live --rescore on the four saved base-0.3 runs: identical scores before and after (verbatim
+  reads: no regression). One run (20260925-131002 take 2) is 20% on the sentence before and after: live
+  recognition confirmed only 46% of the words, a recogniser problem, not the matching.
+Not checked: a paraphrased pitch take on the camera (no recording of one exists yet).
+```

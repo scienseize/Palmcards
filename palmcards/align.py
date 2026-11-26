@@ -34,6 +34,13 @@ Result (word refs index `words`; times are the words' own clock):
 `words[k]` is the transcript word for note word k (the first one if Whisper
 split it; `joined` lists [note word, last transcript word] for those).
 Status is spoken / partial / skipped by coverage (note words matched).
+A skipped sentence said in other words is "own_words": between the
+sentences said as written, each run of skipped sentences gets the stretches
+of the transcript (in order, one each) that hold the most of their content
+words (no stopwords or fillers, stemmed, any order); a sentence whose
+stretch holds ALIGN.cover_min of its content words is own_words, with the
+stretch's start and end, `content` (that share) and `heard` (the stretch's
+words, fillers left out). Those words are no longer ad-libs.
 `unsure` lists words left out because Whisper gave them a very low
 probability (usually hallucinations in noise).
 """
@@ -47,11 +54,85 @@ from rapidfuzz.process import cdist
 from palmcards.config import ALIGN
 from palmcards.notes import normalize
 
-VERSION = 1  # bump when align() changes what it produces
+VERSION = 2  # bump when align() changes what it produces; 2: own_words
 NEG = float("-inf")
 EPS = 1e-9  # scores this close count as a tie
 M, X, Y = 0, 1, 2  # DP states: pair, note word skipped, transcript word extra
 START = 255
+
+# ponytail: English only, like ALIGN.fillers; other languages keep their stopwords as content words.
+STOPWORDS = frozenset("""a an the and or but if of to in on at by for with from as is are was were be been being
+    am it its this that these those i you he she we they me him her us them my your our their his what which who
+    whom whose when where why how not no do does did have has had will would can could should may might must shall
+    there here than then very just also about into over out up down all any some more most such only own same too
+    again once off onto let lets get got going go""".split())
+
+
+def stem(word: str) -> str:
+    """A rough English stem, enough to match "customers" with "customer" (then fuzzy)."""
+    for suffix in ("ing", "ed", "es", "s", "ly"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def content_words(words: list[str], fillers=()) -> list[str]:
+    """A sentence's content words (normalised words in), stemmed, each once, in
+    order; all its words if it has nothing but stopwords ("Thank you")."""
+    out = [stem(w) for w in words if w and w not in STOPWORDS and w not in fillers]
+    return list(dict.fromkeys(out or [stem(w) for w in words if w]))
+
+
+def content_hits(content: list[str], stems: list[str]) -> dict[int, set[int]]:
+    """Position in `stems` -> the content words it matches (rapidfuzz, ALIGN.cover_sim)."""
+    if not content or not stems:
+        return {}
+    close = cdist(content, stems, scorer=fuzz.ratio) >= 100 * ALIGN.cover_sim
+    hits: dict[int, set[int]] = {}
+    for c, t in zip(*np.nonzero(close)):
+        if stems[t]:
+            hits.setdefault(int(t), set()).add(int(c))
+    return hits
+
+
+def _own_words(contents: list[list[str]], lengths: list[int], stems: list[str], lo: int, hi: int):
+    """Consecutive sentences, each given at most one stretch of stems[lo:hi], in
+    order, without overlap, so the content words found are the most in all.
+    Per sentence: (start, end, content words found) or None; end exclusive."""
+    T = hi - lo
+    row = np.zeros(T + 1)  # best total for the sentences so far, using stems before each position
+    back = []
+    for content, length in zip(contents, lengths):
+        hits = content_hits(content, stems[lo:hi])
+        nxt, src = row.copy(), np.full(T + 1, -1)  # by default the sentence was not said
+        span = int(ALIGN.cover_span * length) + 4
+        ts = sorted(hits)
+        for a, s in enumerate(ts):
+            got: set[int] = set()
+            for t in ts[a:]:
+                if t >= s + span:
+                    break
+                got |= hits[t]
+                if row[s] + len(got) > nxt[t + 1]:
+                    nxt[t + 1], src[t + 1] = row[s] + len(got), s
+        origin = np.arange(T + 1)
+        for k in range(1, T + 1):
+            if nxt[k - 1] > nxt[k]:
+                nxt[k], origin[k] = nxt[k - 1], origin[k - 1]
+        back.append((src, origin, hits))
+        row = nxt
+    out: list[tuple[int, int, int] | None] = [None] * len(contents)
+    k = T
+    for i in reversed(range(len(contents))):
+        src, origin, hits = back[i]
+        e = int(origin[k])
+        s = int(src[e])
+        if s >= 0:
+            out[i] = (lo + s, lo + e, len(set().union(*(hits[t] for t in hits if s <= t < e))))
+            k = s
+        else:
+            k = e
+    return out
 
 
 def _sims(a: list[str], b: list[str]):
@@ -535,6 +616,8 @@ def align(sentences: list[list[str]], words: list[dict], fillers: tuple[str, ...
             entry["joined"] = joined
         out_sentences.append(entry)
 
+    owned = _mark_own_words(sentences, out_sentences, al, trans, filler, fillers, pos, words, first_note)
+
     def sentence_near(t: int) -> int | None:
         """Sentence of the matched word before transcript position t, else after."""
         for r in list(range(t - 1, -1, -1)) + list(range(t + 1, len(trans))):
@@ -565,6 +648,9 @@ def align(sentences: list[list[str]], words: list[dict], fillers: tuple[str, ...
             w = words[pos[t]]
             fillers_out.append({"word": pos[t], "text": trans[t], "t": w["start"]})
             continue  # a filler inside a restart or ad-lib doesn't split it
+        elif t in owned:  # a sentence said in other words: not an ad-lib
+            flush()
+            continue
         else:
             kind = "extra"
         if kind != group_kind:
@@ -577,9 +663,51 @@ def align(sentences: list[list[str]], words: list[dict], fillers: tuple[str, ...
             "unsure": unsure}
 
 
+def _mark_own_words(sentences, out_sentences, al, trans, filler, fillers, pos, words, first_note) -> set[int]:
+    """Skipped sentences said in other words become "own_words" (see module doc).
+    Returns the transcript positions (into `trans`) their stretches cover."""
+    stems = ["" if filler[t] or w in STOPWORDS else stem(w) for t, w in enumerate(trans)]
+    said_at: dict[int, list[int]] = {}  # sentence -> transcript positions of its note words said
+    for si, sent in enumerate(sentences):
+        base = first_note.get(si, 0)
+        said_at[si] = [t for k in range(base, base + len(sent)) for t in (al.note_map[k] or [])]
+    owned: set[int] = set()
+    si = 0
+    while si < len(sentences):
+        if out_sentences[si]["status"] != "skipped":
+            si += 1
+            continue
+        run = []
+        while si < len(sentences) and out_sentences[si]["status"] == "skipped":
+            run.append(si)
+            si += 1
+        before = [t for s in range(run[0]) for t in said_at[s]]
+        after = [t for s in range(si, len(sentences)) for t in said_at[s]]
+        lo, hi = (max(before) + 1 if before else 0), (min(after) if after else len(trans))
+        contents = [content_words(sentences[s], fillers) for s in run]
+        found = _own_words(contents, [len(sentences[s]) for s in run], stems, lo, hi)
+        for s, content, got in zip(run, contents, found):
+            entry = out_sentences[s]
+            if not content:
+                continue
+            entry["content"] = round(got[2] / len(content), 3) if got else 0.0
+            if got is None or entry["content"] < ALIGN.cover_min:
+                continue
+            a, b = got[0], got[1]
+            # The small words around it ("the camera ... beside it") belong to it too, not to an ad-lib.
+            while a > lo and not stems[a - 1] and al.t_note[a - 1] is None and a - 1 not in owned:
+                a -= 1
+            while b < hi and not stems[b] and al.t_note[b] is None:
+                b += 1
+            entry.update(status="own_words", start=words[pos[a]]["start"], end=words[pos[b - 1]]["end"],
+                         heard=sum(not filler[t] for t in range(a, b)))
+            owned |= set(range(a, b))
+    return owned
+
+
 def counts(alignment: dict) -> dict[str, int]:
     """Sentence statuses and event totals, for summaries."""
-    out = {"spoken": 0, "partial": 0, "skipped": 0}
+    out = {"spoken": 0, "own_words": 0, "partial": 0, "skipped": 0}
     for s in alignment["sentences"]:
         out[s["status"]] += 1
     out.update(fillers=len(alignment["fillers"]), restarts=len(alignment["restarts"]),
@@ -592,9 +720,9 @@ def summary(alignment: dict) -> str:
     c = counts(alignment)
     total = len(alignment["sentences"])
     parts = [f"{c['spoken']}/{total} sentences spoken"]
-    for key, label in (("partial", "partial"), ("skipped", "skipped"), ("fillers", "filler"),
-                       ("restarts", "restart"), ("extras", "ad-lib")):
+    for key, label in (("own_words", "in own words"), ("partial", "partial"), ("skipped", "skipped"),
+                       ("fillers", "filler"), ("restarts", "restart"), ("extras", "ad-lib")):
         if c[key]:
-            plural = "" if key in ("partial", "skipped") or c[key] == 1 else "s"
+            plural = "" if key in ("own_words", "partial", "skipped") or c[key] == 1 else "s"
             parts.append(f"{c[key]} {label}{plural}")
     return ", ".join(parts)
