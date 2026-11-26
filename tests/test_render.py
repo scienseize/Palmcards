@@ -1017,3 +1017,23 @@ def test_fading_cards_dim_and_blank_words_in_a_take():
     faded = (frozenset({(0, 0)}), frozenset({(0, 1), (0, 2)}))
     blanked = ov.panel(ViewState(app="rehearse", section=0, faded=faded)).color
     assert (plain != blanked).any()
+
+
+def test_text_from_kept_glyph_masks_matches_pillows_own():
+    from PIL import Image, ImageDraw
+
+    from palmcards.render import _MASKS, _text, load_font
+
+    font = load_font(20, "medium")
+    _MASKS.clear()
+    images = []
+    for kept in (False, True, True):  # Pillow's, then the cache filled, then read from it
+        img = Image.new("RGBA", (300, 40))
+        draw = ImageDraw.Draw(img)
+        if kept:
+            _text(draw, (12, 8), "Fourscore and seven", font, fill=(255, 140, 0, 255))
+        else:
+            draw.text((12, 8), "Fourscore and seven", font=font, fill=(255, 140, 0, 255))
+        images.append(np.asarray(img))
+    assert (images[0] == images[1]).all() and (images[1] == images[2]).all()
+    assert _MASKS  # kept for the next frame

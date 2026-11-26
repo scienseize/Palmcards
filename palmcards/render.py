@@ -617,6 +617,7 @@ class TextOverlay:
             self.y = max(0, (h - self.box_h) // 2)
 
         self._count: tuple[int, float] | None = None  # the count-in's digit and when it came up
+        self._wraps: dict = {}  # TextOverlay._wrap's rows, kept
         self.summary_box: tuple[int, int, int, int] | None = None  # the take table as last drawn (bottom right)
         self._scrim: np.ndarray | None = None  # its shape across the columns, 1 at full strength
         self._scrim_alpha: float | None = None  # its strength, following the room's brightness
@@ -1004,7 +1005,7 @@ class TextOverlay:
                 self._draw_span(od if on_unit else td, (self.pad + col * self.char_w, y + self.text_dy), sp,
                                 self._span_font(kind, which, sp), self._span_color(kind, which, sp),
                                 None if on_unit else ud)
-        img = Image.alpha_composite(Image.alpha_composite(fills, _halo(text, self.halo_r, under)), on_fill)
+        img = Image.alpha_composite(Image.alpha_composite(fills, _on_glass(text, under)), on_fill)
         return _premultiply(img)
 
     def _word_zoom(self, state: ViewState) -> tuple[np.ndarray, np.ndarray, tuple[float, float, float, float], int]:
@@ -1055,7 +1056,7 @@ class TextOverlay:
                     color = (C.ring_sentence if ring else C.dim) if sp.sentence == focus.sentence else \
                         (C.ring_context if ring else C.faint)
                     self._draw_span(draw, (x, y + dy), sp, font, color, ud, zf.tracking)
-        color, inv = self._faded(*_premultiply(_halo(img, self.halo_r, under)))
+        color, inv = self._faded(*_premultiply(_on_glass(img, under)))
         top = self.y + self.margin + word_y
         self._zoom_key = key
         self._zoom = (color, inv, (word_x, top, word_x + shown * cw, top + lh * TEXT.word_box_h), size)
@@ -1229,7 +1230,7 @@ class TextOverlay:
             y = draw_detail(y + self.pad)
         block = (block_top, y)
         draw_rows(below, self.notes, lambda si: C.faint, y + gap)
-        color, inv = _premultiply(_halo(img, self.halo_r, under))
+        color, inv = _premultiply(_on_glass(img, under))
         self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y, scale=scale, block=block)
         return self._panel
 
@@ -1616,7 +1617,16 @@ class TextOverlay:
 
     def _wrap(self, text: str, f: Face, width: float, max_rows: int | None = None) -> list[str]:
         """`text` wrapped to `width` px in face `f` (by measured width: SF Pro is
-        proportional); past max_rows the last row ends in "…"."""
+        proportional); past max_rows the last row ends in "…". Kept: the label
+        wraps its rows every frame."""
+        key = (text, f, width, max_rows)
+        if (rows := self._wraps.get(key)) is None:
+            if len(self._wraps) >= CHIP_CACHE_MAX:
+                self._wraps.clear()
+            rows = self._wraps[key] = self._wrap_rows(text, f, width, max_rows)
+        return list(rows)
+
+    def _wrap_rows(self, text: str, f: Face, width: float, max_rows: int | None) -> tuple[str, ...]:
         def fits(s: str) -> bool:
             return _text_w(f.font, s, f.tracking) <= width
 
@@ -1639,7 +1649,7 @@ class TextOverlay:
             while last and not fits(last + "…"):
                 last = last[:-1]
             rows[-1] = last.rstrip() + "…"
-        return rows
+        return tuple(rows)
 
     # --- drawing: HUD and operation stubs ----------------------------------
 
@@ -2498,8 +2508,12 @@ def _text(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font, t
     in the same cell on the same baseline."""
     covered = _covered(font.path)
     missing = any(ord(ch) not in covered for ch in text if not ch.isspace())
+    plain = set(kw) <= {"fill"}  # a stroke (an outline) goes through Pillow as it is
     if not tracking and not missing:
-        draw.text(xy, text, font=font, **kw)
+        if plain:
+            _blit(draw, xy, text, font, kw.get("fill"))
+        else:
+            draw.text(xy, text, font=font, **kw)
         return
     base = xy[1] + font.getmetrics()[0]
     fallback = load_font(font.size, "fallback") if missing else font
@@ -2508,8 +2522,35 @@ def _text(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font, t
     for ch in text:
         has = ord(ch) in covered or ch.isspace()
         if not ch.isspace():
-            draw.text((x, base), ch, font=font if has else fallback, anchor="ls", **kw)
+            if plain:
+                _blit(draw, (x, base), ch, font if has else fallback, kw.get("fill"), "ls")
+            else:
+                draw.text((x, base), ch, font=font if has else fallback, anchor="ls", **kw)
         x += (font.getlength(ch) if has else cell) + tracking
+
+
+# Glyph masks kept between frames: FreeType drew every word again on each change of
+# the highlight (~130 us a word in SF Mono, 20-55 ms a re-draw). Keyed by the text,
+# the font, the anchor and the position's fraction of a pixel, in quarters.
+_MASKS: dict = {}
+MASK_CACHE_MAX = 20_000
+
+
+def _blit(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font, fill, anchor: str = "la") -> None:
+    """Draw `text` as ImageDraw.text does (anchor `anchor`), from a kept glyph mask."""
+    ink = draw._getink(fill)[0]
+    if ink is None:
+        return
+    fx, fy = math.floor(xy[0]), math.floor(xy[1])
+    start = (round((xy[0] - fx) * 4) / 4, round((xy[1] - fy) * 4) / 4)
+    key = (text, font, anchor, start)
+    got = _MASKS.get(key)
+    if got is None:
+        if len(_MASKS) >= MASK_CACHE_MAX:
+            _MASKS.clear()
+        got = _MASKS[key] = font.getmask2(text, "L", anchor=anchor, start=start)
+    mask, (ox, oy) = got
+    draw.draw.draw_bitmap((fx + ox, fy + oy), mask, ink)
 
 
 def _text_w(font, text: str, tracking: float = 0.0) -> float:
@@ -2527,6 +2568,12 @@ def _outline(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font
         a = round(C.outline[3] * (max(0, min(alpha, 255)) / 255) ** OUTLINE.gamma)
         ink = (*C.outline[:3], a)
         _text(draw, xy, text, font, tracking, fill=ink, stroke_width=OUTLINE.width, stroke_fill=ink)
+
+
+def _on_glass(img: Image.Image, under: Image.Image | None = None) -> Image.Image:
+    """Text on a glass panel (the notes, a focused unit): over its outline if
+    any, no halo. The glass makes it legible; the halo's blur cost ~2 ms a re-draw."""
+    return img if under is None or OUTLINE.width <= 0 else Image.alpha_composite(under, img)
 
 
 def _halo(img: Image.Image, radius: float, under: Image.Image | None = None) -> Image.Image:
@@ -2661,8 +2708,8 @@ def _corners(frame: np.ndarray, box: tuple[int, int, int, int], arm: int, color,
 
 def _premultiply(img: Image.Image) -> tuple[np.ndarray, np.ndarray]:
     """RGBA image -> (premultiplied BGR float32, inverse alpha)."""
-    arr = np.asarray(img, dtype=np.float32)
-    alpha = arr[..., 3:4] / 255.0
+    arr = np.asarray(img)
+    alpha = arr[..., 3:4] * np.float32(1 / 255)
     return arr[..., 2::-1] * alpha, 1.0 - alpha
 
 
