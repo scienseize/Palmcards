@@ -235,7 +235,8 @@ def describe(provider: Provider) -> str:
     if provider.cloud:
         return (f"LLM: {provider.model} through the Anthropic API (cloud; key from "
                 f"{getattr(provider, 'key_source', '') or 'the caller'}). Only what you explicitly ask "
-                "about is sent: a word's sentence, a sentence or a paragraph.")
+                "about is sent: a word's sentence, a sentence or a paragraph; for AI coaching (an open palm "
+                "held in Review), the notes and the take's transcript.")
     return f"LLM: {provider.model} via {provider.name} on this Mac. Nothing leaves the Mac."
 
 
