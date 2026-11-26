@@ -6,7 +6,7 @@ Audit of `palmcards/gestures.py` (`Grammar`, `DoneHold`, `ModeMachine`), the app
 the machine as it is after the fixes. Times are `config.py` defaults (`REHEARSE.start_hold_s`
 and `done_hold_s` can be changed in the preferences, as `start_hold_s` and `done_hold_s`).
 
-**Hear it** (Prepare's open palm speaking a sentence through macOS `say`) was removed on 2026-11-26; rows and findings about it below are history. **Wording.** The hints below are quoted as they were in capitals. Since 2026-11-26 the label speaks in sentence case with the action first ("Pinch to select a word", "Lower your hand to go back"); the exact copy is in `palmcards/render.py` (`BROWSE_HINTS`, `FOCUS_HINTS`, `review_hint`, `_label`) and `main.py`. The gestures and conditions here are unchanged.
+**Tap** (curl the browsing fingers and straighten them quickly) selects at every level since 2026-11-27; the pinch and fold rows below still work but are no longer taught. **Hear it** (Prepare's open palm speaking a sentence through macOS `say`) was removed on 2026-11-26; rows and findings about it below are history. **Wording.** The hints below are quoted as they were in capitals. Since 2026-11-26 the label speaks in sentence case with the action first ("Pinch to select a word", "Lower your hand to go back"); the exact copy is in `palmcards/render.py` (`BROWSE_HINTS`, `FOCUS_HINTS`, `review_hint`, `_label`) and `main.py`. The gestures and conditions here are unchanged.
 
 **Modes** (`ModeMachine.mode`): `prepare`, `count_in`, `rehearse`, `review`. A drill is a
 `count_in` then `rehearse` for one sentence.

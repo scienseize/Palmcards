@@ -12,7 +12,7 @@ STEPS = (
     ("hand", "Hold one hand up inside the box on the right."),
     ("word", "Raise one finger. The highlight follows it, word by word."),
     ("sentence", "Now hold two fingers together to move by sentence."),
-    ("focus", "Fold the two fingers onto your thumb to select the sentence."),
+    ("focus", "Tap to select the sentence: curl the two fingers down and straighten them again."),
     ("back", "Lower your hand for a second to go back."),
     ("start", "You're ready. Raise a fist and hold it to record (or press T). "
               "To stop, hold an OK sign."),

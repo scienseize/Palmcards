@@ -119,12 +119,12 @@ FOCUS_HINTS_LLM = {
     "sentence": f"Make an L to change the tone  /  {DROP_HINT}",
     "paragraph": f"Make an L with each hand to change the length  /  {DROP_HINT}",
 }
-# Prepare, browsing: the gesture that selects what is under the hand, then the other levels' shapes.
+# Prepare, browsing: the tap that selects what is under the hand (a pinch and a fold still do), then the other levels' shapes.
 # (No fist here: a fist formed from a browsing hand never starts a take; the idle hint says how.)
 BROWSE_HINTS = {
-    "word": "Pinch to select a word  /  Two fingers: sentences · Flat hand: paragraphs",
-    "sentence": "Fold your fingers to select  /  One finger: words · Flat hand: paragraphs",
-    "paragraph": "Fold your fingers to select  /  One finger: words · Two fingers: sentences",
+    "word": "Tap to select a word  /  Two fingers: sentences · Flat hand: paragraphs",
+    "sentence": "Tap to select  /  One finger: words · Flat hand: paragraphs",
+    "paragraph": "Tap to select  /  One finger: words · Two fingers: sentences",
 }
 BROWSE_ENTRY = "Raise a finger to browse"  # nothing up yet: how to start browsing
 NEW_TAKE = "Raise a fist to record"
@@ -150,10 +150,10 @@ def review_hint(state: "ViewState") -> tuple[str, str]:
             if state.palm_spent else ("Hold an open palm to stop", "Palm: stop")
     if state.playing:  # browsing: moving to another sentence stops it, or the key
         return "Move to another sentence to stop · A: stop", "Move on to stop · A: stop"
-    if state.mode == "browse" and state.level == "sentence":  # one finger closes by a pinch, two by a fold
-        return (f"{'Pinch' if state.shape == 'ONE' else 'Fold your fingers'} for details · {DONE_HINT}",) * 2
+    if state.mode == "browse" and state.level == "sentence":  # a tap, from one finger or two
+        return (f"Tap for details · {DONE_HINT}",) * 2
     if state.mode == "browse" and state.level == "paragraph":
-        return (f"Fold your fingers for a summary · {DONE_HINT}",) * 2
+        return (f"Tap for a summary · {DONE_HINT}",) * 2
     if state.mode == "focus" and state.level == "paragraph":
         if not state.playable:
             return DROP_HINT, DROP_HINT

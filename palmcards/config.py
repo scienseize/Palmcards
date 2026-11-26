@@ -117,6 +117,15 @@ class Timing:
     fold_dist: float = 0.35  # ... and ends closer than this
     commit_window_s: float = 0.6
     commit_rise: float = 0.15  # wrist rise while pinched, fraction of frame height
+    # TAP: the browsing fingers (the shape's: one, two or four) curl and straighten
+    # again quickly, like clicking in the air: their mean wrist-to-tip over
+    # wrist-to-PIP ratio drops below tap_down for tap_down_frames frames and is back
+    # above tap_up within tap_window_s of leaving it. From the recorded traces:
+    # straight fingers 1.22-1.39 (5th-95th percentile), a fist's index 0.6-1.12.
+    tap_up: float = 1.18
+    tap_down: float = 1.05
+    tap_down_frames: int = 3  # about 0.1 s: a 2-frame dip was a pinch flickering, in a recording
+    tap_window_s: float = 0.6
     drop_s: float = 1.0  # hand gone this long while focused = back out
     # The whole hand (its highest landmark) below this fraction of frame
     # height counts as gone. Not the wrist: at chest height the wrist is

@@ -1137,3 +1137,54 @@ def test_browsing_at_the_hand_boxs_edge_tells_the_view_it_scrolls():
         view = ViewState()
         main.sync_view(g, view, overlay)
         assert view.scrolling == sign and isinstance(view.scrolling, int), (y, g.state.scroll_rate)
+
+
+# --- the tap: curl the browsing fingers and straighten them again quickly -------
+
+
+def curled(**kw):
+    return hand(**kw)  # every finger folded into the palm, the thumb resting beside them
+
+
+def test_the_tap_detector_wants_a_quick_curl_and_return():
+    from palmcards.gestures import Tap
+
+    tap, t = Tap(), 0.0
+    for m in [1.3] * 5 + [0.8] * 3:
+        got = tap.update(t, m)
+        t += DT
+    assert got == "down" and tap.down
+    assert tap.update(t, 1.3) == "tap"
+    slow = Tap()
+    for k, m in enumerate([1.3] * 3 + [0.8] * 30 + [1.3]):  # curled a whole second: a closed hand
+        got = slow.update(k * DT, m)
+    assert got == ""
+    flicker = Tap()
+    for k, m in enumerate([1.3] * 3 + [0.8] * 2 + [1.3]):  # two frames: a misread, not a tap
+        got = flicker.update(k * DT, m)
+    assert got == ""
+
+
+@pytest.mark.parametrize("shape, level", [(one, "word"), (two, "sentence"), (flat, "paragraph")])
+def test_a_tap_selects_at_every_level(shape, level):
+    g = Grammar((W, H))
+    events, t = run(g, hold(shape, 0.5) + hold(curled, 0.15) + hold(shape, 0.2))
+    focus = [e for e in events if e.kind == "focus"]
+    assert focus and focus[0].level == level and g.state.mode == "focus"
+
+
+def test_a_tap_selects_what_was_pointed_at_before_the_finger_moved():
+    g = Grammar((W, H))
+    _, t = run(g, hold(one, 0.5))
+    before = g.state.cursor
+    sinking = [one(origin=(960, 600 + 4 * k)) for k in range(1, 4)]  # the tip sinks as the finger starts to curl
+    events, t = run(g, sinking + hold(curled, 0.15) + hold(one, 0.2), t)
+    assert any(e.kind == "focus" for e in events)
+    assert np.allclose(g.state.cursor, before, atol=2.0)
+
+
+def test_an_open_palm_closing_and_opening_is_not_a_tap():
+    g = Grammar((W, H))
+    _, t = run(g, hold(two, 0.5) + hold(open_palm, 0.5))  # browsing by sentence, then a palm
+    events, _ = run(g, hold(curled, 0.15) + hold(open_palm, 0.3), t)
+    assert not any(e.kind == "focus" for e in events)

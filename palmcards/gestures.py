@@ -98,6 +98,7 @@ LEVEL_OF_SHAPE = {ONE: "word", TWO: "sentence", FLAT: "paragraph"}
 # no hand shape leads to a dead end.
 REVIEW_LEVEL_OF_SHAPE = {ONE: "sentence", TWO: "sentence", FLAT: "paragraph"}
 FOLD_TIPS = {TWO: (INDEX_TIP, MIDDLE_TIP), FLAT: (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)}
+TAP_FINGERS = {ONE: (0,), TWO: (0, 1), FLAT: (0, 1, 2, 3)}  # the browsing shape's fingers (Features.ext_ratio)
 # The options ring before alternatives arrive: just the original word.
 DEFAULT_RING = ("original",)
 
@@ -260,6 +261,7 @@ class Features:
     thumb_up_deg: float = 180.0  # thumb MCP -> tip from straight up, degrees
     thumb_height: float = 0.0  # thumb tip above the index MCP (+ = above)
     v_gap: float = 0.0  # index tip to middle tip (a V sign: apart; TWO: together)
+    ext_ratio: tuple[float, ...] = ()  # per finger, wrist-to-tip over wrist-to-PIP: ~1.3 straight, ~0.8 curled
 
 
 def _angle_deg(a: np.ndarray, b: np.ndarray) -> float:
@@ -290,7 +292,41 @@ def features(hand: Hand) -> Features:
         thumb_up_deg=math.degrees(math.atan2(abs(float(thumb_dir[0])), float(-thumb_dir[1]))),
         thumb_height=float(p[INDEX_MCP][1] - p[THUMB_TIP][1]) / palm,
         v_gap=hand.dist(INDEX_TIP, MIDDLE_TIP) / palm,
+        ext_ratio=tuple(hand.dist(WRIST, tip) / max(hand.dist(WRIST, pip), 1e-6) for pip, tip in FINGERS),
     )
+
+
+class Tap:
+    """A quick tap, like clicking in the air: the browsing fingers curl and
+    straighten again (TIMING.tap_*). update(t, m) with the fingers' mean
+    extension ratio returns "down" once they are curled (for
+    tap_down_frames frames, within tap_window_s of last being straight),
+    "tap" when they are straight again in time, else ""; `up_t` is when
+    they were last straight (where the cursor goes back to)."""
+
+    def __init__(self):
+        self.up_t: float | None = None
+        self.down = False  # curled, a tap under way
+        self._curled = 0
+
+    def update(self, t: float, m: float) -> str:
+        if m >= TIMING.tap_up:
+            tapped = self.down and self.up_t is not None and t - self.up_t <= TIMING.tap_window_s
+            self.up_t, self.down, self._curled = t, False, 0
+            return "tap" if tapped else ""
+        if self.down and self.up_t is not None and t - self.up_t > TIMING.tap_window_s:
+            self.down = False  # curled too long: a closed hand, not a tap
+            self.up_t = None
+            return ""
+        self._curled = self._curled + 1 if m < TIMING.tap_down else 0
+        if not self.down and self.up_t is not None and self._curled >= TIMING.tap_down_frames \
+                and t - self.up_t <= TIMING.tap_window_s:
+            self.down = True
+            return "down"
+        return ""
+
+    def reset(self) -> None:
+        self.up_t, self.down, self._curled = None, False, 0
 
 
 def is_pinch(f: Features, was_pinching: bool) -> bool:
@@ -633,6 +669,9 @@ class Grammar:
         self._point_held = False  # a pinch has the pointer: held at its rewound value
         self._dial_hist: deque[dict] = deque()  # focus: the dials' values per frame, for the rewind
         self._cursor_hist: deque[tuple[float, float, tuple[float, float]]] = deque()  # browse by word: (t, thumb, cursor)
+        self._tap = Tap()  # a quick tap of the browsing fingers selects (Prepare, Review)
+        self._tap_hist: deque[tuple[float, tuple[float, float]]] = deque()  # browsing: (t, cursor), for the tap's rewind
+        self._tap_at: tuple[str, str] | None = None  # while a tap is down: (its shape, its level)
 
     # -- hands --
 
@@ -670,6 +709,9 @@ class Grammar:
         self._commit_armed_t = None
         self._tilt0 = self._d0 = self._p0 = None
         self._browse_shape = None
+        self._tap.reset()
+        self._tap_at = None
+        self._tap_hist.clear()
         self._palm_since, self._palm_done = None, False
         self.focus_hold = None
         self._reset_ring()
@@ -771,11 +813,15 @@ class Grammar:
         if s.mode != "browse":
             return
 
+        tap = self._update_tap(t, p)
         # The cursor only follows the hand while it holds a shape of the level,
-        # so closing the hand to focus doesn't drag the highlight along.
-        if self.shape_levels.get(p.raw) == s.level:
+        # so closing the hand to focus doesn't drag the highlight along (nor a tap's curl).
+        if self.shape_levels.get(p.raw) == s.level and self._tap_at is None and tap != "tap":
             s.cursor = self.cursor.update(p.hand.point(INDEX_TIP), t)
             s.scroll_rate = self.cursor.scroll_rate
+            self._tap_hist.append((t, s.cursor))
+            while self._tap_hist and self._tap_hist[0][0] < t - 1.0:
+                self._tap_hist.popleft()
         else:
             s.scroll_rate = 0.0
         # One finger closes by pinching (a word in Prepare, a sentence in
@@ -785,11 +831,45 @@ class Grammar:
             self._hold_word(t, p)
         else:
             s.closing = False
+        s.closing = s.closing or self._tap_at is not None  # a tap under way holds the highlight
 
         if not self._focus_armed:
             return
-        if (pointing and p.stable == PINCH) or (not pointing and "fold" in primary_events):
+        if tap == "tap":
             self._enter_focus(t, events)
+        elif (pointing and p.stable == PINCH) or (not pointing and "fold" in primary_events):
+            self._enter_focus(t, events)
+
+    def _update_tap(self, t: float, p: HandTrack) -> str:
+        """The tap that selects: the browsing shape's fingers curled and straightened
+        quickly. At "down" the cursor goes back to where it was while they were
+        straight, and holds; at "tap" the level is the one the tap began at (a
+        flat hand curling can read as one finger for a moment)."""
+        s = self.state
+        shape = self._tap_at[0] if self._tap_at is not None else self._browse_shape
+        fingers = TAP_FINGERS.get(shape)
+        if not fingers or p.feat is None or not p.feat.ext_ratio:
+            return ""
+        if self._tap_at is None and p.stable != shape:  # only the browsing shape taps (not a palm closing)
+            self._tap.reset()
+            return ""
+        got = self._tap.update(t, sum(p.feat.ext_ratio[i] for i in fingers) / len(fingers))
+        if got == "down":
+            self._tap_at = (shape, s.level)
+            back = [c for tt, c in self._tap_hist if tt <= (self._tap.up_t or t)]
+            if back and back[-1] != s.cursor:
+                s.cursor = back[-1]
+                self.log(t, "rewind", op="cursor", back_s=round(t - (self._tap.up_t or t), 3))
+        elif got == "tap" and self._tap_at is not None:
+            shape_then, level_then = self._tap_at
+            self._tap_at = None
+            if p.raw != shape_then:  # it opened into another shape (a fist opening to a flat hand): no tap
+                return ""
+            self._browse_shape, s.level = shape_then, level_then
+            self.log(t, "tap", level=s.level)
+        elif not self._tap.down:
+            self._tap_at = None
+        return got
 
     def _hold_word(self, t: float, p: HandTrack) -> None:
         """Browse with one finger (by word; by sentence in Review): a pinch drags the index tip as it curls to meet the
@@ -825,6 +905,8 @@ class Grammar:
         self._reset_ring()
         self._focus_armed = False
         self._commit_armed_t = None
+        self._tap.reset()  # a tap that focused is done; the fingers straightening again start nothing
+        self._tap_at = None
         self._gone_since = None
         self._tilt0 = self._d0 = self._p0 = None
         self._point_held = False

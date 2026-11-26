@@ -34,8 +34,8 @@ def test_hints_follow_what_the_state_machine_does():
     ov = overlay()
     # Review, one finger browsing sentences: a pinch closes it, not a fold.
     one = ViewState(app="review", mode="browse", level="sentence", shape="ONE")
-    assert ov.label_lines(one)[1].endswith("Pinch for details · Hold a V sign to edit")
-    assert ov.label_lines(replace(one, shape="TWO"))[1].endswith("Fold your fingers for details · Hold a V sign to edit")
+    assert ov.label_lines(one)[1].endswith("Tap for details · Hold a V sign to edit")
+    assert ov.label_lines(replace(one, shape="TWO"))[1].endswith("Tap for details · Hold a V sign to edit")
     # Playing: the palm that started it must leave first; browsing, moving on stops it.
     playing = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), playing=True,
                         palm_spent=True, status="TAKE 1")
@@ -154,8 +154,8 @@ def test_label_lines_follow_mode_and_operation():
     ov = overlay()
     # Browsing: the gesture that focuses, then the other levels' shapes; nothing up: how to begin.
     assert ov.label_lines(ViewState(mode="browse", level="word")) == (
-        "Browsing words", "Pinch to select a word  /  Two fingers: sentences · Flat hand: paragraphs")
-    assert ov.label_lines(ViewState(mode="browse", level="sentence"))[1].startswith("Fold your fingers to select  /  ")
+        "Browsing words", "Tap to select a word  /  Two fingers: sentences · Flat hand: paragraphs")
+    assert ov.label_lines(ViewState(mode="browse", level="sentence"))[1].startswith("Tap to select  /  ")
     assert ov.label_lines(ViewState()) == ("Prepare", "Raise a finger to browse  /  Raise a fist to record")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), llm="local")
     assert ov.label_lines(focus) == ('Selected: “being”', "Make an L and turn it to choose  /  Lower your hand to go back")
@@ -268,9 +268,9 @@ def test_label_lines_for_takes():
 def test_review_labels_list_the_gestures_that_act():
     ov = overlay()
     browse = ViewState(app="review", mode="browse", level="sentence", status="TAKE 2 SAVED (0:41)")
-    assert ov.label_lines(browse) == ("Browsing sentences", "TAKE 2 SAVED (0:41)  /  Fold your fingers for details · Hold a V sign to edit")
+    assert ov.label_lines(browse) == ("Browsing sentences", "TAKE 2 SAVED (0:41)  /  Tap for details · Hold a V sign to edit")
     browse.level = "paragraph"
-    assert ov.label_lines(browse)[1].endswith("Fold your fingers for a summary · Hold a V sign to edit")
+    assert ov.label_lines(browse)[1].endswith("Tap for a summary · Hold a V sign to edit")
     assert ov.label_lines(ViewState(app="review"))[1] == \
         "  /  Raise a finger to browse · Raise a fist to record · Hold a V sign to edit"
     focus = ViewState(app="review", mode="focus", level="sentence", focus=Hit(1, None), status="TAKE 2 (2 OF 3)",
@@ -299,7 +299,7 @@ def test_review_hints_take_the_short_form_when_the_long_one_does_not_fit_a_row(s
     assert 1 <= len(rows) <= 2
     assert " · ".join(rows) == "Palm: play · L: pick a take · Pinch + lift: practise · Hand down: back"
     browse = ViewState(app="review", mode="browse", level="sentence")
-    assert " · ".join(hint_rows(ov, browse)) == "Fold your fingers for details · Hold a V sign to edit"
+    assert " · ".join(hint_rows(ov, browse)) == "Tap for details · Hold a V sign to edit"
     paragraph = ViewState(app="review", mode="focus", level="paragraph", focus=Hit(1, None), playable=True)
     assert hint_rows(ov, paragraph) == ["Palm: play · Hand down: back"]
     assert all(" / " not in row for row in rows + hint_rows(ov, ViewState(mode="focus", level="sentence",

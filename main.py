@@ -201,7 +201,7 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
 
 
 FIST_HINT = "To record, lower your hand, then raise a\u00a0fist"  # never "fist" alone on a row
-FOLD_HINT = "To select, fold your fingers in one quick move"  # a slow fold closes into a fist: no focus, no take
+FOLD_HINT = "To select, tap: curl your fingers and straighten them quickly"  # a slow curl is a fist: no tap, no take
 PALM_HINT = {"rehearse": "An open palm doesn't stop recording", "count_in": "An open palm doesn't cancel"}
 THUMB_HINT = {"rehearse": "A thumbs-up doesn't stop recording", "count_in": "A thumbs-up doesn't cancel"}
 HINT_DWELL_S = 0.6  # a gesture that does nothing held this long before its hint (a fist formed from
@@ -220,7 +220,7 @@ def nonactivation_hint(mode: str, gs, open_s: float, t: float | None = None) -> 
         return ""
     if mode in ("prepare", "review") and p.stable == FIST and p.first_pose != FIST and gs.mode != "focus" \
             and (t is None or p.held(t) >= FIST_HINT_S):
-        return FOLD_HINT if gs.mode == "browse" and gs.level in ("sentence", "paragraph") else FIST_HINT
+        return FOLD_HINT if gs.mode == "browse" and gs.level is not None else FIST_HINT
     if mode in ("count_in", "rehearse") and p.stable == OPEN and open_s > HINT_DWELL_S:
         return PALM_HINT[mode]
     if mode in ("count_in", "rehearse") and p.stable == THUMB_UP and t is not None and p.held(t) >= HINT_DWELL_S:
