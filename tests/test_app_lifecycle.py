@@ -390,3 +390,18 @@ def test_no_camera_says_so_on_a_card_in_the_window_until_q(tmp_path, monkeypatch
     assert code == 1 and "Could not open the camera" in capsys.readouterr().err
     assert len(shown) >= 3 and shown[-1].any()  # OPENING THE CAMERA, then the error card twice (q on the 2nd key)
     assert rig.destroyed == 2  # run's window, then the card's
+
+
+def test_a_slow_collection_is_seen_and_handed_over_once():
+    import main
+
+    watch = main.GcWatch()
+    watch("start", {"generation": 2})
+    import time
+    time.sleep(main.GC_SLOW_MS / 1000 + 0.002)
+    watch("stop", {"generation": 2})
+    watch("start", {"generation": 0})
+    watch("stop", {"generation": 0})  # quick: not kept
+    slow = watch.drain()
+    assert len(slow) == 1 and slow[0][1] == 2 and slow[0][0] >= main.GC_SLOW_MS
+    assert watch.drain() == []

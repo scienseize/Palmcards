@@ -94,6 +94,7 @@ Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/scree
 """
 
 import argparse
+import gc
 import json
 import math
 import secrets
@@ -1631,6 +1632,28 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
     return next_notes or 0
 
 
+class GcWatch:
+    """Python's garbage collections that take long enough to show (GC_SLOW_MS), kept
+    until the frame loop logs them: a collection can run on any thread, the log is the loop's."""
+
+    def __init__(self):
+        self.slow: list[tuple[float, int]] = []  # (ms, generation)
+        self._start = 0.0
+
+    def __call__(self, phase: str, info: dict) -> None:
+        if phase == "start":
+            self._start = time.perf_counter()
+        elif (ms := (time.perf_counter() - self._start) * 1000) >= GC_SLOW_MS:
+            self.slow.append((ms, info.get("generation", -1)))
+
+    def drain(self) -> list[tuple[float, int]]:
+        out, self.slow = self.slow, []
+        return out
+
+
+GC_SLOW_MS = 5.0  # a collection this long is logged ("gc")
+
+
 def warm_overlay(overlay: TextOverlay, frame: np.ndarray) -> None:
     """Draw the notes once, off screen, as idle, browsing, selected and in a take,
     so the glyphs and fonts are ready before the first frame (the first draw
@@ -1696,10 +1719,18 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     hint_note, hint_mode = "", ""  # the gesture hint shown, and the mode it was about
     notes_seen = takes.notes_version
     frame_index = 0
+    # Everything loaded so far (models, notes, caches) lives as long as the app: out of the
+    # collector's generations, so its collections stay short. Long ones are logged ("gc").
+    gc.collect()
+    gc.freeze()
+    gc_watch = GcWatch()
+    gc.callbacks.append(gc_watch)
 
     while True:
         frame = camera.read()
         start = time.perf_counter()
+        for ms, generation in gc_watch.drain():
+            log(start - t0, "gc", ms=round(ms, 1), generation=generation)
         if takes.notes_version != notes_seen:  # e.g. undo from the previous frame's key handler
             notes_seen = takes.notes_version
             sentences = takes.notes.sentences
@@ -1716,6 +1747,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if backdrop is not None:  # after the hands, the face and the video have their clean frame
             backdrop.submit(frame, start - t0)
             backdrop.apply(frame)
+        captured = time.perf_counter()  # stage times, for a frame too slow ("slow_frame")
         frame_index += 1
         # Hand results arrive asynchronously, usually one frame behind.
         if (result := tracker.poll()) is not None:
@@ -1844,6 +1876,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if note_until is not None and start > note_until:
             view.note, note_until = "", None
 
+        handled = time.perf_counter()
         overlay.follow(view, snap=snap_panel)
         snap_panel = False
         if (replay := takes.replay_frame()) is not None:
@@ -1874,8 +1907,14 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                  f"hands {tracker.latency_ms:4.1f} ms  work {work_ms:4.1f} ms")
         draw_stats(frame, stats)
 
+        drawn = time.perf_counter()
         devices.show(WINDOW, frame)
         key = devices.wait_key()
+        shown = time.perf_counter()
+        if (shown - start) * 1000 > BODY.late_ms:  # a frame too slow to keep 30 fps: what took the time
+            log(start - t0, "slow_frame", ms=round((shown - start) * 1000, 1),
+                capture=round((captured - start) * 1000, 1), logic=round((handled - captured) * 1000, 1),
+                draw=round((drawn - handled) * 1000, 1), show=round((shown - drawn) * 1000, 1), mode=modes.mode)
         if key in (ord("q"), 27):
             break
         now_t = time.perf_counter() - t0
@@ -1962,6 +2001,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if not devices.window_open(WINDOW):
             break
 
+    gc.callbacks.remove(gc_watch)
     if modes.mode == "rehearse":  # quit mid-take: keep what was recorded, as a normal take
         takes.handle(GestureEvent("take_stop", time.perf_counter() - t0), modes, view, overlay)
     return next_notes
