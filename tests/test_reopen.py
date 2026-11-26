@@ -185,7 +185,8 @@ def replayed_frames(tmp_path, monkeypatch, prefs: str | None = None) -> list:
         rig.prefs_file.write_text(prefs)
     rig.devices.player = FakePlayer
     frames = []
-    rig.devices.show = lambda name, frame: frames.append(frame.copy())
+    # the camera's frames only, not the start-up cards (drawn at main.CARD_SIZE before the first frame)
+    rig.devices.show = lambda name, frame: frame.shape[:2] == (360, 640) and frames.append(frame.copy())
     session = Session.load(saved.dir)
     session.acquire()
     notes = notes_from_bytes(NOTES, rig.notes_path)

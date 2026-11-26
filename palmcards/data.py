@@ -17,6 +17,7 @@ part and the largest: drop-video deletes just them, and the takes note it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 import sys
 import zipfile
@@ -38,6 +39,25 @@ def find(root: Path, name: str) -> Path:
     if len(hits) != 1:
         raise SessionError(f"{'no' if not hits else 'more than one'} session matches {name!r} in {root}")
     return hits[0]
+
+
+def latest_session_for(root: Path, notes: Path, data: bytes) -> Path | None:
+    """The newest session imported from `notes` whose kept copy of it is `data`, byte for
+    byte: opening the same, unchanged file again continues it (its edits, its takes). A
+    changed file starts a new session. Only folders named for the file's stem are read."""
+    notes = Path(notes).expanduser().resolve()
+    digest = hashlib.sha256(data).hexdigest()
+    for folder in reversed(sessions(root)):
+        if folder.name[16:].rsplit("-", 1)[0] != notes.stem:  # 20261126-101500-STEM-abc123
+            continue
+        try:
+            s = Session.load(folder)
+        except SessionError:
+            continue
+        if (s.source or {}).get("sha256") == digest and s.current_revision is not None \
+                and Path(s.notes).expanduser().resolve() == notes:
+            return folder
+    return None
 
 
 def size(path: Path) -> int:

@@ -136,6 +136,9 @@ class FakeSupervisor:
     def retry_failed(self):
         return 0
 
+    def warm(self):
+        self.warmed = True
+
     def close(self, timeout=None):
         return []
 
@@ -201,7 +204,8 @@ class Rig:
             camera=lambda: self.camera, tracker=tracker_factory or (lambda: self.tracker), recorder=recorder,
             log=lambda: GestureLog(tmp_path / "log.jsonl"), named_window=lambda *a: None, show=lambda *a: None,
             live=live or (lambda language, clock, hints: FakeLive()), vision=vision or (lambda: None),
-            wait_key=wait_key, window_open=lambda name: True, destroy_windows=destroy)
+            wait_key=wait_key, window_open=lambda name: True, destroy_windows=destroy, pump=lambda: None,
+            pick=lambda: None, fullscreen=lambda name, on: None)
         if video_writer is not None:
             self.devices.video = video_writer
         self.notes_path = tmp_path / "talk.md"
@@ -365,9 +369,24 @@ def test_a_missing_model_file_is_one_line_and_closes_what_was_open(tmp_path, mon
     def missing():
         raise FileNotFoundError("models/gesture_recognizer.task missing: run python scripts/download_models.py")
 
-    rig = Rig(tmp_path, monkeypatch, tracker_factory=missing)
+    rig = Rig(tmp_path, monkeypatch, tracker_factory=missing, keys={1: ord("q")})  # q closes the error card
     code = main.run_reporting(rig.notes_path, notes_from_bytes(NOTES, rig.notes_path), NOTES, devices=rig.devices,
                               sessions_root=rig.tmp / "sessions", prefs_file=rig.prefs_file)
     err = capsys.readouterr().err
     assert code == 1 and "gesture_recognizer.task" in err and "download_models.py" in err
     assert "Traceback" not in err and rig.camera.released == 1
+
+
+def test_no_camera_says_so_on_a_card_in_the_window_until_q(tmp_path, monkeypatch, capsys):
+    def no_camera():
+        raise CameraError("Could not open the camera.")
+
+    rig = Rig(tmp_path, monkeypatch, keys={1: 255, 2: ord("q")})
+    rig.devices.camera = no_camera
+    shown = []
+    rig.devices.show = lambda name, frame: shown.append(frame.copy())
+    code = main.run_reporting(rig.notes_path, notes_from_bytes(NOTES, rig.notes_path), NOTES, devices=rig.devices,
+                              sessions_root=rig.tmp / "sessions", prefs_file=rig.prefs_file)
+    assert code == 1 and "Could not open the camera" in capsys.readouterr().err
+    assert len(shown) >= 3 and shown[-1].any()  # OPENING THE CAMERA, then the error card twice (q on the 2nd key)
+    assert rig.destroyed == 2  # run's window, then the card's

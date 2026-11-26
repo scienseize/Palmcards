@@ -64,3 +64,17 @@ def test_prune_only_old_sessions_and_only_with_yes(tmp_path, capsys):
     assert data.main(["prune", "--older-than", "30", "--yes"], root) == 0
     assert not old.dir.exists() and new.dir.exists()
     assert json.loads((new.dir / "session.json").read_text())["takes"]
+
+
+def test_the_same_unchanged_notes_file_finds_its_newest_session(tmp_path):
+    old, root, _ = recorded(tmp_path, datetime(2026, 9, 1, 10, 0, 0))
+    new, _, _ = recorded(tmp_path, datetime(2026, 9, 2, 10, 0, 0))
+    old.release(), new.release()
+    notes = tmp_path / "talk.md"
+    assert data.latest_session_for(root, notes, notes.read_bytes()) == new.dir
+    assert data.latest_session_for(root, notes, b"Hello there, edited.") is None  # the file changed
+    other = tmp_path / "elsewhere" / "talk.md"  # same name, another file
+    other.parent.mkdir()
+    other.write_bytes(notes.read_bytes())
+    assert data.latest_session_for(root, other, other.read_bytes()) is None
+    assert data.latest_session_for(tmp_path / "none", notes, notes.read_bytes()) is None

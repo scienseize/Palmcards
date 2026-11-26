@@ -389,6 +389,9 @@ class CassetteAnalysis:
     def failed(self):
         return []
 
+    def warm(self):  # nothing to load: the answers are on the cassette
+        pass
+
     def retry_failed(self):
         return 0
 
@@ -579,6 +582,7 @@ class Run:
         for old in self.out.glob("*.png"):
             old.unlink()
         _now[0] = 0.0
+        _frame_sig[0] = None  # not the last run's: the start-up cards are drawn before the first frame
 
         live_dir = live_session(src.stamp)
         review_dir = live_dir
@@ -642,7 +646,7 @@ class Run:
             log=lambda: GestureLog(work / "gesture.jsonl"), recorder=make_mic, player=SilentPlayer,
             speaker=QuietSpeaker, live=make_live, llm=llm, vision=watcher,
             named_window=lambda *a: None, show=self.show, wait_key=self.wait_key,
-            window_open=lambda n: True, destroy_windows=lambda: None)
+            window_open=lambda n: True, destroy_windows=lambda: None, pump=lambda: None)
         real_supervisor = main.Supervisor
         main.Supervisor = lambda: CassetteAnalysis(live_dir, src.start, self.clock, self)
         try:

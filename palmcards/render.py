@@ -178,10 +178,12 @@ KEYS_HELP = (
     "E  CALIBRATE EYES AT THE NEXT TAKE",
     "M  FLIP A REPLAYED VIDEO (MIRROR OR NOT)",
     "C  HIGH CONTRAST     G  SHOW / HIDE TUTORIAL",
+    "L  OPEN ANOTHER NOTES FILE   F  FULL SCREEN",
     "ENTER  SKIP A TUTORIAL STEP",
     "REPLAY BAR: YELLOW FILLER, RED RESTART,",
     "  WHITE LONG PAUSE, BLUE LOOKED AWAY",
     "R  RETRY ANALYSIS   H  HIDE   Q, ESC  QUIT",
+    "ERROR DETAILS: LOGS/, BESIDE THE SESSIONS",
 )
 
 
@@ -2386,6 +2388,28 @@ def draw_hand_area(frame: np.ndarray, cursor: RelativeCursor, avoid: tuple[int, 
         _poly_blend(frame, pts, C.hand_area, HANDS.area_stroke, HANDS.area_alpha)
     if keep is not None:
         frame[ay0:ay1, ax0:ax1] = keep
+
+
+def draw_card(frame: np.ndarray, title: str, rows: tuple[str, ...] = ()) -> None:
+    """A screen of its own, for while there is no camera picture (starting up)
+    or none to come (an error the user can act on): the name, the title in the
+    label's step and colour, the rows in the operation's, at the text column."""
+    h, w = frame.shape[:2]
+    frame[:] = bgr(C.label_fill)
+    ui = max(TEXT.ui_min_size, h // TEXT.ui_rows_per_frame)
+    name, head, body = (face(round(ui * st.scale), st.weight, st.tracking, st.leading)
+                        for st in (TYPE.small, TYPE.label, TYPE.operation))
+    x = round(LAYOUT.text[0] * w)
+    columns = max(20, min(64, int((w - 2 * x) / body.advance)))  # a comfortable measure
+    lines = [(name, "PALMCARDS", C.dim), (head, title, C.label_state)]
+    lines += [(body, part, C.label_operation) for row in rows for part in (textwrap.wrap(row, columns) or [""])]
+    img = Image.new("RGBA", (w, h), CLEAR)
+    draw = ImageDraw.Draw(img)
+    y = round(h * 0.3)
+    for f, text, ink in lines:
+        _text(draw, (x, y + f.dy), text, f.font, f.tracking, fill=ink)
+        y += f.line_h + (f.line_h // 2 if f is not body else 0)
+    _blend(frame, 0, 0, *_premultiply(img))
 
 
 def draw_stats(frame: np.ndarray, text: str) -> None:

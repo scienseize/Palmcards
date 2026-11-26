@@ -1,6 +1,7 @@
 """Where PalmCards keeps its data.
 
     data_dir()   the sessions root: session folders, gesture-logs/, screens/
+    logs_dir()   logs/ in it: what the app printed, a file a day (palmcards-YYYYMMDD.log)
 
 In order:
   1. $PALMCARDS_DATA, if set (created if missing);
@@ -47,3 +48,7 @@ def data_dir() -> Path:
     if dev.is_dir():
         return dev
     return APP_SUPPORT
+
+
+def logs_dir() -> Path:
+    return data_dir() / "logs"

@@ -157,5 +157,7 @@ def test_choose_notes_prefers_the_argument_then_the_last_file_then_the_sample(tm
     given = tmp_path / "given.md"
     assert main.choose_notes(given, str(last)) == (given, False)
     assert main.choose_notes(None, str(last)) == (last, True)
-    assert main.choose_notes(None, str(tmp_path / "gone.md")) == (main.SAMPLE, False)  # the file went away
-    assert main.choose_notes(None, "") == (main.SAMPLE, False)
+    cancelled, picked = (lambda: None), (lambda: tmp_path / "picked.md")
+    assert main.choose_notes(None, str(tmp_path / "gone.md"), cancelled) == (main.SAMPLE, False)  # the file went away
+    assert main.choose_notes(None, "", cancelled) == (main.SAMPLE, False)  # the Open dialog cancelled
+    assert main.choose_notes(None, "", picked) == (tmp_path / "picked.md", False)

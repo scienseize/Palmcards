@@ -4,7 +4,8 @@
   python main.py --open RUN      reopen a saved session (a folder, or its name under sessions/) in Review
   python main.py --gaze-check    every take is a gaze check: timed prompts (camera, notes, away), then it
                                  stops itself; scripts/evaluate.py --gaze RUN compares them with the classifier
-      NOTES_FILE: .txt, .md or .docx; defaults to the sample
+      NOTES_FILE: .txt, .md or .docx; defaults to the file opened last, else one picked in an Open dialog.
+                  The same file, unchanged, continues its last session (--new: a new one)
       --lang: language spoken in the takes, for Whisper (default en)
       --trace: also record every hand result's landmarks, for offline replay
       --llm: the optional LLM for word meanings, alternatives and rewrites (default: off,
@@ -87,6 +88,7 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   a hear the sentence (Prepare) / play the sentence or paragraph (Review), again to stop, u undo the last edit (Prepare), r retry failed analysis,
   e calibrate the eyes again at the next take,
   g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit,
+  l open another notes file (Prepare, Review), f full screen,
   m flip a take's replayed video: mirrored, or as others see you (the default).
 Preferences (hand reach, hold times, contrast): python -m palmcards.prefs
 Dev keys: d toggle landmarks and hand box, s save a screenshot to sessions/screens/.
@@ -106,6 +108,7 @@ from pathlib import Path
 from typing import Callable
 
 import cv2
+import numpy as np
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
@@ -138,6 +141,9 @@ from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
 from palmcards.style import TEXT
 from palmcards.tts import get_speaker
 from palmcards.analysis import Supervisor
+from palmcards.data import latest_session_for, started
+from palmcards.paths import logs_dir
+from palmcards.picker import pick_notes
 from palmcards.asr import get_recognizer
 from palmcards.follow import LiveFollow
 from palmcards.speech import make_job
@@ -146,11 +152,26 @@ from palmcards.vision import Watcher
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = SESSIONS_DIR / "screens"
 WINDOW = "PalmCards"
+CARD_SIZE = (1280, 720)  # the window before the camera's first frame sets its size
 NOTE_S = 1.5  # how long a commit message stays in the label
+CONTINUE_NOTE_S = 4.0  # a continued session says so this long
 LLM_NOTE_S = 3.0  # an LLM answer or failure arrives while you're doing something else: it stays longer
 HINT_EVERY_S = 6.0  # a hint about a gesture that didn't act is shown at most this often
 CAPTION_LINGER_S = 0.15  # a replay's caption still marks a word as being said this long after it ends
 ENTER = 13
+IN_LOG = "(DETAILS IN THE LOG)"
+KEY_REJECTED = "CLOUD AI: API KEY REJECTED: CHECK ANTHROPIC_API_KEY"
+
+
+def short(reason: BaseException | str | None, limit: int = 40) -> str:
+    """A problem's reason, short enough for the label or the alert line, in
+    capitals like the rest of it. The whole of it goes to the log."""
+    if isinstance(reason, BaseException):
+        reason = getattr(reason, "strerror", None) or str(reason) or type(reason).__name__
+    text = (str(reason or "").strip().splitlines() or [""])[0].upper()
+    if not text:
+        return IN_LOG
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
 def hear_words(overlay: TextOverlay, sentence: int) -> list[str]:
@@ -174,7 +195,7 @@ def hear_sentence(sentence: int, overlay: TextOverlay, speaker, log: GestureLog,
             speaker.say_words(words)
     except OSError as exc:
         print(f"text to speech failed: {exc}", file=sys.stderr)
-        return "COULD NOT SPEAK (SEE TERMINAL)"
+        return f"COULD NOT SPEAK: {short(exc)}"
     log(t, "hear", sentence=sentence)
     return "SPEAKING SENTENCE"
 
@@ -494,7 +515,7 @@ class Takes:
 
     @property
     def no_llm(self) -> str:
-        return f"NEED THE OPTIONAL AI ({'SEE TERMINAL' if self.llm_off else 'NOT SET UP, SEE README'}): NOTHING SENT"
+        return f"NEED THE OPTIONAL AI ({short(self.llm_off) if self.llm_off else 'NOT SET UP, SEE README'}): NOTHING SENT"
 
     @property
     def llm(self) -> str:
@@ -633,7 +654,7 @@ class Takes:
         note = ""
         for a in answers:
             if a.reason == "API KEY REJECTED":
-                self.llm_alert = "CLOUD AI: API KEY REJECTED (SEE TERMINAL)"
+                self.llm_alert = KEY_REJECTED
             if self.previews.accept(a, self._llm_revision()):
                 continue
             if a.revision != self._llm_revision():
@@ -642,7 +663,7 @@ class Takes:
             if a.error:
                 print(f"LLM {a.kind}: {a.error}", file=sys.stderr)
                 if a.reason == "API KEY REJECTED":
-                    self.llm_alert = "CLOUD AI: API KEY REJECTED (SEE TERMINAL)"
+                    self.llm_alert = KEY_REJECTED
                 note = f"{self.LLM_WHAT.get(a.kind, a.kind.upper())} FAILED: {a.reason}, NOTHING CHANGED"
                 self.llm_failed.add((a.kind, a.key))
                 continue
@@ -680,7 +701,7 @@ class Takes:
             rid = self.session.edit(notes, note=what)
         except (OSError, SessionError) as exc:
             print(f"could not save the edit: {exc}", file=sys.stderr)
-            return "EDIT NOT SAVED (SEE TERMINAL)"
+            return f"EDIT NOT SAVED: {short(exc)}"
         self._use_notes(self.session.current_notes())
         self.log(time.perf_counter() - self.t0, "edit", revision=rid, **log)
         return ""
@@ -732,7 +753,7 @@ class Takes:
         except OSError as exc:
             print(f"cannot export: {exc}", file=sys.stderr)
             self.log(t, "key", command="export", mode="review", acted=False, error=str(exc))
-            return "EXPORT FAILED (SEE TERMINAL)"
+            return f"EXPORT FAILED: {short(exc)}"
         print(f"exported {dest}")
         self.log(t, "key", command="export", mode="review", acted=True, path=str(dest))
         return note
@@ -784,7 +805,7 @@ class Takes:
                                      video=reader, video_t0=span[0])
         except Exception as exc:  # no output device
             print(f"could not play: {exc}", file=sys.stderr)
-            self._play_error = "COULD NOT PLAY (SEE TERMINAL)"
+            self._play_error = f"COULD NOT PLAY: {short(exc)}"
             return False
         return True
 
@@ -852,9 +873,9 @@ class Takes:
             return self.llm_alert
         if mode in ("count_in", "rehearse") and self.follow is not None and self.follow.state == "failed" \
                 and self.drill is None:
-            return "VOICE FOLLOW OFF (SEE TERMINAL)  /  N: NEXT SECTION"
+            return f"VOICE FOLLOW OFF: {short(self.follow.error)}  /  N: NEXT SECTION"
         if failed := self.analysis.failed():
-            return f"TAKE {failed[0]}: ANALYSIS FAILED (SEE TERMINAL)  /  OPEN PALM, HELD, OR R: RETRY"
+            return f"TAKE {failed[0]}: ANALYSIS FAILED {IN_LOG}  /  OPEN PALM, HELD, OR R: RETRY"
         return ""
 
     def sync_review(self, grammar: Grammar, view: ViewState, overlay: "TextOverlay | None" = None,
@@ -969,7 +990,7 @@ class Takes:
             except (OSError, SessionError) as exc:
                 print(f"cannot record: {exc}", file=sys.stderr)
                 self.log(ev.t, "record_error", error=str(exc))
-                self.alert = "CANNOT RECORD (SEE TERMINAL): OK SIGN TO STOP"
+                self.alert = f"CANNOT RECORD: {short(exc)}  /  OK SIGN TO STOP"
                 return ""
             self.writer.mark_section(ev.t, self.section, "start")
             self.recorder.start(self.writer)
@@ -984,7 +1005,7 @@ class Takes:
                 if self.vision is None:
                     print(f"gaze check: face tracking is off ({self.vision_off}); recording a plain take",
                           file=sys.stderr)
-                    return "GAZE CHECK NEEDS FACE TRACKING (SEE TERMINAL)"
+                    return f"GAZE CHECK NEEDS FACE TRACKING: {short(self.vision_off)}"
                 seed = secrets.randbelow(1 << 30)
                 self.check = {"seed": seed, "t0": round(ev.t, 3), "prompts": gaze.prompt_schedule(seed)}
                 self.writer.meta["gaze_check"] = self.check
@@ -1072,7 +1093,7 @@ class Takes:
     def recalibrate(self) -> str:
         """e: calibrate the eyes again at the next count-in."""
         if self.vision is None:
-            return "FACE TRACKING IS OFF (SEE TERMINAL)"
+            return f"FACE TRACKING IS OFF: {short(self.vision_off)}"
         self.calibrate_next = True
         return "EYES CALIBRATED AGAIN AT THE NEXT TAKE"
 
@@ -1098,6 +1119,22 @@ class Takes:
 
     def section_sentences(self) -> list[int]:
         return [i for i, s in enumerate(self.notes.sentences) if s.section == self.section]
+
+    def warm(self) -> None:
+        """Load the speech models while the user prepares, not in the first
+        take: the analysis worker's, and the voice follow's. Making the
+        recorder only asks for the microphone's rate; it isn't opened."""
+        self.analysis.warm()
+        if not self.follow_enabled:
+            return
+        try:
+            if self.recorder is None:
+                self.recorder = self.devices.recorder(clock=lambda: time.perf_counter() - self.t0)
+        except Exception as exc:  # no input device: the count-in says so, as before
+            print(f"microphone not found yet: {exc}", file=sys.stderr)
+            return
+        if self._ensure_follow():
+            self.follow.prepare()
 
     def _ensure_follow(self) -> bool:
         """The voice follow, made once the microphone's rate is known."""
@@ -1158,7 +1195,7 @@ class Takes:
         if self.writer is not None and self.writer.error and not self.alert:
             print(f"take {self.writer.number}: recording failed: {self.writer.error}; the audio up to here is kept",
                   file=sys.stderr)
-            self.alert = "RECORDING FAILED: AUDIO SO FAR KEPT (SEE TERMINAL)"
+            self.alert = f"RECORDING FAILED: {short(self.writer.error)}  /  AUDIO SO FAR KEPT"
 
     def poll(self) -> str:
         """Add takes that finished writing to the session. Returns a label note."""
@@ -1180,7 +1217,7 @@ class Takes:
         manifest = writer.manifest()
         if manifest["samples"] == 0:
             print(f"take {writer.number}: no audio was written ({writer.error or 'none arrived'})", file=sys.stderr)
-            self.alert = "TAKE NOT SAVED: NO AUDIO (SEE TERMINAL)"
+            self.alert = f"TAKE NOT SAVED: {short(writer.error) if writer.error else 'NO AUDIO ARRIVED'}"
             return ""
         take = self.session.finish_take(manifest, None if status == "saved" else status)
         m, s = divmod(round(take.duration_s), 60)
@@ -1188,7 +1225,7 @@ class Takes:
         print(f"saved {self.session.dir / take.wav} ({take.duration_s:.1f} s, {take.status}"
               + (f", {gaps:.2f} s of audio lost" if gaps else "") + ")")
         if take.status != "saved":
-            self.alert = f"TAKE {take.number} {take.status.upper()}: KEPT, NOT ANALYSED (SEE TERMINAL)"
+            self.alert = f"TAKE {take.number} {take.status.upper()}: KEPT, NOT ANALYSED {IN_LOG}"
             print(f"take {take.number} is {take.status}; analyse it anyway with: python -m palmcards.speech "
                   f"{self.session.dir} --take {take.number} --incomplete", file=sys.stderr)
             return ""
@@ -1298,6 +1335,83 @@ class Devices:
     wait_key: Callable = lambda: cv2.waitKey(1) & 0xFF
     window_open: Callable = lambda name: cv2.getWindowProperty(name, cv2.WND_PROP_VISIBLE) >= 1
     destroy_windows: Callable = cv2.destroyAllWindows
+    pump: Callable = lambda: cv2.waitKey(1)  # lets the window draw a card while something loads
+    pick: Callable = pick_notes  # the Open dialog (key l): a Path, or None if cancelled
+    fullscreen: Callable = lambda name, on: cv2.setWindowProperty(
+        name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if on else cv2.WINDOW_NORMAL)
+
+
+def show_card(devices: Devices, title: str, rows: tuple[str, ...] = ()) -> np.ndarray:
+    """A card in the window: what is loading, or what went wrong."""
+    frame = np.zeros((CARD_SIZE[1], CARD_SIZE[0], 3), np.uint8)
+    render.draw_card(frame, title, rows)
+    devices.show(WINDOW, frame)
+    devices.pump()
+    return frame
+
+
+def show_error(devices: Devices, title: str, rows: tuple[str, ...] = (), can_pick: bool = False) -> int | Path:
+    """A problem the user can act on, in the window (an app opened without a
+    terminal has nowhere else to say it), until q, Esc or the window closes.
+    With `can_pick`, l opens another notes file: that file is returned."""
+    devices.named_window(WINDOW, *CARD_SIZE)
+    rows = (*rows, "", "L: CHOOSE ANOTHER FILE  ·  Q: QUIT" if can_pick else "Q: QUIT")
+    try:
+        while True:
+            show_card(devices, title, rows)
+            key = devices.wait_key()
+            if key in (ord("q"), 27) or not devices.window_open(WINDOW):
+                return 1
+            if can_pick and key == ord("l") and (picked := devices.pick()) is not None:
+                return picked
+    finally:
+        devices.destroy_windows()
+
+
+def camera_problem(exc: CameraError) -> tuple[str, tuple[str, ...]]:
+    if "stopped delivering" in str(exc):
+        return "THE CAMERA STOPPED", ("CHECK THAT NO OTHER APP IS USING IT, THEN OPEN PALMCARDS AGAIN.",)
+    return "NO CAMERA PICTURE", (
+        "IF CAMERA ACCESS IS OFF: SYSTEM SETTINGS > PRIVACY & SECURITY > CAMERA. ALLOW THE APP YOU STARTED "
+        "PALMCARDS FROM (YOUR TERMINAL), QUIT IT AND OPEN IT AGAIN.",
+        "IF THE MAC HAS NO CAMERA: CONNECT ONE.")
+
+
+class Tee:
+    """A stream that also writes to the day's log file: what went wrong is kept
+    even when nobody is watching the terminal."""
+
+    def __init__(self, stream, log):
+        self.stream, self.log = stream, log
+
+    def write(self, text: str) -> int:
+        self.stream.write(text)
+        try:
+            self.log.write(text)
+            self.log.flush()
+        except (OSError, ValueError):
+            pass
+        return len(text)
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+    def __getattr__(self, name):  # isatty, fileno, encoding: the real stream's
+        return getattr(self.stream, name)
+
+
+def log_to_file() -> Path | None:
+    """stdout and stderr also into logs/palmcards-YYYYMMDD.log in the data directory."""
+    try:
+        folder = logs_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"palmcards-{datetime.now():%Y%m%d}.log"
+        log = path.open("a", buffering=1)
+    except OSError:
+        return None
+    log.write(f"\n--- {datetime.now().isoformat(timespec='seconds')} {' '.join(sys.argv)}\n")
+    sys.stdout, sys.stderr = Tee(sys.stdout, log), Tee(sys.stderr, log)
+    return path
 
 
 def guarded(fn: Callable[[], None], what: str) -> Callable[[], None]:
@@ -1312,14 +1426,16 @@ def guarded(fn: Callable[[], None], what: str) -> Callable[[], None]:
     return run
 
 
-def choose_notes(given: Path | None, last_notes: str) -> tuple[Path, bool]:
+def choose_notes(given: Path | None, last_notes: str, pick: Callable[[], Path | None] = pick_notes) \
+        -> tuple[Path, bool]:
     """The notes file to open and whether it came from the preferences: the one named on the command
-    line, else the one opened last if it is still there, else the sample."""
+    line, else the one opened last if it is still there, else one picked in the Open dialog, else
+    (cancelled) the sample."""
     if given is not None:
         return given, False
     if last_notes and Path(last_notes).is_file():
         return Path(last_notes), True
-    return SAMPLE, False
+    return pick() or SAMPLE, False
 
 
 def main() -> int:
@@ -1332,32 +1448,64 @@ def main() -> int:
     ap.add_argument("--video", action="store_true",
                     help="record video of each take (also preferences `video`), replayed in Review")
     ap.add_argument("--open", metavar="RUN", help="reopen a saved session in Review")
+    ap.add_argument("--new", action="store_true",
+                    help="start a new session, even if the last one for this notes file could be continued")
     ap.add_argument("--gaze-check", action="store_true",
                     help="every take is a gaze check (timed prompts), for scripts/evaluate.py --gaze")
     ap.add_argument("--llm", choices=PROVIDERS, default=LLM.provider or "off",
                     help="the optional LLM: off, ollama (on this Mac) or anthropic (the cloud: what you ask "
                          "about leaves the Mac; ANTHROPIC_API_KEY from the environment or .env)")
     args = ap.parse_args()
+    if (log := log_to_file()) is not None:
+        print(f"log: {log}")
     for line in recover_all():
         print(f"recovered: {line}")
     if args.open:
-        return reopen(args)
-    prefs = preferences.load()
-    path, remembered = choose_notes(args.notes, prefs.last_notes)
+        result = reopen(args)
+    else:
+        path, remembered = choose_notes(args.notes, preferences.load().last_notes)
+        result = open_notes(path, args, remembered)
+    while isinstance(result, Path):  # key l: another notes file, once everything was closed
+        result = open_notes(result, args)
+    return result
+
+
+def open_notes(path: Path, args, remembered: bool = False) -> int | Path:
+    """Open a notes file: its last session continued if the file is unchanged
+    since, else a new session. Returns the exit code, or the next file to open."""
+    devices = Devices(llm=lambda: get_provider(args.llm))
     try:
         source = path.read_bytes()  # parsed once and kept byte for byte in the session
         notes = notes_from_bytes(source, path)
     except (OSError, ValueError) as exc:
         print(f"Could not open notes: {exc}", file=sys.stderr)
-        return 1
+        return show_error(devices, "COULD NOT OPEN THE NOTES", (str(path), short(exc, 120)), can_pick=True)
     if remembered:
         print(f"opening the notes file from last time: {path}")
+    prefs = preferences.load()
     preferences.save(replace(prefs, last_notes=str(path.resolve())))
     for warning in notes.warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    return run_reporting(path, notes, source, lang=args.lang, trace=args.trace, follow=not args.no_follow,
-                         gaze_check=args.gaze_check, video=args.video,
-                         devices=Devices(llm=lambda: get_provider(args.llm)))
+    common = dict(lang=args.lang, trace=args.trace, follow=not args.no_follow, gaze_check=args.gaze_check,
+                  video=args.video, devices=devices)
+    if not args.new and (folder := latest_session_for(SESSIONS_DIR, path, source)) is not None:
+        try:
+            session = Session.load(folder)
+            session.acquire()
+        except SessionError as exc:  # busy in another PalmCards, or unreadable: a new session
+            print(f"not continuing {folder.name}: {exc}", file=sys.stderr)
+        else:
+            print(f"continuing {folder.name} (python main.py --new starts a new session)")
+            continued = from_snapshot(session.snapshot(session.current_revision))
+            common.update(lang=session.language, session=session, note=continue_note(session))
+            return run_reporting(session.notes, continued, b"", **common)
+    return run_reporting(path, notes, source, **common)
+
+
+def continue_note(session: Session) -> str:
+    n = len(session.takes)
+    when = f"{started(session.dir):%-d %b}".upper()
+    return f"CONTINUING YOUR SESSION OF {when} · {n} TAKE{'' if n == 1 else 'S'}"
 
 
 def reopen(args) -> int:
@@ -1385,35 +1533,44 @@ def reopen(args) -> int:
                          devices=Devices(llm=lambda: get_provider(args.llm)))
 
 
-def run_reporting(*args, **kwargs) -> int:
-    """run(), with a camera or a missing model file said in one line, not a traceback."""
+def run_reporting(*args, **kwargs) -> int | Path:
+    """run(), with a camera or a missing model file said on a card in the
+    window (and in one line on stderr), not a traceback."""
+    devices = kwargs.get("devices") or Devices()
     try:
         return run(*args, **kwargs)
     except CameraError as exc:
         print(exc, file=sys.stderr)
-        return 1
+        return show_error(devices, *camera_problem(exc))
     except FileNotFoundError as exc:
         if "download_models" not in str(exc):
             raise
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return show_error(devices, "MODELS NOT DOWNLOADED", (
+            "IN THE PALMCARDS FOLDER, RUN:", ".venv/bin/python scripts/download_models.py",
+            "THEN OPEN PALMCARDS AGAIN."))
 
 
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
         devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled,
         session: Session | None = None, prefs_file: Path | None = None, gaze_check: bool = False,
-        video: bool = False) -> int:
+        video: bool = False, note: str = "") -> int | Path:
     """Open everything, run the frame loop, close everything.
 
     Every resource is registered for cleanup as soon as it exists, so a
     failure while opening the next one, a camera or drawing error mid-loop,
     or Ctrl-C still closes what was opened, in reverse order, each step on
-    its own; a take being recorded is kept."""
+    its own; a take being recorded is kept. Returns 0, or the notes file to
+    open next (key l)."""
     devices = devices or Devices()
     sentences = notes.sentences
     with ExitStack() as stack:
+        devices.named_window(WINDOW, *CARD_SIZE)  # at once: a card says what is loading
+        stack.callback(guarded(devices.destroy_windows, "the window"))
+        show_card(devices, "OPENING THE CAMERA")
         camera = devices.camera()
         stack.callback(guarded(camera.release, "the camera"))
+        show_card(devices, "LOADING HAND TRACKING")
         tracker = devices.tracker()
         stack.callback(guarded(tracker.close, "hand tracking"))
         log = devices.log()
@@ -1427,6 +1584,7 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
         takes = Takes(notes, session, log, devices, follow)
         takes.gaze_check = gaze_check
         takes.video_on = video  # or the preference, read with the others in frame_loop
+        show_card(devices, "LOADING FACE AND POSE TRACKING")
         try:
             takes.vision = devices.vision()
         except Exception as exc:  # a model missing or failing to load: the takes go on without
@@ -1435,19 +1593,20 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
         if takes.vision is not None:
             stack.callback(guarded(takes.vision.close, "face and pose tracking"))
         stack.callback(guarded(takes.close, "the takes"))
+        show_card(devices, "GETTING READY")
         review = takes.restore()
-        stack.callback(guarded(devices.destroy_windows, "the window"))
+        takes.warm()
         try:
-            frame_loop(camera, tracker, log, trace_file, takes, sentences, devices, "review" if review else None,
-                       prefs_file)
+            next_notes = frame_loop(camera, tracker, log, trace_file, takes, sentences, devices,
+                                    "review" if review else None, prefs_file, note)
         except BaseException:
             takes.interrupted = True
             raise
-    return 0
+    return next_notes or 0
 
 
 def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentences, devices: Devices,
-               start_mode: str | None = None, prefs_file: Path | None = None) -> None:
+               start_mode: str | None = None, prefs_file: Path | None = None, note: str = "") -> Path | None:
     frame = camera.read()
     h, w = frame.shape[:2]
     prefs = preferences.load(prefs_file)
@@ -1478,6 +1637,11 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     t0 = prev_start = last
     takes.t0 = t0
     devices.named_window(WINDOW, w, h)
+    if prefs.fullscreen:
+        devices.fullscreen(WINDOW, True)
+    if note:  # e.g. a session continued
+        view.note, note_until = note, last + CONTINUE_NOTE_S
+    next_notes: Path | None = None  # key l: the file to open once this one is closed
     speaker = takes.speaker = devices.speaker()
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
@@ -1717,6 +1881,14 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.note, note_until = takes.export_notes(now_t), time.perf_counter() + NOTE_S
         elif key == ord("e"):
             view.note, note_until = takes.recalibrate(), time.perf_counter() + NOTE_S
+        elif key == ord("f"):
+            prefs.fullscreen = not prefs.fullscreen
+            preferences.save(prefs, prefs_file)
+            devices.fullscreen(WINDOW, prefs.fullscreen)
+        elif key == ord("l") and view.app in ("prepare", "review"):  # another notes file
+            takes.stop_playback("key", now_t)
+            if (next_notes := devices.pick()) is not None:
+                break
         elif key == ord("d"):
             show_debug = not show_debug
         elif key == ord("r"):
@@ -1737,6 +1909,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
 
     if modes.mode == "rehearse":  # quit mid-take: keep what was recorded, as a normal take
         takes.handle(GestureEvent("take_stop", time.perf_counter() - t0), modes, view, overlay)
+    return next_notes
 
 
 if __name__ == "__main__":

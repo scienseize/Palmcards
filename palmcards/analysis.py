@@ -155,6 +155,11 @@ class Supervisor:
         self._commands.put(("submit", str(session_dir), job_input))
         return True
 
+    def warm(self) -> None:
+        """Start the worker now, idle, and have it load its models: the first
+        take's analysis then doesn't wait for them. Never blocks."""
+        self._commands.put(("warm",))
+
     def poll(self) -> list[dict]:
         """Results of finished jobs (validated), oldest first. Never blocks."""
         out = []
@@ -237,6 +242,8 @@ class Supervisor:
                                 with self._lock:
                                     self._admitted += 1
                                 self._set(job, "queued")
+                    elif kind == "warm":
+                        self._warm()
                     elif kind == "line":
                         self._reply(command[1], command[2])
                     elif kind == "exit":
@@ -299,6 +306,16 @@ class Supervisor:
         except (BrokenPipeError, OSError, ValueError) as exc:  # the worker is gone: its exit reconciles the job
             self.log.append(f"take {job.take}: could not hand the job to the worker: {exc}")
             self._kill()
+
+    def _warm(self) -> None:
+        if self._closing or (self._proc is not None and self._proc.poll() is None):
+            return
+        try:
+            self._start_worker()
+            self._proc.stdin.write(json.dumps({"warm": True}) + "\n")
+            self._proc.stdin.flush()
+        except (OSError, ValueError) as exc:  # the first job starts it again, and says why if it can't
+            self.log.append(f"could not start the analysis worker early: {exc}")
 
     def _start_worker(self) -> None:
         self._generation += 1

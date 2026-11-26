@@ -18,6 +18,7 @@ sessions (which are evidence and never change with your settings).
                  folder; python -m palmcards.data drop-video deletes it
   replay_mirrored  Review replays a take's video mirrored, as in the app (key m); by default
                  flipped back, as others see you
+  fullscreen     the window fills the screen (key f in the app)
   tutorial_done  the first-run gesture tutorial has been seen (key g shows it again)
   last_notes     the notes file opened last (kept by the app); main.py with no file opens it again
 """
@@ -42,6 +43,7 @@ class Prefs:
     sounds: bool = False
     video: bool = False  # record video of each take (palmcards.video); main.py --video for one run
     replay_mirrored: bool = False  # Review replays a take's video mirrored (key m); else as others see you
+    fullscreen: bool = False  # the window fills the screen (key f)
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
     done_hold_s: float = REHEARSE.done_hold_s

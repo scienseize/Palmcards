@@ -435,7 +435,8 @@ def test_without_a_provider_nothing_is_sent_and_it_says_so(tmp_path, monkeypatch
 def test_the_cloud_without_a_key_is_off_and_says_so(tmp_path, monkeypatch):
     takes = takes_with(tmp_path, monkeypatch, None, make=lambda: llm.get_provider("anthropic"))
     assert takes.assistant is None and takes.llm == "" and "ANTHROPIC_API_KEY" in takes.llm_off
-    assert "NEED THE OPTIONAL AI (SEE TERMINAL): NOTHING SENT" in takes.ask_rewrite("tone", (0,), 0.5)
+    said = takes.ask_rewrite("tone", (0,), 0.5)
+    assert "NEED THE OPTIONAL AI (" in said and "ANTHROPIC_API_KEY" in said and said.endswith(": NOTHING SENT")
 
 
 def usage_lines(takes):
@@ -509,7 +510,7 @@ def test_a_rejected_key_stays_on_the_alert_line(tmp_path, monkeypatch):
     takes.ask_alternatives(0, 1)
     notes = poll_until(takes, lambda: not takes.assistant.pending)
     assert notes == ["ALTERNATIVES FAILED: API KEY REJECTED, NOTHING CHANGED"]
-    assert takes.alert_line("prepare") == takes.alert_line("review") == "CLOUD AI: API KEY REJECTED (SEE TERMINAL)"
+    assert takes.alert_line("prepare") == takes.alert_line("review") == main.KEY_REJECTED
     assert takes.alert_line("rehearse") == ""  # a take has nothing to do with it
 
 

@@ -270,6 +270,24 @@ def _identity(job: dict) -> dict:
             "config": job.get("config")}
 
 
+def warm() -> None:
+    """Load the heavy parts before the first job: the app asks while you
+    prepare. A failure here costs nothing: the job loads them again and says
+    what went wrong."""
+    try:
+        import librosa  # noqa: F401 (pitch and loudness)
+        if SPEECH.backend == "mlx-whisper":
+            import mlx.core as mx
+            # ponytail: mlx-whisper's own model cache, as its transcribe() fills it (fp16); if
+            # mlx-whisper renames it, the warm-up fails here and the first job loads the model.
+            from mlx_whisper.transcribe import ModelHolder
+
+            from palmcards.asr import model_path
+            ModelHolder.get_model(model_path(SPEECH.model), mx.float16)
+    except Exception:
+        traceback.print_exc()
+
+
 def serve() -> None:
     """Worker loop. Results go out on a private copy of stdout; anything a
     library prints lands on stderr, so it can't corrupt the protocol."""
@@ -282,6 +300,9 @@ def serve() -> None:
         job: dict = {}
         try:
             message = json.loads(line)
+            if message.get("warm"):
+                warm()
+                continue
             job = json.loads(Path(message["input"]).read_text())
             job["job"] = message["id"]
             result = run_job(job)

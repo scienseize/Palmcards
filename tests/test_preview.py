@@ -385,7 +385,7 @@ def test_notes_change_and_save_failure_cannot_commit_an_invalid_preview(app, mon
         raise SessionError("disk full")
     with monkeypatch.context() as m:
         m.setattr(takes.session, "edit", fail)
-        assert takes.commit_preview(view, (0,), 1, .5) == (False, "EDIT NOT SAVED (SEE TERMINAL)")
+        assert takes.commit_preview(view, (0,), 1, .5) == (False, "EDIT NOT SAVED: DISK FULL")
     assert takes.previews.operation and view.focus is not None and takes.notes_version == 0
     takes.use_alternative(0, 0, "Thanks")
     assert takes.previews.operation is None

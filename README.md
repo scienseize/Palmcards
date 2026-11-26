@@ -34,9 +34,12 @@ macOS asks for these on first use; allow them for the terminal app you run PalmC
 
 ```sh
 .venv/bin/python main.py my-talk.md            # .txt, .md or .docx
-.venv/bin/python main.py                       # the file you opened last, else the sample
+.venv/bin/python main.py                       # the file you opened last, else pick one in an Open dialog
+.venv/bin/python main.py --new my-talk.md      # a new session, not the last one continued
 .venv/bin/python main.py --no-follow notes.txt # don't follow the voice during takes
 ```
+
+Opening a file you have rehearsed before continues its last session, with your edits and takes, if the file has not changed since; a changed file starts a new session. In Prepare or Review, `l` opens another notes file and `f` fills the screen. Until the camera's first picture, the window says what is loading; a problem the app cannot get past (no camera picture, models not downloaded, a file it cannot read) is shown there too, with what to do. Everything the app prints is also kept in `logs/` beside the sessions, a file a day.
 
 Notes are plain text; headings start sections. (Older versions read delivery marks such as `/`, `*word*` or `[slow]`; they are left out now, and the app says how many it ignored.)
 

@@ -2284,3 +2284,28 @@ Tests: pytest (full) -> 620 passed. New: the OK sign reads as PINCH and is told 
   sample and the 2026-09-26 session: no errors.
 ```
 
+
+```text
+Date: 2026-11-26
+Phase / issue IDs: first-run polish for launch (user: "make this seem more of a full product ready for
+  launch"; chose this track first, and "continue last session" for reopening a file)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: data.latest_session_for: the same notes file, unchanged (the kept copy's SHA-256), continues its
+  newest session (main.open_notes; --new starts a new one; a busy session starts a new one), with the
+  note CONTINUING YOUR SESSION OF <DATE> · N TAKES. palmcards/picker.py: macOS's Open dialog through
+  osascript, at launch when no file is named or remembered, and key l in Prepare and Review (frame_loop
+  returns the file; run() closes everything; main() opens it). render.draw_card: the window opens at once
+  and says what loads (camera, hand tracking, face and pose, getting ready); no camera picture, models
+  not downloaded and an unreadable notes file are cards in the window until q (main.show_error), not
+  terminal-only lines. Takes.warm: the analysis worker starts idle and loads Whisper (speech.warm) and the
+  voice follow's model loads while you prepare, not in the first take. Every "(SEE TERMINAL)" alert
+  carries the short reason (main.short) or "(DETAILS IN THE LOG)"; stdout and stderr also go to
+  logs/palmcards-YYYYMMDD.log in the data directory. Key f: full screen (preference fullscreen). The keys
+  help lists l, f and the logs folder.
+Tests: pytest (full) -> 646 passed. New: latest_session_for (same file finds the newest; a changed file,
+  another file of the same name, an empty root find none); choose_notes with the Open dialog picked and
+  cancelled; no camera is a card in the window until q. ux_screens resets its frame signature per run
+  (the start-up cards are drawn before the first frame). python -m palmcards.replay: every sample ok.
+Not checked: the Open dialog, full screen and the warm-up on the camera; whether the dialog comes to the
+  front over the terminal; the warm-up's cost to the frame rate in Prepare.
+```
