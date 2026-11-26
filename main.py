@@ -1631,6 +1631,20 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
     return next_notes or 0
 
 
+def warm_overlay(overlay: TextOverlay, frame: np.ndarray) -> None:
+    """Draw the notes once, off screen, as idle, browsing, selected and in a take,
+    so the glyphs and fonts are ready before the first frame (the first draw
+    cost ~80 ms, a selection's first ~40)."""
+    last = len(overlay.sentences) - 1
+    for view in (ViewState(), ViewState(mode="browse", level="word", hover=Hit(0, 0)),
+                 ViewState(mode="browse", level="sentence", hover=Hit(0, None)),
+                 ViewState(mode="focus", level="word", focus=Hit(0, 0), hover=Hit(0, 0)),
+                 ViewState(mode="focus", level="paragraph", focus=Hit(min(1, last), None)),
+                 ViewState(app="rehearse", section=0, current=0)):
+        overlay.draw(np.zeros_like(frame), view)
+    overlay._scrim_alpha, overlay._scrim_frames = None, 0  # the glass's tint: measured on the camera, not on black
+
+
 def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentences, devices: Devices,
                start_mode: str | None = None, prefs_file: Path | None = None, note: str = "") -> Path | None:
     frame = camera.read()
@@ -1655,6 +1669,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             print("video on: each take is recorded to take-NN.mp4 in the session folder")
     tutorial = Tutorial(active=not prefs.tutorial_done)
     overlay = TextOverlay(sentences, (w, h))
+    warm_overlay(overlay, frame)
     modes = ModeMachine((w, h), log)
     if start_mode:
         modes.enter(start_mode, 0.0)

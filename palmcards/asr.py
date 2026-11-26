@@ -29,6 +29,7 @@ recogniser (palmcards.asr_apple, SFSpeechRecognizer).
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import queue
 import sys
 import threading
@@ -167,6 +168,8 @@ def _read_window(audio: np.ndarray, language: str, model: str, prompt: str | Non
 def _serve_windows(inbox, outbox, model: str, language: str) -> None:
     """Window reader loop, in a thread or a process: (n, audio, prompt) in,
     (n, words, ms, error) out, until None."""
+    if mp.current_process().name != "MainProcess":
+        os.nice(5)  # in its own process: yields to the frame loop, a little (the follow must keep up)
     while (job := inbox.get()) is not None:
         n, audio, prompt = job
         t = time.perf_counter()

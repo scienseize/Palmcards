@@ -291,6 +291,7 @@ def warm() -> None:
 def serve() -> None:
     """Worker loop. Results go out on a private copy of stdout; anything a
     library prints lands on stderr, so it can't corrupt the protocol."""
+    os.nice(10)  # Whisper yields to the app's frame loop: analysis can wait a moment, a frame can't
     out = os.fdopen(os.dup(1), "w", buffering=1)
     os.dup2(2, 1)
     sys.stdout = sys.stderr
