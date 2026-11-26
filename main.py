@@ -1655,7 +1655,7 @@ GC_SLOW_MS = 5.0  # a collection this long is logged ("gc")
 
 
 def warm_overlay(overlay: TextOverlay, frame: np.ndarray) -> None:
-    """Draw the notes once, off screen, as idle, browsing, selected and in a take,
+    """Draw the notes once, off screen, as idle, browsing, selected, in a take and in Review,
     so the glyphs and fonts are ready before the first frame (the first draw
     cost ~80 ms, a selection's first ~40)."""
     last = len(overlay.sentences) - 1
@@ -1663,7 +1663,11 @@ def warm_overlay(overlay: TextOverlay, frame: np.ndarray) -> None:
                  ViewState(mode="browse", level="sentence", hover=Hit(0, None)),
                  ViewState(mode="focus", level="word", focus=Hit(0, 0), hover=Hit(0, 0)),
                  ViewState(mode="focus", level="paragraph", focus=Hit(min(1, last), None)),
-                 ViewState(app="rehearse", section=0, current=0)):
+                 ViewState(app="rehearse", section=0, current=0),
+                 ViewState(app="review", mode="browse", level="sentence", hover=Hit(0, None),
+                           summary=("        Take 1  Take 2  Change", "Length    0:30    0:31   +0:01")),
+                 ViewState(app="review", mode="focus", level="sentence", focus=Hit(0, None),
+                           takes=("Take 1", "Take 2"), take_shown=1, detail=("  Take 1: 120 wpm", "▸ Take 2: 130 wpm"))):
         overlay.draw(np.zeros_like(frame), view)
     overlay._scrim_alpha, overlay._scrim_frames = None, 0  # the glass's tint: measured on the camera, not on black
 

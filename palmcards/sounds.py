@@ -8,11 +8,16 @@ while something plays (a take's clip): the cues would be heard in it.
 
 NSSound plays on its own, apart from sounddevice, so stopping a clip never
 cuts a cue and a cue never cuts a clip. Without AppKit it plays nothing.
+Its play() blocks for 9-114 ms (measured 2026-11-27: a dropped frame or
+three on every focus and back), so cues are loaded and played on a thread of
+their own; the frame loop only hands over a name.
 """
 
 from __future__ import annotations
 
 import math
+import queue
+import threading
 from typing import Callable
 
 from palmcards.style import SOUND
@@ -28,7 +33,7 @@ def nssound_player() -> Callable[[str], None]:
         return lambda name: None
     sounds: dict[str, object] = {}
 
-    def play(name: str) -> None:
+    def load(name: str):
         if name not in sounds:
             system, volume = SOUND.cues[name]
             sound = NSSound.soundNamed_(system)
@@ -36,12 +41,21 @@ def nssound_player() -> Callable[[str], None]:
                 sound = sound.copy()  # its own volume, apart from other cues using the same sound
                 sound.setVolume_(volume)
             sounds[name] = sound
-        sound = sounds[name]
-        if sound is not None:
-            sound.stop()  # a cue again before the last one ended starts it over
-            sound.play()
+        return sounds[name]
 
-    return play
+    names: queue.SimpleQueue = queue.SimpleQueue()
+
+    def worker() -> None:
+        for name in SOUND.cues:  # loaded before the first cue is due
+            load(name)
+        while True:
+            sound = load(names.get())
+            if sound is not None:
+                sound.stop()  # a cue again before the last one ended starts it over
+                sound.play()
+
+    threading.Thread(target=worker, name="sound-cues", daemon=True).start()
+    return names.put
 
 
 class Cues:
