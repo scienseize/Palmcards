@@ -184,7 +184,7 @@ KEYS_HELP = (
     "E  Calibrate eyes at the next take",
     "M  Flip a replayed video (mirror or not)",
     "W  Fading cards on / off",
-    "I  Coach card or take table (in Review)",
+    "I  Coach card, take table or days (Review)",
     "[ ]  Target length, 15 s shorter / longer",
     "Y  Q&A round after each take on / off",
     "C  High contrast     G  Show / hide tutorial",

@@ -677,9 +677,10 @@ def test_an_open_palm_in_review_asks_the_ai_coach_about_the_newest_take(tmp_path
     assert "<transcript>\nThank you for being here tonight." in user and "Words a minute" in user
     takes._summary_key = None
     takes.sync_review(grammar, view)
-    assert view.coach == (("Went well · AI", "You thanked them warmly."),
-                          ("Work on · AI", "The middle sentence was short."),
-                          ("Next · AI", "Say the middle sentence twice."))
+    assert view.coach[:3] == (("Went well · AI", "You thanked them warmly."),
+                              ("Work on · AI", "The middle sentence was short."),
+                              ("Next · AI", "Say the middle sentence twice."))
+    assert view.coach[3][0] == "Readiness"
     assert not takes.coach_ready()  # answered: not again for this take
 
 

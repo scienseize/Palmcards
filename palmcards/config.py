@@ -274,6 +274,11 @@ class Coach:
     # within it either way is on time.
     over_s: float = 5.0
     over_share: float = 0.05
+    # Ready (palmcards.progress.readiness): the last ready_takes full takes in a row each said
+    # ready_points of the key points, were on time (with a target) and had at most ready_fillers a minute.
+    ready_takes: int = 3
+    ready_points: float = 0.9
+    ready_fillers: float = 3.0
 
 
 @dataclass(frozen=True)

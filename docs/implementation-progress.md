@@ -2407,3 +2407,23 @@ Tests: pytest (full) -> 681 passed. New: time line and Questions section parsing
 Not checked: on the camera; whether 4 s to read a question is right; the AI's questions on a real pitch.
   Left: the AI coach for a round of answers (it coaches pitch takes only).
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: Rehearse/Review plan, stage E: readiness over days (the user checked stage D: "Works")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: palmcards/progress.py: Points (full takes and answers; drills left out) from every session of
+  the same notes (folder-name stem, as data.latest_session_for; key points from metrics v6 or, before it,
+  from the alignment); days_table (the last 5 days: takes, length nearest the target, best key points,
+  fewest fillers, best from memory, answers' median length); readiness (Ready, or the first thing missing:
+  COACH.ready_takes full takes in a row with ready_points of the key points, on time with a target, at most
+  ready_fillers a minute, the latest round's answers under QA.answer_max_s). The app reads the other
+  sessions once in a background thread; the open session is read live. Review: key i cycles the coach
+  card, the take table and the Days view; the coach card's last row is Readiness. The evaluate.py loader
+  was not moved: it writes every session's CSV rows, a different job; progress reuses data.sessions.
+Tests: pytest (full) -> 686 passed. New: tests/test_progress.py (not ready under 3 takes, each missing
+  condition named, the last Q&A round counts, days side by side, history reads only the notes' sessions).
+  On the real sessions: sample_notes, 58 takes over 4 days, "Not ready yet: on time in 0 of the last 3
+  takes" with a 1:00 target.
+Not checked: on the camera; whether the readiness bar (3 takes, 90%, 3 fillers a minute) feels right.
+```

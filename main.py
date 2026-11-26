@@ -98,6 +98,7 @@ import gc
 import json
 import math
 import secrets
+import threading
 import sys
 import time
 import traceback
@@ -113,7 +114,7 @@ import numpy as np
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
 from palmcards.config import ANALYSIS, BODY, FADE, FOLLOW, LLM, QA, RECORDING, REHEARSE, SPEECH
-from palmcards import coach, fade, features, gaze
+from palmcards import coach, fade, features, gaze, progress
 from palmcards import prefs as preferences
 from palmcards import render
 from palmcards.gestures import FIST, OPEN, THUMB_UP, GestureEvent, GestureLog, Grammar, HandTracker, ModeMachine
@@ -395,7 +396,11 @@ class Takes:
         self._summary_key, self._summary = None, ()  # Review's take table, and what it was made from
         self._advice = None  # the coach's advice for the newest take (palmcards.coach)
         self.ai_advice: dict[int, tuple[str, str, str]] = {}  # take -> the AI coach's (well, work, next)
-        self.show_table = False  # Review shows the take table instead of the coach card (key i)
+        self.panel_view = "coach"  # Review, bottom right: "coach" card, take "table" or "days" (key i cycles)
+        self._days, self._ready = (), ""  # the Days view and the readiness line, made with the coach
+        # Every other session of these notes (progress over days), read in the background.
+        self.history: list[progress.Point] = []
+        threading.Thread(target=self._load_history, name="history", daemon=True).start()
         self.vision: Watcher | None = None  # face and pose (milestone 7); run() opens it
         self.vision_off = "face and pose tracking not opened"  # why there is none
         self.calibrate_next = False  # e: calibrate the eyes again at the next count-in
@@ -942,9 +947,11 @@ class Takes:
         n = self.board.latest()
         last_answer = max(self.answers, default=None)
         if focused is None and (n is not None or last_answer is not None):  # the take table and the coach, anew per take
-            key = (n, n in self.board.metrics, id(self.board), last_answer, self.target_s)
+            key = (n, n in self.board.metrics, id(self.board), last_answer, self.target_s, len(self.history))
             if key != self._summary_key:
                 self._summary_key, self._summary = key, self.board.take_table()
+                every = sorted(self.history + progress.points(self.session), key=lambda p: p.when)
+                self._days, self._ready = progress.days_table(every, self.target_s), progress.readiness(every, self.target_s)
                 if last_answer is not None and last_answer > (n or 0):  # the newest is a Q&A round
                     since = max((t for t in self.board.takes if t < last_answer), default=0)
                     self._advice = coach.advise_answers([self.answers[m] for m in sorted(self.answers) if m > since])
@@ -955,17 +962,25 @@ class Takes:
                         and gs.mode == "idle":
                     view.current = self._advice.sentence
                     view.scroll = overlay.scroll_to(view.current)
-            view.summary = self._summary
+            view.summary = self._days if self.panel_view == "days" else self._summary
             a = self._advice
             ai = None if (last_answer or 0) > (n or 0) else self.ai_advice.get(n)  # the AI coached the take, not the round
-            if self.show_table or a is None:
+            if self.panel_view != "coach" or a is None:
                 view.coach = ()
             elif ai is not None:  # the AI coach's, asked for with an open palm
-                view.coach = (("Went well · AI", ai[0]), ("Work on · AI", ai[1]), ("Next · AI", ai[2]))
+                view.coach = (("Went well · AI", ai[0]), ("Work on · AI", ai[1]), ("Next · AI", ai[2]),
+                              ("Readiness", self._ready))
             else:
-                view.coach = (("Went well", a.well), ("Work on", a.work), ("Next", a.next))
+                view.coach = (("Went well", a.well), ("Work on", a.work), ("Next", a.next), ("Readiness", self._ready))
         else:
             view.summary, view.coach = (), ()
+
+    def _load_history(self) -> None:
+        stem = self.session.dir.name[16:].rsplit("-", 1)[0]
+        try:
+            self.history = progress.history(self.session.dir.parent, stem, skip=self.session.dir)
+        except OSError as exc:  # progress is extra: never let it take the app down
+            print(f"progress over days: {exc}", file=sys.stderr)
 
     def notes_text(self) -> str:
         """The whole notes as plain text, sections headed: what the AI reads (coach, questions)."""
@@ -2205,8 +2220,10 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             preferences.save(prefs, prefs_file)
             view.note, note_until = takes.toggle_qa(prefs.qa, time.perf_counter() - t0), time.perf_counter() + NOTE_S
         elif key == ord("i") and view.app == "review":  # the coach card, or the take table
-            takes.show_table = not takes.show_table
-            view.note, note_until = ("Take table" if takes.show_table else "Coach card"), time.perf_counter() + NOTE_S
+            views = ("coach", "table", "days")
+            takes.panel_view = views[(views.index(takes.panel_view) + 1) % len(views)]
+            view.note = {"coach": "Coach card", "table": "Take table", "days": "Progress over days"}[takes.panel_view]
+            note_until = time.perf_counter() + NOTE_S
         elif key == ord("w") and view.app in ("prepare", "review"):  # fading cards, from the next take
             prefs.fade = takes.fade_on = not prefs.fade
             preferences.save(prefs, prefs_file)
