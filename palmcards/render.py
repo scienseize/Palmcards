@@ -111,19 +111,19 @@ DROP_HINT = "Lower your hand to go back"
 NEEDS_AI = "needs the optional AI"
 FOCUS_HINTS = {  # without the optional LLM
     "word": f"Meanings and other words {NEEDS_AI}  /  {DROP_HINT}",
-    "sentence": f"Hold an open palm to hear it  /  Make an L to preview the tone · {DROP_HINT}",
+    "sentence": f"Make an L to preview the tone  /  {DROP_HINT}",
     "paragraph": f"Make an L with each hand to preview the length  /  {DROP_HINT}",
 }
 FOCUS_HINTS_LLM = {
-    "word": f"Hold an open palm for other words  /  {DROP_HINT}",  # held OPS.play_hold_s, as hear it
-    "sentence": f"Hold an open palm to hear it  /  Make an L to change the tone · {DROP_HINT}",
+    "word": f"Hold an open palm for other words  /  {DROP_HINT}",  # held OPS.play_hold_s
+    "sentence": f"Make an L to change the tone  /  {DROP_HINT}",
     "paragraph": f"Make an L with each hand to change the length  /  {DROP_HINT}",
 }
 # Prepare, browsing: the gesture that selects what is under the hand, then the other levels' shapes.
 # (No fist here: a fist formed from a browsing hand never starts a take; the idle hint says how.)
 BROWSE_HINTS = {
     "word": "Pinch to select a word  /  Two fingers: sentences · Flat hand: paragraphs",
-    "sentence": "Fold your fingers to select and hear it  /  One finger: words · Flat hand: paragraphs",
+    "sentence": "Fold your fingers to select  /  One finger: words · Flat hand: paragraphs",
     "paragraph": "Fold your fingers to select  /  One finger: words · Two fingers: sentences",
 }
 BROWSE_ENTRY = "Raise a finger to browse"  # nothing up yet: how to start browsing
@@ -446,7 +446,7 @@ class ViewState:
     takes: tuple[str, ...] = ()
     take_shown: int = 0
     playable: bool = False  # Review: the focused sentence or paragraph has a take to play
-    # Playback (a take's clip in Review, "hear it" in Prepare): something plays,
+    # Playback (a take's clip in Review): something plays,
     # how far it has got (0..1), and an open palm held toward stopping it (0..1).
     playing: bool = False
     play_progress: float | None = None
@@ -796,9 +796,6 @@ class TextOverlay:
             pct = round((ops.stretch - 1) * 100)
             change = f"fuller +{pct}%" if ops.stretch > 1.05 else f"shorter −{-pct}%" if ops.stretch < 0.95 else "same"
             second = f"Length: {change}{HINT_SEP}" + (DROP_HINT if state.llm else f"{NEEDS_LLM}{REVIEW_SEP}{DROP_HINT}")
-        elif state.mode == "focus" and state.app == "prepare" and state.playing:
-            second = "Lower your hand, then hold an open palm to stop" if state.palm_spent else \
-                "Hold an open palm to stop"
         elif state.mode == "focus" and state.app == "prepare":  # nothing started yet: say what the next shape does
             second = (FOCUS_HINTS_LLM if state.llm else FOCUS_HINTS).get(state.level, DROP_HINT)
         elif state.app == "review" and state.mode == "browse" and state.scrolling and not state.playing:
@@ -836,26 +833,24 @@ class TextOverlay:
     @staticmethod
     def _preview_line(p: PreviewView, llm: bool = True) -> str:
         """A tone or length preview in the label: what the dial asks for and
-        what the notes show (the operation), then what acts on it: a tone
-        preview can be heard (an open palm held speaks the wording shown); with
-        no provider nothing can be retried."""
+        what the notes show (the operation), then what acts on it; with no
+        provider nothing can be retried."""
         if p.kind == "tone":
             what = f"Tone: {TONE_NAMES.get(p.target_label, p.target_label.lower())}"
             done = f"{what} · not saved"
         else:
             what = f"Length: {round(p.requested_target * 100)}%"
             done = f"{what} · not saved, {p.actual_words} of ~{p.target_words} words".replace(" of ~", f"{NBSP}of{NBSP}~")
-        hear = f"{REVIEW_SEP}Hold an open palm to hear it" if p.kind == "tone" else ""
         if p.error and not llm:
             return f"{what} · preview only{HINT_SEP}{NEEDS_AI[0].upper()}{NEEDS_AI[1:]}{REVIEW_SEP}{DROP_HINT}"
         if p.error:
             return f"{p.error.partition(': pinch')[0]}{HINT_SEP}Pinch and lift to try again{REVIEW_SEP}{DROP_HINT}"
         if p.loading:
-            return f"{what} · updating…{HINT_SEP}{DROP_HINT}{hear}"
+            return f"{what} · updating…{HINT_SEP}{DROP_HINT}"
         if p.original:
             shown = what if p.kind == "tone" else f"{what} · {p.actual_words} words"
-            return f"{shown}{HINT_SEP}{DROP_HINT}{hear}"
-        return f"{done}{HINT_SEP}Pinch and lift to use it{REVIEW_SEP}{DROP_HINT}{hear}"
+            return f"{shown}{HINT_SEP}{DROP_HINT}"
+        return f"{done}{HINT_SEP}Pinch and lift to use it{REVIEW_SEP}{DROP_HINT}"
 
     def ring_words(self, state: ViewState) -> int:
         """Every node is the original word or a replacement."""

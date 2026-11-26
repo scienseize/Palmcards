@@ -124,14 +124,14 @@ def check_live() -> dict:
 
 
 def check_voice() -> dict:
-    from palmcards.tts import get_speaker
+    import subprocess
 
-    speaker = get_speaker()
-    speaker.say("PalmCards check")
     t0 = time.time()
-    while speaker.speaking and time.time() - t0 < 10:
-        time.sleep(0.1)
-    return {"ok": not speaker.speaking, "seconds": round(time.time() - t0, 1)}
+    try:
+        ok = subprocess.run(["say", "PalmCards check"], timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    return {"ok": ok, "seconds": round(time.time() - t0, 1)}
 
 
 def main() -> int:

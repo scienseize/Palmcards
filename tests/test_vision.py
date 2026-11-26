@@ -12,7 +12,7 @@ import pytest
 from palmcards import features
 from palmcards.config import BODY
 from palmcards.gestures import Hand
-from palmcards.vision import FaceTracker, PoseTracker, Watcher
+from palmcards.vision import Backdrop, FaceTracker, PoseTracker, Watcher
 from tests.test_features import face_points, hand, rotation
 
 FRAME = np.zeros((720, 1280, 3), np.uint8)
@@ -262,3 +262,21 @@ def test_a_frame_count_that_starts_again_starts_the_schedule_again():
         if tracker.maybe_submit(FRAME, i / 30, i):
             task.answer(FOUND)
     assert tracker.maybe_submit(FRAME, 1.0, 1)  # counting from 0 again: due at its offset, not never
+
+
+def test_the_room_behind_the_speaker_is_darkened_and_the_speaker_is_not():
+    tasks = []
+    backdrop = Backdrop(0.5, make_task=lambda cb: tasks.append(FakeTask(cb)) or tasks[-1], clock=Clock())
+    frame = np.full((72, 128, 3), 200, np.uint8)
+    backdrop.apply(frame)
+    assert (frame == 200).all()  # no mask yet: as the camera sees it
+    assert backdrop.submit(frame, 0.0)
+    person = np.zeros((72, 128), np.float32)
+    person[:, :64] = 1.0  # the left half is the speaker
+    tasks[0].answer(SimpleNamespace(confidence_masks=[SimpleNamespace(numpy_view=lambda: person)]))
+    backdrop.apply(frame)
+    assert abs(int(frame[36, 10, 0]) - 200) <= 2 and abs(int(frame[36, 118, 0]) - 100) <= 2
+    later = np.full((72, 128, 3), 200, np.uint8)
+    backdrop.apply(later)  # no new mask: the last one again
+    assert (later == frame).all()
+

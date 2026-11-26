@@ -75,7 +75,6 @@ from palmcards.render import TextOverlay  # noqa: E402
 from palmcards.replay import KINDS, differences, entry  # noqa: E402
 from palmcards.revisions import from_snapshot  # noqa: E402
 from palmcards.session import Session  # noqa: E402
-from palmcards.tts import MacSay  # noqa: E402
 from tests.test_vision import watcher  # noqa: E402  the tests' stand-in face and pose
 
 LOGS = ROOT / "sessions" / "gesture-logs"
@@ -439,42 +438,6 @@ class StandInLLM(FakeProvider):
         return Reply(reply.text, 120, 40, model="stand-in")
 
 
-class QuietSpeaker(MacSay):
-    """Hear it, without a sound: `say` renders the sentence to a file as in the app (so it lasts
-    exactly as long), and the silent player never plays it; nothing is ever said live."""
-
-    def say(self, text, voice=None, rate_wpm=None):
-        pass
-
-    def say_words(self, words, stressed=frozenset()):
-        pass
-
-    def stop(self):
-        pass
-
-    @property
-    def speaking(self):
-        return False
-
-    def render_async(self, words):
-        """Rendered at once, not on a thread: the replay's clock runs faster than the wall's, so
-        a thread would finish at a different moment of it each run (the app renders on focus,
-        well before the palm that plays it)."""
-        from concurrent.futures import Future
-        text = " ".join(words)
-        cache = self.__dict__.setdefault("_kept", {})  # the app asks every frame while a sentence is focused
-        if text not in cache:
-            f = cache[text] = Future()
-            try:
-                f.set_result(self.render(text))
-            except Exception as exc:  # noqa: BLE001 - as the app's: the speaker says it live instead
-                f.set_exception(exc)
-        return cache[text]
-
-    def close(self):
-        pass
-
-
 class SilentPlayer:
     def play(self, audio, rate):
         pass
@@ -644,7 +607,7 @@ class Run:
         devices = main.Devices(
             camera=lambda: camera, tracker=lambda: TraceHands(src.frames, src.start, self.clock),
             log=lambda: GestureLog(work / "gesture.jsonl"), recorder=make_mic, player=SilentPlayer,
-            speaker=QuietSpeaker, live=make_live, llm=llm, vision=watcher,
+            live=make_live, llm=llm, vision=watcher, backdrop=lambda strength: None,  # a still wall: no one to cut out
             named_window=lambda *a: None, show=self.show, wait_key=self.wait_key,
             window_open=lambda n: True, destroy_windows=lambda: None, pump=lambda: None)
         real_supervisor = main.Supervisor

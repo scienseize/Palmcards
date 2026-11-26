@@ -26,8 +26,6 @@ the right of the frame; it steers the highlight in the text on the left.
                            make an L and turn it like a knob: one option per ~15 degrees, tilting right
                            turns the ring clockwise; the picked word previews in the sentence
   L-hand tilt (sentence)   live wording preview: cold / original / warm
-  hold open palm (sentence) hear the selected sentence (~0.6 s; also key a); a new open palm
-                           stops it, and the focus is held while it speaks
   two L-hands (paragraph)  live length preview: about 70% / original / 130%
   pinch + lift             commit: an alternative makes a new notes revision (u undoes it);
                            tone and length commit only the complete preview visible for the selected target;
@@ -85,7 +83,7 @@ Keys, the fallback when gestures won't do (h shows them in the app):
   t start a take, x stop playback (else the take, or cancel the count-in), n next section, b previous section,
   p back to Prepare from Review, space/j next sentence, k previous (in
   Rehearse within the section; in a focused panel they scroll it),
-  a hear the sentence (Prepare) / play the sentence or paragraph (Review), again to stop, u undo the last edit (Prepare), r retry failed analysis,
+  a play the sentence or paragraph (Review), again to stop, u undo the last edit (Prepare), r retry failed analysis,
   e calibrate the eyes again at the next take,
   g the gesture tutorial (Enter skips a step), c high contrast, h keys, q/Esc quit,
   l open another notes file (Prepare, Review), f full screen,
@@ -140,7 +138,6 @@ from palmcards.recording import TakeWriter
 from palmcards.revisions import from_snapshot
 from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
 from palmcards.style import TEXT
-from palmcards.tts import get_speaker
 from palmcards.analysis import Supervisor
 from palmcards.data import latest_session_for, started
 from palmcards.paths import logs_dir
@@ -148,7 +145,7 @@ from palmcards.picker import pick_notes
 from palmcards.asr import get_recognizer
 from palmcards.follow import LiveFollow
 from palmcards.speech import make_job
-from palmcards.vision import Watcher
+from palmcards.vision import Backdrop, Watcher
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = SESSIONS_DIR / "screens"
@@ -176,46 +173,13 @@ def short(reason: BaseException | str | None, limit: int = 40) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
-def hear_words(overlay: TextOverlay, sentence: int) -> list[str]:
-    return [w.text for w in overlay.sentences[sentence].words]
-
-
-def hear_sentence(sentence: int, overlay: TextOverlay, speaker, log: GestureLog, t: float,
-                  playback: Playback | None = None, player=None, words: list[str] | None = None) -> str:
-    """Speak a sentence: the speaker's rendered audio played as a clip (its
-    progress exact; rendered from when the sentence was focused), or, with a
-    speaker that can't render, `say` live. `words`: the wording to speak, if not
-    the sentence's (a tone preview on screen)."""
-    words = words or hear_words(overlay, sentence)
-    target = ("prepare", (sentence,), None)
-    try:
-        if playback is not None and player is not None and hasattr(speaker, "render_async"):
-            playback.start_rendered(player, speaker, words, target, time.perf_counter())
-        elif playback is not None:
-            playback.start_say(speaker, words, target, time.perf_counter())
-        else:
-            speaker.say_words(words)
-    except OSError as exc:
-        print(f"text to speech failed: {exc}", file=sys.stderr)
-        return f"Couldn't speak it: {short(exc)}"
-    log(t, "hear", sentence=sentence)
-    return "Speaking the sentence…"
-
-
-def play_focus(view: ViewState, overlay: TextOverlay, log: GestureLog, speaker, takes: "Takes | None",
-               t: float) -> str:
-    """Hear the focused sentence (Prepare), or play the focused sentence or
-    paragraph from the take it shows (Review); the `a` key does the same with
-    nothing focused on the current sentence. Returns a label note."""
+def play_focus(view: ViewState, overlay: TextOverlay, takes: "Takes | None") -> str:
+    """Review: play the focused sentence or paragraph from the take it shows;
+    the `a` key does the same with nothing focused on the current sentence.
+    Returns a label note. (Prepare plays nothing: your own takes are the only
+    voice PalmCards plays.)"""
     sentence = view.focus.sentence if view.focus is not None else view.current
-    if view.app == "prepare":
-        # A tone preview on screen is what is heard: the wording shown, not the notes'.
-        preview = view.edit_preview
-        words = preview.text.split() if preview is not None and not preview.original and preview.text else None
-        if takes is None:
-            return hear_sentence(sentence, overlay, speaker, log, t, words=words)
-        return hear_sentence(sentence, overlay, speaker, log, t, takes.playback, takes.clip_player(), words)
-    if takes is None:
+    if view.app != "review" or takes is None:
         return ""
     if view.mode == "focus" and view.level == "paragraph":
         return takes.play_paragraph(overlay.unit("paragraph", sentence))
@@ -226,12 +190,10 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
     """What the screen would play now: (app, sentences, take). Playback stops
     when this no longer matches what plays: another take picked, the hover
     moved to another sentence, the focus gone, another mode."""
-    if view.app not in ("prepare", "review"):
+    if view.app != "review":
         return None
     focused = view.mode == "focus" and view.focus is not None
     sentence = view.focus.sentence if focused else view.current
-    if view.app == "prepare":
-        return "prepare", (sentence,), None
     if focused and view.level == "paragraph":
         unit = tuple(overlay.unit("paragraph", sentence))
         return "review", unit, board.paragraph_shown(unit)
@@ -299,7 +261,7 @@ COMMIT_FIRST = {  # a pinch + lift with nothing to use yet, in Prepare: what com
 
 
 def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: GestureLog,
-                speaker=None, takes: "Takes | None" = None, grammar: Grammar | None = None) -> float | None:
+                takes: "Takes | None" = None, grammar: Grammar | None = None) -> float | None:
     """Grammar events. Returns the time a label note should expire, if one was set.
     A commit only ever reports what really happened."""
     if ev.kind == "focus":
@@ -312,8 +274,6 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         view.focus = view.hover
         view.ops = OpsView()
         view.panel_scroll = 0.0
-        if view.app == "prepare" and ev.level == "sentence" and hasattr(speaker, "render_async"):
-            speaker.render_async(hear_words(overlay, view.focus.sentence))  # "hear it" ready by the palm hold
         return None
     if ev.kind == "commit_ignored":  # nothing to commit yet: the focus stays, and what comes first
         view.note = COMMIT_FIRST.get((view.app, ev.level), "") if view.app == "prepare" else \
@@ -323,8 +283,8 @@ def apply_event(ev: GestureEvent, view: ViewState, overlay: TextOverlay, log: Ge
         if takes is not None:
             takes.rewind_pick(ev.value)
         return None
-    if ev.kind == "palm_hold":  # an open palm held on the focus: hear it (Prepare), play it (Review)
-        view.note = play_focus(view, overlay, log, speaker, takes, ev.t)
+    if ev.kind == "palm_hold":  # an open palm held on the focus (Review): play it
+        view.note = play_focus(view, overlay, takes)
         return time.perf_counter() + NOTE_S if view.note else None
     if ev.kind == "palm_stop":  # a new open palm while it plays: stop it; the focus stays
         if takes is not None and takes.stop_playback("palm", ev.t):
@@ -384,9 +344,9 @@ class Takes:
         self.devices = devices or Devices()
         self.follow_enabled = follow
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
-        self.player = None  # clip playback (Review, "hear it"), made at the first play
-        self.speaker = None  # "hear it"'s, closed with the takes
-        self.playback = Playback()  # what plays now (a take's clip or "hear it"), for which target
+        self.player = None  # clip playback (Review), made at the first play
+        self.backdrop = None  # the room behind you darkened (frame_loop opens it)
+        self.playback = Playback()  # what plays now (a take's clip), for which target
         self._play_error = ""
         self.notes_version = 0  # bumped when an edit or undo changes the notes
         self.llm_off = ""  # why the chosen LLM can't be used, if it can't
@@ -857,13 +817,13 @@ class Takes:
         draw_replay_hint(frame)
 
     def clip_player(self):
-        """The player for clips (Review's, "hear it"), made at the first play."""
+        """The player for clips (Review's), made at the first play."""
         if self.player is None:
             self.player = self.devices.player()
         return self.player
 
     def stop_playback(self, why: str, t: float) -> bool:
-        """Stop what plays (a take's clip or "hear it"). True if something was playing."""
+        """Stop what plays (a take's clip). True if something was playing."""
         if not self.playback.stop():
             return False
         self.log(t, "play_stop", why=why)
@@ -1366,8 +1326,9 @@ class Takes:
             self.follow.close()
         if self.player is not None:
             self.player.stop()
-        if hasattr(self.speaker, "close"):
-            self.speaker.close()
+        if self.backdrop is not None:
+            self.backdrop.close()
+            self.backdrop = None
         left = self.analysis.close(timeout=1.0)
         self.poll_analysis()
         if left or self.deferred:
@@ -1385,12 +1346,12 @@ class Devices:
     tracker: Callable = HandTracker
     recorder: Callable = AudioRecorder
     log: Callable = GestureLog.to_session_dir
-    speaker: Callable = get_speaker
     player: Callable = ClipPlayer
     video: Callable = VideoWriter  # (folder, take number, frame size); only with video on
     video_reader: Callable = VideoReader  # (path, t_first, frame size): Review's replay of a take's video
     llm: Callable = get_provider  # None: the optional LLM is off
     vision: Callable = Watcher.open  # face and pose; None or an error: off (they are optional)
+    backdrop: Callable = Backdrop  # (strength) the room behind you darkened; None or an error: off
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
     named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
     show: Callable = cv2.imshow
@@ -1680,6 +1641,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     takes.replay_mirrored = prefs.replay_mirrored
     takes.video_on = takes.video_on or prefs.video
     takes.fade_on = takes.fade_on or prefs.fade
+    backdrop = None  # the room behind you darkened (preference room_dim; 0: off); closed with the takes
+    if prefs.room_dim > 0:
+        try:
+            backdrop = takes.backdrop = devices.backdrop(prefs.room_dim)
+        except Exception as exc:  # the model missing or failing to load: the room as the camera sees it
+            print(f"room darkening off: {exc}", file=sys.stderr)
     if takes.video_on:
         if devices.video is VideoWriter and (why := video_unavailable()):
             takes.video_off = why
@@ -1708,7 +1675,6 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     if note:  # e.g. a session continued
         view.note, note_until = note, last + CONTINUE_NOTE_S
     next_notes: Path | None = None  # key l: the file to open once this one is closed
-    speaker = takes.speaker = devices.speaker()
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
     hint_after, rehearse_open_since = 0.0, None
@@ -1732,6 +1698,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         takes.push_video(frame, (getattr(camera, "last_t", 0.0) or start) - t0)  # the clean frame, as captured
         if takes.vision is not None:  # before anything is drawn on the frame; idle outside calibration and takes
             takes.vision.frame(frame, start - t0, frame_index, late=(start - prev_start) * 1000 > BODY.late_ms)
+        if backdrop is not None:  # after the hands, the face and the video have their clean frame
+            backdrop.submit(frame, start - t0)
+            backdrop.apply(frame)
         frame_index += 1
         # Hand results arrive asynchronously, usually one frame behind.
         if (result := tracker.poll()) is not None:
@@ -1768,7 +1737,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             elif ev.kind == "retry":  # an open palm held in Review with failed analysis
                 view.note, until = takes.retry(), start + NOTE_S
             elif ev.kind in ("focus", "commit", "commit_ignored", "back", "rewind", "palm_hold", "palm_stop"):
-                until = apply_event(ev, view, overlay, log, speaker, takes, grammar)
+                until = apply_event(ev, view, overlay, log, takes, grammar)
             elif note := takes.handle(ev, modes, view, overlay):
                 view.note, until = note, start + NOTE_S
             else:
@@ -1944,9 +1913,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             overlay = TextOverlay(sentences, (w, h))  # its cached text was drawn in the old colours
         elif key == ord("u") and view.app == "prepare":
             view.note, note_until = takes.undo(), time.perf_counter() + NOTE_S
-        elif key == ord("a") and view.app in ("prepare", "review"):  # play, or stop what plays
-            view.note = "Stopped" if takes.stop_playback("key", now_t) \
-                else play_focus(view, overlay, log, speaker, takes, now_t)
+        elif key == ord("a") and view.app == "review":  # play, or stop what plays
+            view.note = "Stopped" if takes.stop_playback("key", now_t) else play_focus(view, overlay, takes)
             note_until = time.perf_counter() + NOTE_S
         elif key == ord("o") and view.app == "review":  # write the notes out, as palmcards.export does
             view.note, note_until = takes.export_notes(now_t), time.perf_counter() + NOTE_S

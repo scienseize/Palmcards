@@ -997,11 +997,11 @@ def test_a_palm_raised_again_after_leaving_the_frame_is_new():
     assert kinds(events) == ["palm_stop"]
 
 
-def test_in_prepare_a_held_palm_hears_a_sentence_but_not_a_paragraph_or_word():
+def test_in_prepare_a_held_palm_plays_nothing_and_opens_a_words_ring():
     m = ModeMachine((W, H))
     t = sentence_focus(m, 0.0)
     events, t = run(m, hold(open_palm, 1.0), t)
-    assert [(e.kind, e.level) for e in events] == [("palm_hold", "sentence")]
+    assert "palm_hold" not in kinds(events)  # no synthetic voice reads a sentence
     _, t = run(m, [None] * 40, t)
     t = paragraph_focus(m, t)
     events, t = run(m, hold(open_palm, 1.0), t)

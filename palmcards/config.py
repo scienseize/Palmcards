@@ -19,6 +19,20 @@ class Tracking:
 
 
 @dataclass(frozen=True)
+class Backdrop:
+    """The room behind the speaker, darkened (palmcards.vision.Backdrop): MediaPipe's
+    selfie segmenter marks the person on every frame it isn't busy with, at
+    most `max_side` px; its mask eases toward each new one (`ease` of the way)
+    and is feathered (`feather` x the frame height), so edges don't shimmer.
+    Outside the person the picture is darkened by the preference `room_dim`
+    (0 off, 1 black); this is its default."""
+    strength: float = 0.6
+    max_side: int = 256  # the model's input is 256 x 256
+    ease: float = 0.5
+    feather: float = 0.01
+
+
+@dataclass(frozen=True)
 class Body:
     # Face and pose landmarkers (palmcards.vision), only during calibration and
     # takes. Each runs on every Nth camera frame, offset so face, pose and the
@@ -155,8 +169,8 @@ class Ops:
     closing_leave: float = 1.0
     rewind_max_s: float = 0.5
     rewind_plateau: float = 0.1
-    # An open palm held this long on a focused unit: hear the sentence
-    # (Prepare), play the sentence or paragraph from the take it shows (Review).
+    # An open palm held this long: Review plays the focused sentence or paragraph
+    # from the take it shows; Prepare opens a focused word's options ring.
     play_hold_s: float = 0.6
     # While it plays, a new open palm (the hand has left the palm or the frame
     # since playback started) held this long stops it.
@@ -464,16 +478,10 @@ class Llm:
     close_wait_s: float = 3.0  # at exit, calls in flight get this long to finish so their tokens are logged
 
 
-@dataclass(frozen=True)
-class Voice:
-    # Text to speech (palmcards.tts), for the options ring's "hear it" node.
-    backend: str = "say"  # palmcards.tts BACKENDS; macOS `say`
-    voice: str | None = None  # `say -v`; None: the system voice
-    rate_wpm: int | None = None  # `say -r`; None: the system rate
-
 
 TRACKING = Tracking()
 BODY = Body()
+BACKDROP = Backdrop()
 POSE = Pose()
 TIMING = Timing()
 CURSOR = Cursor()
@@ -488,7 +496,6 @@ ANALYSIS = Analysis()
 ALIGN = Align()
 PROSODY = Prosody()
 FOLLOW = Follow()
-VOICE = Voice()
 LLM = Llm()
 METRICS = Metrics()
 GAZE = Gaze()

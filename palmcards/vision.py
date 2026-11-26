@@ -35,7 +35,7 @@ import cv2
 import numpy as np
 
 from palmcards import features
-from palmcards.config import BODY
+from palmcards.config import BACKDROP, BODY
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 
@@ -185,6 +185,53 @@ class PoseTracker(LandmarkTask):
 
     def _found(self, result) -> bool:
         return bool(result.pose_landmarks)
+
+
+class Backdrop(LandmarkTask):
+    """The room behind the speaker, darkened (BACKDROP): the selfie segmenter
+    runs on every frame it isn't busy with; apply() darkens the frame outside
+    the person by `strength`, with the newest mask (eased, feathered) until the
+    next one arrives. Display only: the hands, the face and a take's video
+    are read from the frame before it is darkened."""
+
+    def __init__(self, strength: float = BACKDROP.strength, **kw):
+        kw.setdefault("max_side", BACKDROP.max_side)
+
+        def make(callback):
+            from mediapipe.tasks.python import BaseOptions, vision
+
+            task = vision.ImageSegmenter.create_from_options(vision.ImageSegmenterOptions(
+                base_options=BaseOptions(model_asset_path=_model("selfie_segmenter.tflite")),
+                running_mode=vision.RunningMode.LIVE_STREAM, result_callback=callback,
+                output_confidence_masks=True, output_category_mask=False))
+            task.detect_async = task.segment_async  # LandmarkTask's name for it
+            return task
+
+        super().__init__(kw.pop("make_task", make), 1, 0, **kw)
+        self.strength = strength
+        self._mask: np.ndarray | None = None  # the person, 0..1, at the model's size, eased
+        self._gain: np.ndarray | None = None  # per pixel and channel, 255 = as is, for cv2.multiply
+
+    def _found(self, result) -> bool:
+        return bool(result.confidence_masks)
+
+    def apply(self, frame: np.ndarray) -> None:
+        """Darken the room in `frame` (in place) with the newest mask."""
+        if (got := self.poll()) is not None and got[0].confidence_masks:
+            m = np.array(got[0].confidence_masks[0].numpy_view(), np.float32)  # 1: the person
+            if self._mask is None or self._mask.shape != m.shape:
+                self._mask = m
+            else:
+                self._mask += BACKDROP.ease * (m - self._mask)
+            # Feathered and made 8-bit at the mask's size, then enlarged once: a frame's budget is tight.
+            mh = self._mask.shape[0]
+            k = max(1, round(BACKDROP.feather * mh)) * 2 + 1
+            gain = cv2.GaussianBlur(1.0 - self.strength * (1.0 - self._mask), (k, k), 0)
+            gain = np.clip(gain * 255, 0, 255).astype(np.uint8)
+            h, w = frame.shape[:2]
+            self._gain = cv2.cvtColor(cv2.resize(gain, (w, h), interpolation=cv2.INTER_LINEAR), cv2.COLOR_GRAY2BGR)
+        if self._gain is not None and self._gain.shape == frame.shape:
+            cv2.multiply(frame, self._gain, frame, scale=1 / 255)
 
 
 class Watcher:

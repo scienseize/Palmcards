@@ -43,7 +43,8 @@ Opening a file you have rehearsed before continues its last session, with your e
 
 Notes are plain text; headings start sections. (Older versions read delivery marks such as `/`, `*word*` or `[slow]`; they are left out now, and the app says how many it ignored.)
 
-- **Prepare.** Hold a hand in the box on the right of the frame and the highlight follows it in the notes. One finger picks a word, two fingers a sentence, a flat hand a paragraph. Pinch or fold the fingers onto the thumb to focus. Selecting a word shows its **meaning in context** (requires the optional LLM). Open your palm to reveal alternatives, turn an L-hand to choose, then pinch + lift to use one. To **hear it**, browse by sentence, fold to select one, then hold an open palm for about 0.6 s (or press `a`): the whole sentence is spoken. Release and hold again to replay.
+- **Prepare.** Hold a hand in the box on the right of the frame and the highlight follows it in the notes. One finger picks a word, two fingers a sentence, a flat hand a paragraph. Pinch or fold the fingers onto the thumb to focus. Selecting a word shows its **meaning in context** (requires the optional LLM). Open your palm to reveal alternatives, turn an L-hand to choose, then pinch + lift to use one.
+- **The room behind you** is darkened, so you stand out (preference `room_dim`, 0 to 1, default 0.6; 0 turns it off: `python -m palmcards.prefs set room_dim 0`).
 - **Rehearse.** Raise a closed fist and hold it for 1 s to start a take after a 3-2-1 count-in. The notes follow your voice. To move on by hand, press `n` (next section) or `b` (previous). Hold the OK sign (thumb and index fingertips touching in a circle) for 1.5 s, anywhere in the frame, to stop the take.
 - **Review.** A table sets your last few takes side by side: length, pace, fillers, long pauses, restarts, pitch range, time looking at the screen, face touches, posture. Focus a sentence to see it in every take that said it. Pinch and lift on it to drill just that sentence.
 
@@ -61,7 +62,7 @@ Keys work when gestures won't (press `h` to see them in the app):
 | --- | --- |
 | `t` | start a take |
 | `x` | stop playback, otherwise stop the take or cancel the count-in |
-| `a` | play or stop the focused sentence or paragraph (hear it, in Prepare) |
+| `a` | play or stop the focused sentence or paragraph (Review) |
 | `n` / `b` | next / previous section |
 | `space` / `j`, `k` | next / previous sentence, or scroll a focused panel |
 | `p` | back to Prepare from Review |

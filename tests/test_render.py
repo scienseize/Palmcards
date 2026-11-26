@@ -41,8 +41,6 @@ def test_hints_follow_what_the_state_machine_does():
                         palm_spent=True, status="TAKE 1")
     assert "Lower your hand, then" in ov.label_lines(playing)[1]
     assert ov.label_lines(replace(playing, palm_spent=False))[1] == "TAKE 1  /  Hold an open palm to stop"
-    hear = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None), playing=True, palm_spent=True)
-    assert ov.label_lines(hear)[1] == "Lower your hand, then hold an open palm to stop"
     browsing = ViewState(app="review", mode="browse", level="sentence", playing=True)
     assert "Move to another sentence to stop · A: stop" in ov.label_lines(browsing)[1]
     # The hand box's edges scroll: the label says so.
@@ -53,10 +51,10 @@ def test_hints_follow_what_the_state_machine_does():
     assert ov.label_lines(ViewState(undo_progress=0.5))[1] == "Keep holding to undo"
     assert ov.label_lines(ViewState(app="review", hold_progress=0.5))[1] == "Keep holding to edit"
     assert ov.label_lines(ViewState(app="review", retry_progress=0.5))[1] == "Keep holding to retry"
-    # A preview: heard as shown; with no provider, nothing to retry.
+    # A preview; with no provider, nothing to retry.
     p = SimpleNamespace(kind="tone", target_label="WARM", requested_target=1.0, actual_words=9, target_words=9,
                         error="", loading=False, original=False)
-    assert ov._preview_line(p).endswith("Pinch and lift to use it · Lower your hand to go back · Hold an open palm to hear it")
+    assert ov._preview_line(p).endswith("Pinch and lift to use it · Lower your hand to go back")
     p.error = "The optional AI isn't set up (see the README)"
     line = ov._preview_line(p, llm=False)
     assert "retry" not in line and line == "Tone: warm · preview only  /  Needs the optional AI · Lower your hand to go back"
@@ -157,7 +155,7 @@ def test_label_lines_follow_mode_and_operation():
     # Browsing: the gesture that focuses, then the other levels' shapes; nothing up: how to begin.
     assert ov.label_lines(ViewState(mode="browse", level="word")) == (
         "Browsing words", "Pinch to select a word  /  Two fingers: sentences · Flat hand: paragraphs")
-    assert ov.label_lines(ViewState(mode="browse", level="sentence"))[1].startswith("Fold your fingers to select and hear it  /  ")
+    assert ov.label_lines(ViewState(mode="browse", level="sentence"))[1].startswith("Fold your fingers to select  /  ")
     assert ov.label_lines(ViewState()) == ("Prepare", "Raise a finger to browse  /  Raise a fist to record")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), llm="local")
     assert ov.label_lines(focus) == ('Selected: “being”', "Make an L and turn it to choose  /  Lower your hand to go back")
@@ -316,8 +314,6 @@ def test_while_it_plays_the_hint_is_stop_and_a_held_palm_fills_the_stop_bar():
     review.palm_progress = 0.5
     assert ov.label_lines(review)[1] == "Keep holding to stop"
     assert ov.label_progress(review) == 0.5
-    prepare = ViewState(app="prepare", mode="focus", level="sentence", focus=Hit(1, None), playing=True)
-    assert ov.label_lines(prepare)[1] == "Hold an open palm to stop"
     browse = ViewState(app="review", mode="browse", level="sentence", playing=True)
     assert ov.label_lines(browse)[1].endswith("A: stop")  # no palm stop while browsing: the key
 
@@ -672,13 +668,13 @@ def test_nodes_arriving_keep_the_pick_and_do_not_turn_the_ring():
     assert view.ops.rot.at(2.5) == view.ops.rot_to == 2.0  # snapped, not turned
 
 
-def test_hear_it_is_offered_for_sentences_only():
+def test_nothing_offers_to_speak_the_notes():
     ov = overlay()
     assert "hear it" not in ov.ring_labels(knob_view())
     for llm in ("", "local", "cloud"):
         for mode in ("browse", "focus"):
             sentence = ViewState(mode=mode, level="sentence", focus=Hit(0, None), llm=llm)
-            assert "hear it" in ov.label_lines(sentence)[1]
+            assert "hear" not in ov.label_lines(sentence)[1]
 
 
 def test_meaning_fits_below_word_and_disappears_when_alternatives_open():
@@ -823,8 +819,8 @@ def test_what_a_commit_acts_on_rises_with_the_pinched_hand_and_the_focus_fades_a
     off = lambda s: np.abs(lifted[a - s:b - s, col].astype(int) - still[a:b, col]).mean()
     assert min(range(12), key=off) == MOTION.lift_px  # the panel drawn higher by the lift
     dropping = drawn(replace(view, drop_progress=1.0))
-    ink = lambda f: np.abs(f[:, ov.col_x0:ov.col_x1].astype(int) - 128).sum()
-    assert ink(dropping) < ink(still)  # fading
+    light = lambda f: f[a:b, col].astype(int).sum()  # the panel's white text on its dark glass
+    assert light(dropping) < light(still)  # fading
 
 
 def test_the_ring_opens_out_of_the_word():

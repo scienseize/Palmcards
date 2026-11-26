@@ -367,7 +367,7 @@ class Bar:
 
 @dataclass(frozen=True)
 class Playbar:
-    """What plays (a take's clip, "hear it"): a bar (BAR) under the focused unit;
+    """What plays (a take's clip): a bar (BAR) under the focused unit;
     while a take's video replays, the only thing drawn: a bar along the bottom."""
     replay_inset: float = 0.06  # x the frame width, from each side
     replay_bottom: int = 24  # px from the frame's bottom edge to the bar's centre

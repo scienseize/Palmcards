@@ -4,7 +4,7 @@ A focus, backing out, a commit (pinch + lift), and the options ring stepping
 onto the next node each have a quiet macOS sound (style.SOUND), played on the
 frame the event is handled so the sound and what the screen shows arrive
 together. Never from the count-in on (a take records the microphone), never
-while something plays (a take's clip, "hear it"): the cues would be heard in it.
+while something plays (a take's clip): the cues would be heard in it.
 
 NSSound plays on its own, apart from sounddevice, so stopping a clip never
 cuts a cue and a cue never cuts a clip. Without AppKit it plays nothing.

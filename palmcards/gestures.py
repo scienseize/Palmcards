@@ -15,7 +15,7 @@ The grammar (Kat's "gestural editing/writing"):
                             tone dial (sentence); two L hands = length stretch (paragraph)
   pinch + lift commits      back to Browse at the same level
   drop the hand backs out   out of frame or below the bottom band for 1 s
-  held open palm            on a focused sentence: hear it (Prepare) or play it (Review);
+  held open palm            on a focused sentence or paragraph in Review: play it;
                             on a focused paragraph in Review: play it. While it plays
                             the focus is held (the hand may drop) and a new palm stops it
 
@@ -87,7 +87,7 @@ CARRIED = "CARRIED"  # not a pose: HandTrack.first_pose of a hand in view across
 # Poses that do something: once a hand raised as a fist holds one (past HOLD_GRACE_S), its fist no longer starts a take.
 # Not NONE, THUMB_UP or THUMB_DOWN: a raised fist is misread as those now and then.
 WORKING_POSES = frozenset((ONE, TWO, FLAT, OPEN, L, PINCH, VICTORY))
-# Every hold (a fist to start, the OK sign for done, a V sign for undo or back, an open palm to hear, play, stop,
+# Every hold (a fist to start, the OK sign for done, a V sign for undo or back, an open palm to play, stop,
 # open the ring or retry) forgives the same misreadings in the middle and completes only on a
 # frame that reads its pose (or, with the hand lost, none). The OK sign reads each frame's features,
 # the others the stable pose: a misread under TIMING.stable_s never reaches the stable pose,
@@ -534,7 +534,7 @@ class GestureLog:
 class GestureEvent:
     # Grammar: "focus" | "commit" | "back" | "rewind" (a pinch took Review's take
     # pointer back to before the curl) | "palm_hold" (an open palm held on the
-    # focused unit: hear it, or play it) | "palm_stop" (a new open palm while it
+    # focused unit, in Review: play it) | "palm_stop" (a new open palm while it
     # plays: stop it). Modes: "count_in" | "drill" (a
     # count-in for one sentence) | "count_in_cancel" | "take_start" |
     # "next_section" | "previous_section" | "take_stop" | "to_prepare".
@@ -604,7 +604,7 @@ class Grammar:
         self.defer_edit_commit = False  # the app accepts only a complete, already displayed preview
         self.take_dial = False  # Review's take dial on a focused sentence
         self.shape_levels = LEVEL_OF_SHAPE  # hand shape -> level (Review: REVIEW_LEVEL_OF_SHAPE)
-        self.palm_levels: tuple[str, ...] = ("sentence",)  # levels a held open palm acts on
+        self.palm_levels: tuple[str, ...] = ()  # levels a held open palm acts on (Review's: play)
         self._browse_shape: str | None = None  # the shape that set the browse level
         self._palm_since: float | None = None  # focus: open palm held since
         self._palm_last = -math.inf  # focus: an open palm last read (HOLD_GRACE_S)
@@ -906,7 +906,7 @@ class Grammar:
 
     def _hold_palm(self, t: float, p: HandTrack, events: list[GestureEvent]) -> None:
         """An open palm held OPS.play_hold_s on the focused unit, at a level in
-        palm_levels: a "palm_hold" event (the app hears or plays the unit).
+        palm_levels: a "palm_hold" event (Review plays the unit).
         While it plays (focus_hold "play"), a new palm held OPS.stop_hold_s is a
         "palm_stop" instead, and releases the hold (the app stops the audio).
         Once per hold: letting go, leaving the frame or a new focus arms it again."""
@@ -940,7 +940,7 @@ class Grammar:
 
     def _working(self, p: HandTrack) -> bool:
         """The hand is working a control (a dial, the ring's knob, the pointer) or
-        holding an open palm toward hear it or play: being low in the frame doesn't
+        holding an open palm toward play: being low in the frame doesn't
         back it out then. A pinch or a fist, low, still does (a thumb near the index
         tip is no control), and so does a palm that has done its part."""
         s = self.state
@@ -1129,7 +1129,7 @@ class Grammar:
     def _operate(self, t: float, events: list[GestureEvent]) -> None:
         s, p, q = self.state, self.state.primary, self.state.secondary
         if s.level == "word":
-            if s.op != "ring":  # an open palm held (OPS.play_hold_s, as hear it): a palm passing through
+            if s.op != "ring":  # an open palm held (OPS.play_hold_s, as play is): a palm passing through
                 #                 on its way to another shape doesn't open the ring (and ask the LLM)
                 if p.stable == OPEN:
                     self._ring_last = t
@@ -1448,7 +1448,7 @@ class ModeMachine:
         self.grammar.operations = mode == "prepare"
         self.grammar.take_dial = mode == "review"
         self.grammar.shape_levels = REVIEW_LEVEL_OF_SHAPE if mode == "review" else LEVEL_OF_SHAPE
-        self.grammar.palm_levels = ("sentence", "paragraph") if mode == "review" else ("sentence",)
+        self.grammar.palm_levels = ("sentence", "paragraph") if mode == "review" else ()
         # What a hand in view was doing carries over: the OK sign that ended a mode must come
         # down before it counts again, and a hand that came into view before the change can't
         # start a take by closing into a fist (a fist raised anew still can).

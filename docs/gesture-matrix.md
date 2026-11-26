@@ -6,7 +6,7 @@ Audit of `palmcards/gestures.py` (`Grammar`, `DoneHold`, `ModeMachine`), the app
 the machine as it is after the fixes. Times are `config.py` defaults (`REHEARSE.start_hold_s`
 and `done_hold_s` can be changed in the preferences, as `start_hold_s` and `done_hold_s`).
 
-**Wording.** The hints below are quoted as they were in capitals. Since 2026-11-26 the label speaks in sentence case with the action first ("Pinch to select a word", "Lower your hand to go back"); the exact copy is in `palmcards/render.py` (`BROWSE_HINTS`, `FOCUS_HINTS`, `review_hint`, `_label`) and `main.py`. The gestures and conditions here are unchanged.
+**Hear it** (Prepare's open palm speaking a sentence through macOS `say`) was removed on 2026-11-26; rows and findings about it below are history. **Wording.** The hints below are quoted as they were in capitals. Since 2026-11-26 the label speaks in sentence case with the action first ("Pinch to select a word", "Lower your hand to go back"); the exact copy is in `palmcards/render.py` (`BROWSE_HINTS`, `FOCUS_HINTS`, `review_hint`, `_label`) and `main.py`. The gestures and conditions here are unchanged.
 
 **Modes** (`ModeMachine.mode`): `prepare`, `count_in`, `rehearse`, `review`. A drill is a
 `count_in` then `rehearse` for one sentence.
@@ -42,7 +42,7 @@ that closes into a fist (its first pose is `CARRIED`).
 | browse | index tip moving in the hand box | shape of the level held | the highlight follows it | – (implicit) |
 | browse | index tip in the hand box's top or bottom 10% | – | the notes scroll (up to 6 rows/s) | a chevron in each band; while scrolling `SCROLLING UP` / `DOWN` / `MOVE TO THE MIDDLE: STOP` |
 | browse word | `PINCH` | – | focus the word pointed at before the curl | `PINCH: FOCUS` |
-| browse sentence, paragraph | `fold` | within 0.4 s | focus the sentence / paragraph | `FOLD: FOCUS[, THEN HEAR IT]` |
+| browse sentence, paragraph | `fold` | within 0.4 s | focus the sentence / paragraph | `FOLD: FOCUS` |
 | browse | hand gone | 0.3 s | idle | – |
 | focus (any) | hand gone, or all of it in the frame's bottom 10% and not working a control or holding a palm | 1.0 s | back to browse | `DROP HAND: BACK`; while it runs `BACKING OUT` + bar, `RAISE HAND TO STAY` |
 | focus (any), no operation | pinch + lift | – | nothing: the focus stays; a note | `NOTHING TO USE YET: …` (what comes first) |
@@ -50,9 +50,7 @@ that closes into a fist (its first pose is `CARRIED`).
 | focus word, ring | `L` then tilting the index | 15° a step | turns the ring (the pick previews in the sentence) | `L-HAND, THEN TURN: PICK` |
 | focus word, ring, pick ≠ original | pinch + lift | – | the word replaced (a new revision) | `PINCH + LIFT: USE "X"` |
 | focus word, ring, pick = original | pinch + lift | – | leaves the focus, `NO CHANGE` | `ORIGINAL WORD: NO CHANGE` |
-| focus sentence | `OPEN` | held 0.6 s | hear it (the sentence spoken) | `HOLD OPEN PALM: HEAR IT` |
 | focus sentence | `L` then tilting | relative, ±45° full | tone dial, live preview | `L-HAND: TONE` |
-| focus sentence, tone | `OPEN` | held 0.6 s | hear it, **the wording shown** (the preview, when there is one) | `HOLD OPEN PALM: HEAR IT` |
 | focus sentence, tone, candidate shown | pinch + lift | – | commits the preview | `PINCH + LIFT: USE IT` |
 | focus sentence, tone, loading | pinch + lift | – | nothing (stays focused) | not offered |
 | focus sentence, tone, error | pinch + lift | – | retry | `PINCH + LIFT: RETRY` |
@@ -60,9 +58,6 @@ that closes into a fist (its first pose is `CARRIED`).
 | focus paragraph | two `L` hands, distance between the index tips | relative | length stretch, live preview | `TWO L-HANDS: LENGTH` |
 | focus paragraph, stretch, candidate shown | pinch + lift (either hand) | – | commits the preview | `PINCH + LIFT: USE IT` |
 | focus paragraph | `OPEN` | – | nothing | – |
-| focus sentence, hear it playing | the palm that started it, held on | – | nothing | `LOWER HAND, THEN OPEN PALM: STOP` |
-| focus sentence, hear it playing | a new `OPEN` | held 0.3 s | stops it (the focus stays) | `OPEN PALM: STOP`; `STOP: HOLD` + bar |
-| focus sentence, hear it playing | hand dropped | – | nothing: the focus is held | – |
 | focus (any) | `FIST`, `THUMB_UP` | – | nothing (the hand is at work) | – |
 
 ### Count-in (and a drill's count-in)
@@ -117,7 +112,7 @@ that closes into a fist (its first pose is `CARRIED`).
 |---|---|---|
 | `t` | start a take (Prepare, Review) | fist held |
 | `x` | stop any playback; else stop the take or cancel the count-in | new palm; the OK sign |
-| `a` | play or stop (Prepare: hear it; Review: the focused unit) | palm held; new palm |
+| `a` | play or stop (Review: the focused unit) | palm held; new palm |
 | `p` | Review → Prepare | V sign held |
 | `n` / `b` | next / previous section (Rehearse) | none: in a take only the OK sign is a command (the voice moves on) |
 | `space` / `j`, `k` | next / previous sentence, or scroll a panel | none in Rehearse (as above); browsing elsewhere |
@@ -136,7 +131,7 @@ that closes into a fist (its first pose is `CARRIED`).
 | start a take | fist (first pose) | 1.0 s |
 | back to Prepare (Review), undo (Prepare), retry analysis (Review) | V sign; V sign; open palm | 1.0 s (as long as a fist: nobody is speaking) |
 | stop a take / cancel the count-in | the OK sign | 1.5 s (clear of gestures made while speaking) |
-| hear it / play / open the options ring | open palm on a focus | 0.6 s |
+| play (Review) / open the options ring | open palm on a focus | 0.6 s |
 | stop playback | new open palm | 0.3 s (stopping is quick) |
 | back out of a focus | drop the hand | 1.0 s |
 | browse → idle | hand gone | 0.3 s |
@@ -175,7 +170,7 @@ the reason.
 
 - **S, fixed. The frame's bottom 10% backed a focus out whatever the pose.** A hand low in the frame
   now backs out only if it isn't working a control (the tone dial, the stretch, the ring's knob,
-  the take pointer) or holding an open palm toward hear it or play (`Grammar._working`). A pinch or
+  the take pointer) or holding an open palm toward play (`Grammar._working`). A pinch or
   a fist, or a palm that has done its part, still backs out low.
 - **S, fixed. The hand box's top and bottom 10% scroll, unmarked.** The hand box now shows a
   chevron in each band (`render.draw_hand_area`). While the notes scroll, the label says

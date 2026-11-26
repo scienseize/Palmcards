@@ -96,10 +96,6 @@ SEGMENTS = [
     ("play-drop-hand-keeps-focus", "20260927-165358", (48.0, 60.0), "review",
      "A sentence plays; the hand is out of frame for 4.7 s of it and comes back: the focus is kept "
      "(no back).", None),
-    ("play-ends-hand-down-backs-out", "20260927-165358", (155.0, 175.5), "prepare",
-     "Hear it in Prepare, twice. First it ends with the hand up, which then drops low: back 1 s later. "
-     "Then it ends with the hand already out of frame: the focus stays, and backs out a full second "
-     "after the end, not at once.", None),
     ("play-fresh-palm-stops", "20260927-165358", (107.3, 116.5), "review",
      "A palm plays the sentence; the hand closes to a fist, then a new palm held 0.3 s stops it "
      "(palm_stop); the focus stays.", None),
@@ -139,8 +135,6 @@ GRAMMAR_KINDS = ("focus", "back", "commit", "op", "palm_hold", "palm_stop")
 
 # Segments whose points keep the trace's 0.1 px (the others are rounded to whole pixels): name -> why.
 PRECISE = {
-    "play-ends-hand-down-backs-out": "rounded, the open palm settles a frame later (170.07 s, live 170.04), after the "
-                                     "app's focus_hold, so the second hear-it doesn't start",
 }
 
 

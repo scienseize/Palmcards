@@ -16,45 +16,17 @@ from tests.test_app_lifecycle import Rig
 TEXT = "Thank you for *being* here. We started with one question."
 
 
-class FakeSpeaker:
-    def __init__(self):
-        self.said = []
-
-    def say_words(self, words, stressed=frozenset()):
-        self.said.append((words, set(stressed)))
-
-
 def focused(ops: OpsView, level="word", hit=Hit(0, 2)):
     return ViewState(app="prepare", mode="focus", level=level, focus=hit, hover=hit, ops=ops)
 
 
-def test_hear_it_speaks_the_selected_sentence():
+def test_a_held_palm_plays_nothing_in_prepare():
+    # Only your own takes are played: no synthetic voice reads the notes.
     ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
-    speaker, log = FakeSpeaker(), GestureLog()
-    assert main.hear_sentence(1, ov, speaker, log, 1.0) == "Speaking the sentence…"
-    assert speaker.said == [(["We", "started", "with", "one", "question."], set())]
-    assert log.entries[-1]["kind"] == "hear" and log.entries[-1]["sentence"] == 1
-
-
-def test_hear_it_reports_failure():
-    class BrokenSpeaker:
-        def say_words(self, words):
-            raise OSError("unavailable")
-
-    ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
-    log = GestureLog()
-    assert main.hear_sentence(0, ov, BrokenSpeaker(), log, 1.0).startswith("Couldn't speak it")
-    assert not log.entries
-
-
-def test_a_held_palm_hears_the_focused_sentence_in_prepare_and_keeps_the_focus():
-    ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
-    speaker, log = FakeSpeaker(), GestureLog()
     view = focused(OpsView(), level="sentence", hit=Hit(1, None))
-    until = main.apply_event(GestureEvent("palm_hold", 1.0, "sentence"), view, ov, log, speaker)
-    assert view.note == "Speaking the sentence…" and until is not None
-    assert speaker.said[0][0][0] == "We"
-    assert view.focus == Hit(1, None)  # still focused: hold again to hear it again
+    assert main.apply_event(GestureEvent("palm_hold", 1.0, "sentence"), view, ov, GestureLog()) is None
+    assert view.note == "" and view.focus == Hit(1, None)
+    assert main.play_focus(view, ov, FakeTakes()) == ""
 
 
 class FakeTakes:
@@ -76,20 +48,19 @@ def test_a_held_palm_plays_the_focused_sentence_or_paragraph_in_review():
     takes, log = FakeTakes(), GestureLog()
     view = focused(OpsView(), level="sentence", hit=Hit(1, None))
     view.app = "review"
-    assert main.play_focus(view, ov, log, None, takes, 1.0) == "PLAYING SENTENCE"
+    assert main.play_focus(view, ov, takes) == "PLAYING SENTENCE"
     view.level = "paragraph"
-    assert main.play_focus(view, ov, log, None, takes, 2.0) == "PLAYING PARAGRAPH"
+    assert main.play_focus(view, ov, takes) == "PLAYING PARAGRAPH"
     view.focus = Hit(2, None)
-    main.play_focus(view, ov, log, None, takes, 3.0)
+    main.play_focus(view, ov, takes)
     assert takes.played == [("sentence", 1), ("paragraph", [0, 1]), ("paragraph", [2])]
 
 
 def test_keeping_the_word_is_no_change():
     ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
     view = focused(OpsView(kind="ring", picked=0))
-    speaker = FakeSpeaker()
-    main.apply_event(GestureEvent("commit", 1.0, "word", "ring"), view, ov, GestureLog(), speaker)
-    assert view.note == "Nothing changed" and speaker.said == []
+    main.apply_event(GestureEvent("commit", 1.0, "word", "ring"), view, ov, GestureLog())
+    assert view.note == "Nothing changed"
 
 
 @pytest.mark.parametrize("op, level, what", [("tone", "sentence", "TONE"), ("stretch", "paragraph", "LENGTH")])
@@ -97,7 +68,7 @@ def test_unavailable_edits_never_claim_a_commit(op, level, what):
     ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
     view = focused(OpsView(kind=op), level=level, hit=Hit(0, None))
     log = GestureLog()
-    main.apply_event(GestureEvent("commit", 1.0, level, op, value=0.4), view, ov, log, FakeSpeaker())
+    main.apply_event(GestureEvent("commit", 1.0, level, op, value=0.4), view, ov, log)
     assert view.note == "No preview yet: this needs the optional AI"
     assert view.focus is not None and view.mode == "focus"
     assert "COMMITTED" not in view.note and not log.entries
@@ -182,10 +153,10 @@ def test_browsing_to_another_sentence_or_leaving_review_stops_it(tmp_path, monke
 def test_a_new_palm_stops_it_and_keeps_the_focus(tmp_path, monkeypatch):
     takes, ov, view, g = review_takes(tmp_path, monkeypatch)
     start(takes, view, ov)
-    until = main.apply_event(GestureEvent("palm_stop", 2.0, "sentence"), view, ov, takes.log, None, takes)
+    until = main.apply_event(GestureEvent("palm_stop", 2.0, "sentence"), view, ov, takes.log, takes)
     assert view.note == "Stopped" and until is not None and not takes.playback.playing
     assert view.focus == Hit(1, None)
-    assert main.apply_event(GestureEvent("palm_stop", 2.1, "sentence"), view, ov, takes.log, None, takes) is None
+    assert main.apply_event(GestureEvent("palm_stop", 2.1, "sentence"), view, ov, takes.log, takes) is None
 
 
 def test_a_take_starting_stops_it(tmp_path, monkeypatch):
@@ -199,14 +170,3 @@ def test_a_take_starting_stops_it(tmp_path, monkeypatch):
     takes.handle(GestureEvent("count_in", 3.0), gestures.ModeMachine((1280, 720)), view, ov)
     assert not takes.playback.playing
     assert any(e["kind"] == "play_stop" and e["why"] == "take" for e in takes.log.entries)
-
-
-def test_hear_it_goes_through_playback(tmp_path, monkeypatch):
-    from tests.test_llm import takes_with
-
-    takes = takes_with(tmp_path, monkeypatch, None)
-    ov = TextOverlay(parse_text(TEXT).sentences, (1280, 720))
-    speaker = FakeSpeaker()
-    view = focused(OpsView(), level="sentence", hit=Hit(1, None))
-    assert main.play_focus(view, ov, takes.log, speaker, takes, 1.0) == "Speaking the sentence…"
-    assert takes.playback.target == ("prepare", (1,), None) and speaker.said[0][0][0] == "We"
