@@ -1,7 +1,7 @@
 """The home card: switch to another speech without leaving the app.
 
-Shown at launch when PalmCards reopened the file from last time, and on key
-l in Prepare or Review. One row per choice: carry on with the speech open now,
+Shown at launch, before any speech is open (launch_entries; main.launcher), and on
+key l or a V sign (nothing to undo) in Prepare, l in Review. One row per choice: carry on with the speech open now,
 start it over, carry on with another speech practised before, add slides to the
 written notes (palmcards.slides), or open a file (notes, or slides as the speech).
 A row is chosen as a sentence is in Review (one or two fingers to browse, a
@@ -83,6 +83,19 @@ def entries(root: Path, folder: Path, notes: Path, takes: int,
             rows.append(Entry(f"Slides: {slides[0]}", f"{slides[1]} slides · a clicker moves them in a take",
                               slides=True))
     rows.append(Entry("Open another file…", "A .txt, .md, .docx, or slides as .pdf", pick=True))
+    return rows
+
+
+def launch_entries(root: Path, sample: Path, limit: int = OTHERS + 2) -> list[Entry]:
+    """The rows at launch, with no speech open: each speech practised before (its newest
+    session continued), newest first, the sample unless it is one of them, and a file."""
+    rows, seen = [], set()
+    for folder, path, n in recent(root, None, limit):
+        rows.append(Entry(path.name, f"{_takes(n)} · last {started(folder):%-d %B}", Next(folder=folder)))
+        seen.add(path)
+    if sample.is_file() and sample.resolve() not in seen:
+        rows.append(Entry(f"Try the sample: {sample.name}", "A short speech to try the gestures on", Next(path=sample)))
+    rows.append(Entry("Open a file…", "A .txt, .md, .docx, or slides as .pdf", pick=True))
     return rows
 
 

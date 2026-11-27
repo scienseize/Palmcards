@@ -595,10 +595,10 @@ def test_a_v_sign_leaves_review_but_not_from_a_focus_and_a_thumbs_up_never_does(
     assert kinds(events) == ["to_prepare"] and m.mode == "prepare"
 
 
-def test_a_v_sign_held_in_prepare_undoes_an_edit():
+def test_a_v_sign_held_in_prepare_undoes_an_edit_else_opens_the_home_card():
     m = ModeMachine((W, H))
     events, t = run(m, hold(victory, 2.0))
-    assert "undo" not in kinds(events)  # nothing to undo
+    assert kinds(events) == ["home"]  # nothing to undo: back one step further, to choose a speech
     m.undo_ready = True
     events, t = run(m, [None] * 12 + hold(thumbs_down, 2.0) + [None] * 12 + hold(thumbs_up, 2.0), t)
     assert events == [] and m.mode == "prepare"  # neither thumb undoes
@@ -613,7 +613,27 @@ def test_a_v_sign_held_in_prepare_undoes_an_edit():
     _, t = run(m, [None] * 12 + hold(one, 0.3) + hold(pinch, 0.3), t)  # a focus: the hand is at work
     assert m.state.mode == "focus"
     events, _ = run(m, hold(victory, 2.0), t)
-    assert "undo" not in kinds(events)
+    assert not {"undo", "home"} & set(kinds(events))
+
+
+def test_esc_backs_out_of_a_focus_at_once():
+    m = ModeMachine((W, H))
+    _, t = run(m, [None] * 12 + hold(one, 0.3) + hold(pinch, 0.3))
+    assert m.state.mode == "focus"
+    assert kinds(m.grammar.back(t)) == ["back"] and m.state.mode == "browse"
+    assert m.grammar.back(t) == []  # nothing focused: nothing to back out of
+
+
+def test_a_v_sign_held_on_after_the_last_undo_does_not_go_on_to_the_home_card():
+    m = ModeMachine((W, H))
+    m.undo_ready = True
+    events, t = run(m, hold(victory, REHEARSE.start_hold_s + 0.3))
+    assert kinds(events) == ["undo"]
+    m.undo_ready = False  # that was the last edit
+    events, t = run(m, hold(victory, 3.0), t)
+    assert events == []  # one hold, one step
+    events, _ = run(m, [None] * 12 + hold(victory, REHEARSE.start_hold_s + 0.3), t)
+    assert kinds(events) == ["home"]
 
 
 def test_the_v_sign_that_left_review_held_on_does_not_undo():

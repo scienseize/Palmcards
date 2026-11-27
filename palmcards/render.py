@@ -133,6 +133,7 @@ BROWSE_HINTS = {
 BROWSE_ENTRY = "Raise a finger to browse"  # nothing up yet: how to start browsing
 NEW_TAKE = "Raise a fist to record"
 UNDO_HINT = "Hold a V sign to undo"  # Prepare, after an edit: a V sign (index and middle apart) held undoes it (u too)
+HOME_HINT = "Hold a V sign to change speech"  # Prepare, nothing to undo: the V sign opens the home card (l too)
 NEEDS_LLM = f"Preview only: {NEEDS_AI}"
 TONE_NAMES = {"WARM": "warm", "COLD": "formal", "ORIGINAL": "original", "NEUTRAL": "original"}  # the gauge's ends
 LEVELS = {"word": ("words", "Word"), "sentence": ("sentences", "Sentence"), "paragraph": ("paragraphs", "Paragraph")}
@@ -826,7 +827,8 @@ class TextOverlay:
         elif state.hold_progress > 0:
             second, progress = "Keep holding to edit", state.hold_progress
         elif state.undo_progress > 0:
-            second, progress = "Keep holding to undo", state.undo_progress
+            second, progress = ("Keep holding to undo" if state.undo_ready else "Keep holding to change speech"), \
+                state.undo_progress
         elif state.retry_progress > 0:
             second, progress = "Keep holding to retry", state.retry_progress
         elif state.coach_progress > 0:
@@ -869,7 +871,7 @@ class TextOverlay:
         elif state.app == "prepare" and state.mode == "browse":
             second = BROWSE_HINTS.get(state.level, "")
         elif state.app == "prepare":  # nothing up: how to begin, how to take, and an edit to undo
-            undo = f"{REVIEW_SEP}{UNDO_HINT}" if state.undo_ready else ""
+            undo = f"{REVIEW_SEP}{UNDO_HINT if state.undo_ready else HOME_HINT}"
             second = f"{state.status}{HINT_SEP}{BROWSE_ENTRY}{REVIEW_SEP}{NEW_TAKE}{undo}" if state.status else \
                 f"{BROWSE_ENTRY}{HINT_SEP}{NEW_TAKE}{undo}"
         else:

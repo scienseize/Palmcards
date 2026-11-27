@@ -954,6 +954,14 @@ class Grammar:
         self._focus_armed = False
         self._lost_since = None
 
+    def back(self, t: float) -> list[GestureEvent]:
+        """Back out of the focus at once (Esc), as a dropped hand does after TIMING.drop_s."""
+        events: list[GestureEvent] = []
+        if self.state.mode == "focus":
+            self._gone_since = None
+            self._leave_focus("back", t, events, source="key")
+        return events
+
     def accept_edit_commit(self, t: float) -> None:
         """The app has saved the visible rewrite (or kept the original)."""
         self._leave_focus("commit", t, [], value=self.state.tone if self.state.op == "tone" else self.state.stretch)
@@ -1403,7 +1411,7 @@ class ModeMachine:
         self._fist_last = -math.inf
         # Set by the app each frame: an edit to undo (Prepare: a V sign, held, undoes it), and failed analysis to retry (Review: an open palm held, no focus, retries it).
         self.undo_ready = False
-        self.undo_hold = PoseHold(VICTORY)  # Prepare: a V sign, held, undoes the last edit
+        self.undo_hold = PoseHold(VICTORY)  # Prepare: a V sign, held, undoes the last edit, else opens the home card
         self.back_hold = PoseHold(VICTORY)  # Review: a V sign, held, goes back to Prepare
         self.coach_ready = False  # set by the app: the AI coach can be asked about the newest take
         self.coach_hold = PoseHold(OPEN)  # Review, nothing focused: an open palm, held, asks the AI coach
@@ -1435,10 +1443,13 @@ class ModeMachine:
         present = [self.grammar.tracks[k] for k in track_events]
         focused = self.grammar.state.mode == "focus"  # the hand is at work: no command poses
         if self.mode == "prepare":
-            # A V sign, held as long as a fist to start a take, undoes the last edit.
-            if self.undo_hold.update(present, t, REHEARSE.start_hold_s, armed=self.undo_ready and not focused):
-                self.log(t, "undo")
-                events.append(GestureEvent("undo", t))
+            # A V sign, held as long as a fist to start a take, undoes the last edit; with nothing to
+            # undo it goes back one step further, to the home card (choose another speech). One hold
+            # does one of them: held on after an undo, it does nothing more until it comes down.
+            if self.undo_hold.update(present, t, REHEARSE.start_hold_s, armed=not focused):
+                kind = "undo" if self.undo_ready else "home"
+                self.log(t, kind)
+                events.append(GestureEvent(kind, t))
             return events
         if self.mode == "review":
             if self._retry_held(t):

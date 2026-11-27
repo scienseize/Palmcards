@@ -25,7 +25,6 @@ sessions (which are evidence and never change with your settings).
                  (key w in the app; main.py --fade for one run)
   qa             the Q&A round: practice questions after each full take (key y)
   tutorial_done  the first-run gesture tutorial has been seen (key g shows it again)
-  last_notes     the notes file opened last (kept by the app); main.py with no file opens it again
 """
 
 from __future__ import annotations
@@ -55,7 +54,6 @@ class Prefs:
     start_hold_s: float = REHEARSE.start_hold_s
     done_hold_s: float = REHEARSE.done_hold_s
     count_in_again_s: float = REHEARSE.count_in_again_s
-    last_notes: str = ""  # absolute path of the notes file opened last; "" until one was
 
     def checked(self) -> "Prefs":
         """Values clamped to what the app can use."""

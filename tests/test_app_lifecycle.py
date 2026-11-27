@@ -505,9 +505,9 @@ def test_with_qa_off_no_questions_follow_a_take(tmp_path, monkeypatch):
     assert '"qa_question"' not in (tmp_path / "log.jsonl").read_text()
 
 
-def run_home(rig, home=True):
+def run_home(rig, home=True, **kw):
     return main.run(rig.notes_path, notes_from_bytes(NOTES, rig.notes_path), NOTES, devices=rig.devices,
-                    sessions_root=rig.tmp / "sessions", prefs_file=rig.prefs_file, home=home)
+                    sessions_root=rig.tmp / "sessions", prefs_file=rig.prefs_file, home=home, **kw)
 
 
 def test_the_home_card_at_launch_starts_the_speech_over(tmp_path, monkeypatch):
@@ -515,6 +515,42 @@ def test_the_home_card_at_launch_starts_the_speech_over(tmp_path, monkeypatch):
     assert run_home(rig) == main.Next(path=rig.notes_path, new=True)
     assert not any(r.opened for r in rig.recorders)  # no take was started
     assert rig.camera.released == 1 and rig.tracker.closed == 1 and rig.destroyed == 1  # all closed, to reopen
+
+
+def test_switching_speech_keeps_the_window_camera_and_tracking_and_shows_no_loading_card(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={3: ord("2"), 6: ord("2")})
+    opened, cards = [], []
+    rig.devices.camera = lambda: opened.append("camera") or rig.camera
+    rig.devices.tracker = lambda: opened.append("tracker") or rig.tracker
+    monkeypatch.setattr(main, "show_card", lambda devices, title, rows=(): cards.append(title))
+    kept = main.Kept()
+    assert run_home(rig, kept=kept) == main.Next(path=rig.notes_path, new=True)
+    assert opened == ["camera", "tracker"] and cards  # the first speech: opened, with its cards
+    assert rig.camera.released == 0 and rig.tracker.closed == 0 and rig.destroyed == 0  # all kept
+    cards.clear()
+    assert run_home(rig, kept=kept) == main.Next(path=rig.notes_path, new=True)
+    assert opened == ["camera", "tracker"] and cards == []  # the switch: nothing opened, nothing to read
+    kept.close()
+    assert rig.camera.released == 1 and rig.tracker.closed == 1
+
+
+def test_esc_goes_back_a_step_and_never_quits(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={2: 27, 3: 27, 4: 27, 6: ord("q")})  # Prepare: home card, shut
+    read = []
+    keys = rig.devices.wait_key
+    rig.devices.wait_key = lambda: read.append(1) or keys()
+    assert rig.run() == 0
+    assert len(read) == 6  # only q ended it
+    assert rig.camera.released == 1 and rig.tracker.closed == 1 and rig.destroyed == 1
+
+
+def test_the_launch_card_opens_nothing_until_a_row_is_chosen(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={3: ord("2"), 6: 27, 8: ord("q")})  # cancelled; Esc; q
+    kept = main.Kept()
+    assert main.launcher(kept, rig.devices, root=tmp_path / "sessions") == 0  # quit: no speech opened
+    assert not (tmp_path / "sessions").exists() or not list((tmp_path / "sessions").glob("2*"))
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={3: ord("2"), 6: ord("1")})  # cancelled, then the sample
+    assert main.launcher(main.Kept(), rig.devices, root=tmp_path / "sessions") == main.Next(path=main.SAMPLE)
 
 
 def test_l_opens_the_home_card_and_esc_closes_it_without_quitting(tmp_path, monkeypatch):

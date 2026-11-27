@@ -105,7 +105,7 @@ import sys
 import time
 import traceback
 from contextlib import ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -147,7 +147,7 @@ from palmcards.style import TEXT
 from palmcards.analysis import Supervisor
 from palmcards.data import latest_session_for, started
 from palmcards.paths import logs_dir
-from palmcards.home import Home, Next, entries as home_entries
+from palmcards.home import Home, Next, entries as home_entries, launch_entries
 from palmcards.picker import pick_notes, pick_slides
 from palmcards.slides import Deck
 from palmcards.notch import NotchPanel
@@ -419,6 +419,7 @@ class Takes:
         self.finalizing: list[TakeWriter] = []  # stopped, still writing
         self.alert = ""  # a recording problem, shown until the next take starts
         self.interrupted = False  # the app is closing because of an error or Ctrl-C
+        self.switching = False  # closing to open another speech: nothing waits (analysis left queued)
         self._closed = False
         self.last_saved = ""
         self.board = Board(notes)  # the analysed takes, side by side, for Review
@@ -1753,7 +1754,7 @@ class Takes:
                       file=sys.stderr)
         self.finalizing = []
         if self.assistant is not None:  # calls in flight get a moment, so their tokens are logged
-            deadline = time.monotonic() + (0.0 if self.interrupted else LLM.close_wait_s)
+            deadline = time.monotonic() + (0.0 if self.interrupted or self.switching else LLM.close_wait_s)
             try:
                 while self.assistant.pending and time.monotonic() < deadline:
                     self.poll_llm()
@@ -1763,7 +1764,7 @@ class Takes:
             self.poll_llm()
             self._log_llm_usage(abandoned=True)
         # Bounded: wait a while for analysis already running, then leave it for later.
-        if self.analysis.pending and not self.interrupted:
+        if self.analysis.pending and not self.interrupted and not self.switching:
             print(f"finishing analysis of take {', '.join(map(str, self.analysis.pending))} "
                   f"(up to {ANALYSIS.shutdown_s:.0f} s; Ctrl-C to leave it for later)")
             deadline = time.monotonic() + ANALYSIS.shutdown_s
@@ -1810,7 +1811,8 @@ def mirror_display_aspect(name):
 
 def open_mirror_window(name: str, width: int, height: int) -> None:
     cv2.namedWindow(name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(name, width, height)
+    if cv2.getWindowProperty(name, cv2.WND_PROP_FULLSCREEN) != cv2.WINDOW_FULLSCREEN:  # kept in full screen: as it is
+        cv2.resizeWindow(name, width, height)
     if sys.platform == "darwin":
         from AppKit import NSApplication, NSColor
         for window in NSApplication.sharedApplication().windows():
@@ -1849,6 +1851,28 @@ class Devices:
         name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if on else cv2.WINDOW_NORMAL)
 
 
+@dataclass
+class Kept:
+    """What outlives a speech, owned by main(): the window, the camera, hand tracking, face and
+    pose tracking, and the app's clock (one clock: every log and take time is seconds since the
+    app started, and MediaPipe's timestamps must keep rising). run() opens what is missing (the
+    first speech, with its loading cards) and leaves it open, so switching speech reopens only
+    the session: no loading card, nothing to wait for."""
+    t0: float = field(default_factory=time.perf_counter)
+    camera: object = None
+    tracker: object = None
+    vision: object = None
+    vision_off: str = ""
+    vision_tried: bool = False
+
+    def close(self) -> None:
+        for thing, close, what in ((self.vision, "close", "face and pose tracking"),
+                                   (self.tracker, "close", "hand tracking"), (self.camera, "release", "the camera")):
+            if thing is not None:
+                guarded(getattr(thing, close), what)()
+        guarded(cv2.destroyAllWindows, "the window")()
+
+
 def show_card(devices: Devices, title: str, rows: tuple[str, ...] = ()) -> np.ndarray:
     """A card in the window: what is loading, or what went wrong."""
     frame = np.zeros((CARD_SIZE[1], CARD_SIZE[0], 3), np.uint8)
@@ -1858,9 +1882,10 @@ def show_card(devices: Devices, title: str, rows: tuple[str, ...] = ()) -> np.nd
     return frame
 
 
-def show_error(devices: Devices, title: str, rows: tuple[str, ...] = (), can_pick: bool = False) -> int | Next:
+def show_error(devices: Devices, title: str, rows: tuple[str, ...] = (), can_pick: bool = False,
+               keep: bool = False) -> int | Next:
     """A problem the user can act on, in the window (an app opened without a
-    terminal has nowhere else to say it), until q, Esc or the window closes.
+    terminal has nowhere else to say it), until q or the window closes.
     With `can_pick`, l opens another notes file: that file is returned."""
     devices.named_window(WINDOW, *CARD_SIZE)
     rows = (*rows, "", "L  Choose another file   ·   Q  Quit" if can_pick else "Q  Quit")
@@ -1868,12 +1893,13 @@ def show_error(devices: Devices, title: str, rows: tuple[str, ...] = (), can_pic
         while True:
             show_card(devices, title, rows)
             key = devices.wait_key()
-            if key in (ord("q"), 27) or not devices.window_open(WINDOW):
+            if key == ord("q") or not devices.window_open(WINDOW):
                 return 1
             if can_pick and key == ord("l") and (picked := devices.pick()) is not None:
                 return Next(path=picked)
     finally:
-        devices.destroy_windows()
+        if not keep:  # main's window (Kept) stays for what comes next
+            devices.destroy_windows()
 
 
 def camera_problem(exc: CameraError) -> tuple[str, tuple[str, ...]]:
@@ -1934,16 +1960,65 @@ def guarded(fn: Callable[[], None], what: str) -> Callable[[], None]:
     return run
 
 
-def choose_notes(given: Path | None, last_notes: str, pick: Callable[[], Path | None] = pick_notes) \
-        -> tuple[Path, bool]:
-    """The notes file to open and whether it came from the preferences: the one named on the command
-    line, else the one opened last if it is still there, else one picked in the Open dialog, else
-    (cancelled) the sample."""
-    if given is not None:
-        return given, False
-    if last_notes and Path(last_notes).is_file():
-        return Path(last_notes), True
-    return pick() or SAMPLE, False
+def launch_choice(entry, devices: Devices) -> Next | None:
+    """A row chosen on the launch card: what to open, or None (the Open dialog cancelled: the card stays)."""
+    if entry.pick:
+        return Next(path=picked) if (picked := devices.pick()) is not None else None
+    return entry.next
+
+
+def launcher(kept: Kept, devices: Devices | None = None, root: Path = SESSIONS_DIR) -> int | Next:
+    """Launched with no file named: the home card alone, no speech open (the user, 2026-11-27).
+    Each speech practised before (its newest session continued), the sample, Open a file.
+    Nothing opens until a row is chosen, by a tap or a key; a cancelled Open dialog leaves the
+    card; q quits (Esc does nothing: there is no step back). The camera and hand tracking go into
+    `kept` for the speech chosen."""
+    devices = devices or Devices()
+    devices.named_window(WINDOW, *CARD_SIZE)
+    if kept.camera is None:
+        show_card(devices, "Opening the camera…")
+        kept.camera = devices.camera()
+    if kept.tracker is None:
+        show_card(devices, "Loading hand tracking…")
+        kept.tracker = devices.tracker()
+    frame = kept.camera.read()
+    crop = mirror_crop(frame.shape, mirror_display_aspect(WINDOW))
+    h, w = frame[crop].shape[:2]
+    prefs = preferences.load()
+    preferences.apply(prefs)
+    devices.named_window(WINDOW, w, h)
+    if prefs.fullscreen:
+        devices.fullscreen(WINDOW, True)
+    home = Home(launch_entries(root, SAMPLE), (w, h))
+    overlay = TextOverlay([], (w, h))
+    while True:
+        frame = np.ascontiguousarray(kept.camera.read()[crop])
+        kept.tracker.submit(frame, time.perf_counter() - kept.t0)
+        if (result := kept.tracker.poll()) is not None and (entry := home.update(*result)) is not None \
+                and (chosen := launch_choice(entry, devices)) is not None:
+            return chosen
+        state = home.grammar.state
+        draw_hand_light(frame, state)
+        if prefs.show_hand_box and state.primary is not None:
+            draw_hand_area(frame, home.grammar.cursor, None)
+        status = ("Tap to open it" if home.browsing else "Raise a finger to choose") + HINT_SEP + \
+            REVIEW_SEP.join((f"Or press 1 to {len(home.rows)}", "Q: quit"))
+        overlay.draw(frame, ViewState(home=tuple((r.title, r.detail) for r in home.rows), home_picked=home.picked,
+                                      title="Choose a speech", status=status))
+        draw_fingertips(frame, state)
+        devices.show(WINDOW, frame)
+        key = devices.wait_key()
+        if key == ord("q") or not devices.window_open(WINDOW):
+            return 0
+        if key in (ord("j"), ord(" "), ord("k")):
+            home.step(-1 if key == ord("k") else 1)
+        elif key == ord("f"):
+            prefs.fullscreen = not prefs.fullscreen
+            preferences.save(prefs)
+            devices.fullscreen(WINDOW, prefs.fullscreen)
+        elif (entry := home.rows[home.picked] if key == ENTER else home.choose(key - ord("1"))) is not None \
+                and (chosen := launch_choice(entry, devices)) is not None:
+            return chosen
 
 
 def main() -> int:
@@ -1970,35 +2045,39 @@ def main() -> int:
         print(f"log: {log}")
     for line in recover_all():
         print(f"recovered: {line}")
-    if args.open:
-        result = reopen(args, args.open)
-    else:
-        path, remembered = choose_notes(args.notes, preferences.load().last_notes)
-        result = open_notes(path, args, remembered, new=args.new, home=remembered)  # reopened by itself: switch?
-    while isinstance(result, Next):  # chosen on the home card, once everything was closed
-        result = reopen(args, result.folder) if result.folder else open_notes(result.path, args, new=result.new)
+    # One window, camera, hand tracking and clock for the whole run (Kept): switching speech (the
+    # home card) closes and reopens only the session, so nothing loads on screen meanwhile.
+    kept = Kept()
+    try:
+        if args.open:
+            result = reopen(args, args.open, kept)
+        elif args.notes is not None:
+            result = open_notes(args.notes, args, new=args.new, kept=kept)
+        else:  # no file named: choose one on the home card first; nothing opens by itself
+            result = launcher(kept)
+        while isinstance(result, Next):  # chosen on a home card, once that speech was closed
+            result = reopen(args, result.folder, kept) if result.folder else \
+                open_notes(result.path, args, new=result.new, kept=kept)
+    finally:
+        kept.close()
     return result
 
 
-def open_notes(path: Path, args, remembered: bool = False, new: bool = False, home: bool = False) -> int | Next:
+def open_notes(path: Path, args, new: bool = False, kept: Kept | None = None) -> int | Next:
     """Open a notes file: its last session continued if the file is unchanged
-    since (`new`: never), else a new session. `home`: the home card first, to
-    switch speech. Returns the exit code, or what to open next."""
+    since (`new`: never), else a new session. Returns the exit code, or what to open next."""
     devices = Devices(llm=lambda: get_provider(args.llm))
     try:
         source = path.read_bytes()  # parsed once and kept byte for byte in the session
         notes = notes_from_bytes(source, path)
     except (OSError, ValueError) as exc:
         print(f"Could not open notes: {exc}", file=sys.stderr)
-        return show_error(devices, "Couldn't open the notes", (str(path), short(exc, 120)), can_pick=True)
-    if remembered:
-        print(f"opening the notes file from last time: {path}")
-    prefs = preferences.load()
-    preferences.save(replace(prefs, last_notes=str(path.resolve())))
+        return show_error(devices, "Couldn't open the notes", (str(path), short(exc, 120)), can_pick=True,
+                          keep=kept is not None)
     for warning in notes.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     common = dict(lang=args.lang, trace=args.trace, follow=not args.no_follow, gaze_check=args.gaze_check,
-                  video=args.video, fade=args.fade, devices=devices, home=home)
+                  video=args.video, fade=args.fade, devices=devices, kept=kept)
     if not new and (folder := latest_session_for(SESSIONS_DIR, path, source, notes)) is not None:
         try:
             session = Session.load(folder)
@@ -2019,7 +2098,7 @@ def continue_note(session: Session) -> str:
     return f"Welcome back. Continuing your session of {when} · {n} take{'' if n == 1 else 's'}"
 
 
-def reopen(args, run_name: str | Path) -> int | Next:
+def reopen(args, run_name: str | Path, kept: Kept | None = None) -> int | Next:
     """main.py --open RUN, or a speech chosen on the home card: the session's
     current notes revision, its takes in Review."""
     from palmcards.data import find
@@ -2042,7 +2121,7 @@ def reopen(args, run_name: str | Path) -> int | Next:
     notes = from_snapshot(session.snapshot(session.current_revision))
     return run_reporting(session.notes, notes, b"", lang=session.language, trace=args.trace,
                          follow=not args.no_follow, session=session, gaze_check=args.gaze_check, video=args.video, fade=args.fade,
-                         devices=Devices(llm=lambda: get_provider(args.llm)))
+                         devices=Devices(llm=lambda: get_provider(args.llm)), kept=kept)
 
 
 def run_reporting(*args, **kwargs) -> int | Next:
@@ -2053,38 +2132,60 @@ def run_reporting(*args, **kwargs) -> int | Next:
         return run(*args, **kwargs)
     except CameraError as exc:
         print(exc, file=sys.stderr)
-        return show_error(devices, *camera_problem(exc))
+        return show_error(devices, *camera_problem(exc), keep=kwargs.get("kept") is not None)
     except FileNotFoundError as exc:
         if "download_models" not in str(exc):
             raise
         print(f"error: {exc}", file=sys.stderr)
         return show_error(devices, "The models aren't downloaded", (
             "In the PalmCards folder, run:", ".venv/bin/python scripts/download_models.py",
-            "Then open PalmCards again."))
+            "Then open PalmCards again."), keep=kwargs.get("kept") is not None)
 
 
 def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, trace: bool = False,
         devices: Devices | None = None, sessions_root: Path = SESSIONS_DIR, follow: bool = FOLLOW.enabled,
         session: Session | None = None, prefs_file: Path | None = None, gaze_check: bool = False,
-        video: bool = False, note: str = "", fade: bool = False, home: bool = False) -> int | Next:
+        video: bool = False, note: str = "", fade: bool = False, home: bool = False,
+        kept: Kept | None = None) -> int | Next:
     """Open everything, run the frame loop, close everything.
 
     Every resource is registered for cleanup as soon as it exists, so a
     failure while opening the next one, a camera or drawing error mid-loop,
     or Ctrl-C still closes what was opened, in reverse order, each step on
     its own; a take being recorded is kept. Returns 0, or what to open next
-    (the home card, key l). `home`: the home card shows first."""
+    (the home card, key l). `home`: the home card shows first. `kept`: main's window, camera,
+    trackers and clock (Kept), used and left open; what it lacks is opened into it."""
     devices = devices or Devices()
     sentences = notes.sentences
+    switching = kept is not None and kept.camera is not None and kept.tracker is not None
+
+    def card(title: str) -> None:  # what is loading; a switch loads nothing slow, so says nothing
+        if not switching:
+            show_card(devices, title)
+
     with ExitStack() as stack:
-        devices.named_window(WINDOW, *CARD_SIZE)  # at once: a card says what is loading
-        stack.callback(guarded(devices.destroy_windows, "the window"))
-        show_card(devices, "Opening the camera…")
-        camera = devices.camera()
-        stack.callback(guarded(camera.release, "the camera"))
-        show_card(devices, "Loading hand tracking…")
-        tracker = devices.tracker()
-        stack.callback(guarded(tracker.close, "hand tracking"))
+        if not switching:
+            devices.named_window(WINDOW, *CARD_SIZE)  # at once: a card says what is loading
+        if kept is None:
+            stack.callback(guarded(devices.destroy_windows, "the window"))
+        card("Opening the camera…")
+        if kept is not None and kept.camera is not None:
+            camera = kept.camera
+        else:
+            camera = devices.camera()
+            if kept is None:
+                stack.callback(guarded(camera.release, "the camera"))
+            else:
+                kept.camera = camera
+        card("Loading hand tracking…")
+        if kept is not None and kept.tracker is not None:
+            tracker = kept.tracker
+        else:
+            tracker = devices.tracker()
+            if kept is None:
+                stack.callback(guarded(tracker.close, "hand tracking"))
+            else:
+                kept.tracker = tracker
         log = devices.log()
         stack.callback(guarded(log.close, "the gesture log"))
         trace_file = log.path.with_suffix(".trace.jsonl").open("w") if trace and log.path else None
@@ -2097,21 +2198,28 @@ def run(path: Path, notes: Notes, source: bytes, lang: str = SPEECH.language, tr
         takes.gaze_check = gaze_check
         takes.video_on = video  # or the preference, read with the others in frame_loop
         takes.fade_on = fade  # likewise
-        show_card(devices, "Loading face and pose tracking…")
-        try:
-            takes.vision = devices.vision()
-        except Exception as exc:  # a model missing or failing to load: the takes go on without
-            takes.vision_off = f"{type(exc).__name__}: {exc}"
-            print(f"face and pose tracking off: {exc}", file=sys.stderr)
-        if takes.vision is not None:
-            stack.callback(guarded(takes.vision.close, "face and pose tracking"))
+        card("Loading face and pose tracking…")
+        if kept is not None and kept.vision_tried:
+            takes.vision, takes.vision_off = kept.vision, kept.vision_off
+        else:
+            try:
+                takes.vision = devices.vision()
+            except Exception as exc:  # a model missing or failing to load: the takes go on without
+                takes.vision_off = f"{type(exc).__name__}: {exc}"
+                print(f"face and pose tracking off: {exc}", file=sys.stderr)
+            if kept is not None:
+                kept.vision, kept.vision_off, kept.vision_tried = takes.vision, takes.vision_off, True
+            elif takes.vision is not None:
+                stack.callback(guarded(takes.vision.close, "face and pose tracking"))
         stack.callback(guarded(takes.close, "the takes"))
-        show_card(devices, "Getting ready…")
+        card("Getting ready…")
         review = takes.restore()
         takes.warm()
         try:
             next_notes = frame_loop(camera, tracker, log, trace_file, takes, sentences, devices,
-                                    "review" if review else None, prefs_file, note, home)
+                                    "review" if review else None, prefs_file, note, home,
+                                    t0=kept.t0 if kept is not None else None)
+            takes.switching = isinstance(next_notes, Next)  # closing to open another speech: don't wait
         except BaseException:
             takes.interrupted = True
             raise
@@ -2165,7 +2273,9 @@ HOME_PASS = frozenset((255, 9, ord("q"), ord("h"), ord("f"), ord("c")))
 
 def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentences, devices: Devices,
                start_mode: str | None = None, prefs_file: Path | None = None, note: str = "",
-               show_home: bool = False) -> Next | None:
+               show_home: bool = False, t0: float | None = None) -> Next | None:
+    """`t0`: the app's clock (Kept), so times keep rising across speeches; else this loop's start."""
+    t0 = time.perf_counter() if t0 is None else t0
     frame = camera.read()
     crop = mirror_crop(frame.shape, mirror_display_aspect(WINDOW))
     frame = np.ascontiguousarray(frame[crop])
@@ -2202,7 +2312,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     notch_motion = PanelMotion()
     modes = ModeMachine((w, h), log)
     if start_mode:
-        modes.enter(start_mode, 0.0)
+        modes.enter(start_mode, time.perf_counter() - t0)
     grammar = modes.grammar
     grammar.defer_edit_commit = True
     modes.no_drill = takes.slides_only  # a PDF speech: its notes are slide titles, nothing to drill
@@ -2213,7 +2323,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     show_debug = False
     note_until = None
     fps, work_ms, last = 0.0, 0.0, time.perf_counter()
-    t0 = prev_start = last
+    prev_start = last
     takes.t0 = t0
     devices.named_window(WINDOW, w, h)
     if prefs.fullscreen:
@@ -2343,6 +2453,10 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         for ev in events:
             if ev.kind == "undo":  # a V sign held in Prepare after an edit
                 view.note, until = takes.undo(), start + NOTE_S
+            elif ev.kind == "home":  # a V sign held in Prepare with nothing to undo: choose a speech
+                takes.stop_playback("home", start - t0)
+                view.focus, view.mode, view.level, view.hover = None, "idle", None, None
+                home, until = open_home(), None
             elif ev.kind == "retry":  # an open palm held in Review with failed analysis
                 view.note, until = takes.retry(), start + NOTE_S
             elif ev.kind in ("focus", "commit", "commit_ignored", "back", "rewind", "palm_hold", "palm_stop"):
@@ -2546,7 +2660,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                     and (next_notes := chosen(entry)) is not None:
                 break
             continue
-        if key in (ord("q"), 27):
+        if key == ord("q"):  # quit; Esc goes back a step (below), never quits
             break
         now_t = time.perf_counter() - t0
         if action_box and (practice_click or key == ENTER):
@@ -2562,6 +2676,16 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 takes.move_slide(step, now_t, view, overlay)
             elif view.slides:  # Prepare and Review: flip through them
                 view.current = takes.row_of_slide(takes.slide_of_row(view, current=True) + step)
+        elif key == 27:  # Esc: back one step. A focus backs out; Review goes to Prepare; Prepare to the
+            # home card. Nothing in a take or its count-in (the OK sign or x stops those).
+            if view.app in ("prepare", "review") and grammar.state.mode == "focus":
+                queued += grammar.back(now_t)
+            elif view.app == "review":
+                queued += modes.command("prepare", now_t)
+            elif view.app == "prepare":
+                takes.stop_playback("key", now_t)
+                view.focus, view.mode, view.level, view.hover = None, "idle", None, None
+                home = open_home()
         elif key == ord("x") and takes.stop_playback("key", now_t):  # x stops any playback first
             view.note, note_until = "Stopped", time.perf_counter() + NOTE_S
         elif key in KEY_COMMANDS:

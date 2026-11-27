@@ -74,7 +74,7 @@ macOS asks for these on first use. Allow them for the terminal app you start Pal
 ## Start
 
 ```sh
-.venv/bin/python main.py                       # the file you opened last, else an Open dialog
+.venv/bin/python main.py                       # choose a speech on the home card
 .venv/bin/python main.py my-talk.md            # a .txt, .md or .docx file
 .venv/bin/python main.py my-deck.pdf           # slides only: practise freely from them
 .venv/bin/python main.py --new my-talk.md      # a new session, not the last one continued
@@ -89,7 +89,7 @@ The window opens at once and says what is loading. If PalmCards cannot continue 
 
 ### Switch speech without quitting
 
-The **home card** lets you change speech inside the app. It shows at start when PalmCards reopened your last file by itself, and when you press `l` in Prepare or Review. It lists:
+The **home card** lets you change speech inside the app. It shows when you hold a V sign in Prepare with nothing to undo, and when you press `l` in Prepare or Review. The switch is smooth: the camera and hand tracking stay on, so nothing loads on screen. It lists:
 
 - **Continue** the speech that is open now;
 - **Start it over**, as a new session (your old takes stay saved);
@@ -98,6 +98,8 @@ The **home card** lets you change speech inside the app. It shows at start when 
 - **Open another file…**, in the macOS Open dialog: notes, or slides as a PDF.
 
 To choose a row, raise one or two fingers and move your hand up or down, then tap. You can also use the keys: `j` and `k` move, `Enter` or `1` to `9` choose, and `l` or `Esc` close the card.
+
+When you start PalmCards without a file, it shows a home card first, with nothing open: your speeches, the sample, and **Open a file…**. Nothing opens until you choose a row. If you cancel the Open dialog, the card stays. `q` quits.
 
 ## Write your notes
 
@@ -133,7 +135,7 @@ What you can do with a selection:
 - **A sentence.** Make an L and tilt it to change the tone: toward formal on one side, toward warm and conversational on the other.
 - **A paragraph.** Make an L with each hand. Move your hands closer for about 70% of the words, or apart for about 130%.
 
-To use a change, pinch and lift: pinch your thumb and index finger, then raise your hand quickly. PalmCards saves a new revision of the notes and never changes your imported file. To undo the last edit, hold a V sign (index and middle fingers out and apart) for one second, or press `u`.
+To use a change, pinch and lift: pinch your thumb and index finger, then raise your hand quickly. PalmCards saves a new revision of the notes and never changes your imported file. To undo the last edit, hold a V sign (index and middle fingers out and apart) for one second, or press `u`. With nothing to undo, the V sign opens the home card, to choose another speech.
 
 Meanings, other words, tone and length need the optional language model. Without it, the controls show and say that they need it. Nothing is ever changed without your pinch and lift.
 
@@ -200,7 +202,8 @@ Keys work when gestures don't. Press `h` in the app to see them.
 | `g` | show or hide the tutorial card |
 | `Enter` | skip the current tutorial step |
 | `h` | show or hide the keys |
-| `q` / `Esc` | quit (on the home card, `Esc` closes the card) |
+| `q` | quit |
+| `Esc` | back one step: out of a focus, Review to Prepare, Prepare to the home card, or close the home card. It never quits, and does nothing in a take |
 
 The full gesture grammar and design are in [CLAUDE.md](CLAUDE.md).
 

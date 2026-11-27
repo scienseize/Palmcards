@@ -48,7 +48,8 @@ def test_hints_follow_what_the_state_machine_does():
     assert ov.label_lines(scrolling)[1] == "Scrolling down  /  Move to the middle to stop"
     # An edit to undo: the idle hint offers the thumbs-up; while held, a bar.
     assert ov.label_lines(ViewState(undo_ready=True))[1].endswith("Raise a fist to record · Hold a V sign to undo")
-    assert ov.label_lines(ViewState(undo_progress=0.5))[1] == "Keep holding to undo"
+    assert ov.label_lines(ViewState(undo_ready=True, undo_progress=0.5))[1] == "Keep holding to undo"
+    assert ov.label_lines(ViewState(undo_progress=0.5))[1] == "Keep holding to change speech"  # nothing to undo
     assert ov.label_lines(ViewState(app="review", hold_progress=0.5))[1] == "Keep holding to edit"
     assert ov.label_lines(ViewState(app="review", retry_progress=0.5))[1] == "Keep holding to retry"
     # A preview; with no provider, nothing to retry.
@@ -156,7 +157,8 @@ def test_label_lines_follow_mode_and_operation():
     assert ov.label_lines(ViewState(mode="browse", level="word")) == (
         "Browsing words", "Tap to select a word  /  Two fingers: sentences · Flat hand: paragraphs")
     assert ov.label_lines(ViewState(mode="browse", level="sentence"))[1].startswith("Tap to select  /  ")
-    assert ov.label_lines(ViewState()) == ("Prepare", "Raise a finger to browse  /  Raise a fist to record")
+    assert ov.label_lines(ViewState()) == (
+        "Prepare", "Raise a finger to browse  /  Raise a fist to record · Hold a V sign to change speech")
     focus = ViewState(mode="focus", level="word", focus=Hit(0, 3), ops=OpsView(kind="ring"), llm="local")
     assert ov.label_lines(focus) == ('Selected: “being”', "Make an L and turn it to choose  /  Lower your hand to go back")
     assert ov.ring_labels(focus) == ("being",)
@@ -246,7 +248,7 @@ def test_section_unit_and_rehearse_panel_shows_the_section():
 def test_label_lines_for_takes():
     ov = overlay()
     assert ov.label_lines(ViewState(status="TAKE 1: SAVING…")) == (
-        "Prepare", "TAKE 1: SAVING…  /  Raise a finger to browse · Raise a fist to record")
+        "Prepare", "TAKE 1: SAVING…  /  Raise a finger to browse · Raise a fist to record · Hold a V sign to change speech")
     assert ov.label_lines(ViewState(start_progress=0.5))[1] == "Keep holding to record"
     assert ov.label_progress(ViewState(start_progress=0.5)) == 0.5  # drawn as a bar after the text
     assert ov.label_progress(ViewState(status="TAKE 1: SAVING…")) is None

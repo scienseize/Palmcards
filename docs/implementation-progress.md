@@ -2634,3 +2634,42 @@ Changes: render.Teleprompter(notch_w=): TELEPROMPTER.notch_column (32-68% of the
   The window's teleprompter (no notch) is unchanged: the main overlay already shows REC and the mic there.
 Tests: test_the_notch_teleprompter_is_large_and_shows_the_clock_and_the_voice; pytest (full).
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: one window across a speech switch (the user: "why does opening the file open a new window?")
+Status: implemented; automated checks passed; the user's check pending
+Changes: run()'s ExitStack destroyed the window with everything else, and the next run() made a new one, which
+  macOS animated into a new full-screen Space. main() now owns the window (destroyed once, in a finally);
+  open_notes and reopen pass run(keep_window=True). open_mirror_window leaves a full-screen window's size alone.
+  run() on its own (the tests) still closes the window.
+Tests: test_switching_speech_keeps_the_window_when_main_owns_it; pytest (full).
+```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: a smooth speech switch, a way back from Prepare to choose a file, and no speech opened by
+  itself at launch (the user: "the transition should be smooth, nothing that shows 'opening camera' etc.";
+  "an option to go back from prepare to pick a file"; "not selecting one automatically selects the previous
+  session"; chose "card first, no session")
+Status: implemented; automated checks passed; the user's check pending
+Changes: main.Kept (the window, camera, hand tracker, face and pose, the app's clock) is owned by main() and
+  passed to run(kept=); a switch opens nothing slow, shows no card, and Takes.switching skips the waits for
+  analysis and LLM calls (left queued). frame_loop(t0=) keeps one clock across speeches (MediaPipe timestamps
+  must rise). A V sign held in Prepare with nothing to undo opens the home card (event `home`; one hold does
+  one step). main.launcher: with no file named, the home card alone (home.launch_entries: speeches practised
+  before, the sample, Open a file), nothing open until a row is chosen; a cancelled dialog leaves it. Removed:
+  choose_notes and the last_notes preference (an old prefs.json still loads).
+Tests: the switch keeps the camera and tracking and shows no card; the launch card opens nothing until chosen;
+  the V sign undoes, else opens the home card, one step per hold; pytest (full).
+```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: Esc goes back, q quits (the user: "Why does pressing escape close the app?"; chose "Esc goes back")
+Status: implemented; automated checks passed
+Changes: Esc no longer quits anywhere. In Prepare and Review a focus backs out at once (Grammar.back, a "back"
+  event with source key); else Review goes to Prepare, Prepare opens the home card, the home card closes. In a
+  take, its count-in, the launch card and the error cards it does nothing. q quits.
+Tests: test_esc_goes_back_a_step_and_never_quits, test_esc_backs_out_of_a_focus_at_once; pytest (full).
+```
