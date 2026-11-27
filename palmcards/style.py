@@ -475,6 +475,15 @@ class Rec:
 
 
 @dataclass(frozen=True)
+class Slide:
+    """A full take's current slide (palmcards.slides), in the hand zone under the REC chip,
+    above the count-in's digit, with its number (TYPE.small) under it."""
+    width: float = 0.9  # x the hand zone's width, centred in it
+    top: float = 2.4  # its top, x the notes' line height below the frame's top edge
+    label_gap: int = 6  # px between the slide and its number
+
+
+@dataclass(frozen=True)
 class CountIn:
     """The 3-2-1 (TYPE.display), with a bar under it emptying each second."""
     bar_em: float = 1.6  # the bar's length, x the digit's width
@@ -592,6 +601,7 @@ MOTION = Motion()
 SOUND = Sound()
 REC = Rec()
 COUNT_IN = CountIn()
+SLIDE = Slide()
 SUMMARY = Summary()
 HANDS = Hands()
 DEBUG = Debug()

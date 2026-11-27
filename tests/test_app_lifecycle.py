@@ -525,3 +525,40 @@ def test_l_opens_the_home_card_and_esc_closes_it_without_quitting(tmp_path, monk
 def test_continue_on_the_home_card_goes_on_with_the_speech(tmp_path, monkeypatch):
     rig = Rig(tmp_path, monkeypatch, script={}, keys={2: ord("1"), 3: ord("q")})
     assert run_home(rig) == 0
+
+
+RIGHT, LEFT = 63235, 63234  # a clicker's next and previous on macOS (SLIDES)
+
+
+def test_slides_added_on_the_home_card_follow_the_clicker_in_a_take(tmp_path, monkeypatch):
+    from tests.pdf import make_pdf
+    deck = tmp_path / "deck.pdf"
+    deck.write_bytes(make_pdf([["One"], ["Two"], ["Three"]]))
+    keys = {1: ord("3"), 2: ord("1"), 8: RIGHT, 9: RIGHT, 10: RIGHT, 11: LEFT, 12: ord("x"), 20: ord("q")}
+    rig = Rig(tmp_path, monkeypatch, script={5: ("count_in", "count_in"), 6: ("take_start", "rehearse")}, keys=keys)
+    rig.devices.pick_slides = lambda: deck  # row 3: Add slides…, then row 1: Continue
+    assert run_home(rig) == 0
+    session = rig.session()
+    assert session.slides == {"path": str(deck.resolve()), "pages": 3}
+    (take,) = session.takes
+    assert [s for _, s in take.slides] == [0, 1, 2, 1]  # the third RIGHT is past the last slide: clamped
+
+
+def test_a_pdf_speech_moves_its_section_with_the_slide_and_ends_on_the_last(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from palmcards import follow
+    from tests.pdf import make_pdf
+    monkeypatch.setattr(follow, "REHEARSE", replace(follow.REHEARSE, end_silence_s=0.3))
+    monkeypatch.setattr(main, "REHEARSE", replace(main.REHEARSE, end_heard_s=0.0))
+    data = make_pdf([["Intro", "Point one"], [], ["Close", "Thanks all"]])
+    deck = tmp_path / "deck.pdf"
+    deck.write_bytes(data)
+    rig = Rig(tmp_path, monkeypatch, keys={6: RIGHT, 7: RIGHT, 300: ord("q")})
+    rig.devices.recorder = lambda clock: rig.recorders.append(QuietingRecorder(clock)) or rig.recorders[-1]
+    assert main.run(deck, notes_from_bytes(data, deck), data, devices=rig.devices, sessions_root=tmp_path / "sessions",
+                    prefs_file=rig.prefs_file) == 0
+    (take,) = rig.session().takes
+    assert [s for _, s in take.slides] == [0, 1, 2]
+    assert [(s["section"], s["source"]) for s in take.sections] == [(0, "start"), (1, "key")]  # slide 2: no text
+    assert take.duration_s < 3.0 and '"auto_stop"' in (tmp_path / "log.jsonl").read_text()

@@ -70,7 +70,7 @@ from palmcards.notes import Sentence, parse_sentence
 from palmcards.preview import PreviewView
 from palmcards.style import (
     BAR, CHIPS, COLORS, COUNT_IN, SMALL_ON_FILL, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT,
-    GLASS, MOTION, OUTLINE, PLAYBAR, PLAYER, REC, RING, SCRIM, SHADOW, TEXT, TYPE, TypeStep, bgr,
+    GLASS, MOTION, OUTLINE, PLAYBAR, PLAYER, REC, RING, SCRIM, SHADOW, SLIDE, TEXT, TYPE, TypeStep, bgr,
 )
 
 if TYPE_CHECKING:
@@ -473,6 +473,9 @@ class ViewState:
     # The home card (palmcards.home, key l): (title, detail) per row, in the notes' place, and the row picked.
     home: tuple[tuple[str, str], ...] = ()
     home_picked: int = 0
+    # A full take with slides (palmcards.slides): the slide shown (BGR, drawn at its size) and "3 / 12".
+    slide: np.ndarray | None = None
+    slide_label: str = ""
 
 
 @dataclass
@@ -1978,6 +1981,22 @@ class TextOverlay:
         cv2.circle(frame, (bx0 - REC.mic_dx, (by0 + by1) // 2), r0 + round(grow * state.mic), bgr(C.rec), -1,
                    cv2.LINE_AA)
 
+    def _draw_slide(self, frame: np.ndarray, state: ViewState) -> None:
+        """The take's slide in the hand zone, centred, under the REC chip, on the glass panels'
+        rounded corners and hairline edge; its number small under it. Opaque: it is the slide."""
+        img = state.slide
+        h, w = img.shape[:2]
+        x0 = round(LAYOUT.hand[0] * self.frame_w + ((LAYOUT.hand[1] - LAYOUT.hand[0]) * self.frame_w - w) / 2)
+        y0 = round(SLIDE.top * self.line_h)
+        if x0 < 0 or y0 + h > self.frame_h or x0 + w > self.frame_w:  # a smaller window than the deck was drawn for
+            return
+        roi = frame[y0:y0 + h, x0:x0 + w]
+        (inside, outside), (ys, xs, a) = _glass_mask(w, h, round(GLASS.radius * self.line_h))
+        roi[:] = cv2.blendLinear(img, roi, inside, outside)
+        roi[ys, xs] = roi[ys, xs] * (1.0 - a) + np.array(GLASS.edge[2::-1], np.float32) * a
+        chip = self._chip(state.slide_label, self._face(TYPE.small, SMALL_ON_FILL), C.dim, C.label_fill)
+        self._blend_centered(frame, chip, x0 + w / 2, y0 + h + SLIDE.label_gap + chip[0].shape[0] / 2)
+
     def _scrim_level(self, frame: np.ndarray) -> float:
         """How dark the scrim should be for this frame: the brightness of the
         camera image under the text column (before anything is drawn on it)
@@ -2162,6 +2181,8 @@ class TextOverlay:
             self._draw_gauge(frame, self.shown_tone(state), top, bottom, state.ops.closing, bounds)
         if state.app == "rehearse":
             self._draw_rec(frame, state)
+        if state.slide is not None and state.app in ("count_in", "rehearse"):
+            self._draw_slide(frame, state)
         if state.app == "review" and state.mode == "focus" and state.takes and g is None:
             self._draw_takes(frame, state)
         self._draw_count_in(frame, state)

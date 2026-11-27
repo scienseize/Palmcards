@@ -182,7 +182,7 @@ def test_doc_rejected(tmp_path):
 
 def test_unsupported_and_empty_files(tmp_path):
     with pytest.raises(ValueError, match="Unsupported"):
-        load_notes(tmp_path / "x.pdf")
+        load_notes(tmp_path / "x.pptx")
     empty = tmp_path / "empty.txt"
     empty.write_text("   \n\n")
     with pytest.raises(ValueError, match="No text"):

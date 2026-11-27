@@ -25,12 +25,12 @@ def test_rows_continue_start_over_others_newest_first_then_a_file(tmp_path):
     here = make_session(root, "20261126-090000-talk-eeeeee", talk, 3)
     rows = entries(root, here, talk, 3)
     assert [r.title for r in rows] == ["Continue talk.md", "Start talk.md over", "pitch.txt", "toast.txt",
-                                       "Open another file…"]
+                                       "Add slides…", "Open another file…"]
     assert rows[0].detail == "3 takes · since 26 November" and rows[0].next is None
     assert rows[1].next == Next(path=talk, new=True)
     assert rows[2].next == Next(folder=newer_pitch) and rows[2].detail == "4 takes · last 20 November"
     assert rows[3].next == Next(folder=toast_s) and rows[3].detail.startswith("No takes yet")
-    assert rows[4].pick and rows[4].next is None
+    assert rows[4].slides and rows[5].pick and rows[5].next is None
 
 
 def test_a_missing_file_cannot_start_over_and_others_are_capped(tmp_path):
@@ -57,3 +57,14 @@ def test_keys_move_and_choose_within_the_rows(tmp_path):
     home.step(5)
     assert home.picked == len(home.rows) - 1
     assert home.choose(9) is None and home.choose(0).title == "Continue talk.md"
+
+
+def test_the_slides_row_says_what_is_attached_and_a_pdf_speech_has_none(tmp_path):
+    root = tmp_path / "sessions"
+    here = make_session(root, "20261126-090000-talk-eeeeee", tmp_path / "talk.md", 0)
+    titles = lambda slides, notes="talk.md": [r.title for r in entries(root, here, tmp_path / notes, 0, slides)
+                                              if r.slides]
+    assert titles(None) == ["Add slides…"]
+    assert titles(("deck.pdf", 12)) == ["Slides: deck.pdf"]
+    assert titles(("deck.pdf", None)) == ["Slides missing: deck.pdf"]
+    assert titles(None, "deck.pdf") == []  # a PDF speech is its own slides

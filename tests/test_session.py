@@ -318,3 +318,15 @@ def test_a_torn_revision_file_is_a_session_error_naming_it(tmp_path):
     (session.dir / name).write_text('{"sections": [')
     with pytest.raises(SessionError, match=name):
         Session.load(session.dir).notes_for(take)
+
+
+def test_saving_before_the_first_take_makes_one_folder(tmp_path):
+    """The target length ([ ]) or slides set before any take: one session folder, not an orphan and a second."""
+    path = notes_file(tmp_path)
+    session = Session.create(path, root=tmp_path / "sessions")
+    session.target_s, session.slides = 60.0, {"path": "/x/deck.pdf", "pages": 3}
+    session.save()
+    session.add_take(silence(), 8000, 1.0, datetime.now(), [(0.0, 0)])
+    (folder,) = (tmp_path / "sessions").glob("2*")
+    loaded = Session.load(folder)
+    assert loaded.target_s == 60.0 and loaded.slides["pages"] == 3 and len(loaded.takes) == 1

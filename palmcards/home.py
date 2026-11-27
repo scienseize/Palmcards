@@ -2,7 +2,8 @@
 
 Shown at launch when PalmCards reopened the file from last time, and on key
 l in Prepare or Review. One row per choice: carry on with the speech open now,
-start it over, carry on with another speech practised before, or open a file.
+start it over, carry on with another speech practised before, add slides to the
+written notes (palmcards.slides), or open a file (notes, or slides as the speech).
 A row is chosen as a sentence is in Review (one or two fingers to browse, a
 tap to select) or with keys (j / k, Enter, 1-9). Choosing anything but the
 speech open now closes everything and opens it, as at launch (`Next`)."""
@@ -35,6 +36,7 @@ class Entry:
     detail: str
     next: Next | None = None  # None: stay with the speech open now (or, with `pick`, the Open dialog)
     pick: bool = False
+    slides: bool = False  # the Open dialog for a PDF of slides, shown beside the notes in a take
 
 
 def _takes(n: int) -> str:
@@ -61,8 +63,10 @@ def recent(root: Path, skip: Path | None = None, limit: int = OTHERS) -> list[tu
     return out
 
 
-def entries(root: Path, folder: Path, notes: Path, takes: int) -> list[Entry]:
-    """The rows: this speech (continue, start over), the others, a file."""
+def entries(root: Path, folder: Path, notes: Path, takes: int,
+            slides: tuple[str, int | None] | None = None) -> list[Entry]:
+    """The rows: this speech (continue, start over), the others, slides, a file. `slides`:
+    the attached PDF's name and pages (None: the file is missing or changed)."""
     notes = Path(notes)
     rows = [Entry(f"Continue {notes.name}", f"{_takes(takes)} · since {started(folder):%-d %B}")]
     if notes.is_file():
@@ -70,7 +74,15 @@ def entries(root: Path, folder: Path, notes: Path, takes: int) -> list[Entry]:
                           Next(path=notes, new=True)))
     for other, path, n in recent(root, notes):
         rows.append(Entry(path.name, f"{_takes(n)} · last {started(other):%-d %B}", Next(folder=other)))
-    rows.append(Entry("Open another file…", "A .txt, .md or .docx file", pick=True))
+    if notes.suffix.lower() != ".pdf":  # a PDF speech is its own slides
+        if slides is None:
+            rows.append(Entry("Add slides…", "A PDF from Keynote, PowerPoint or Google Slides", slides=True))
+        elif slides[1] is None:
+            rows.append(Entry(f"Slides missing: {slides[0]}", "Choose the PDF again", slides=True))
+        else:
+            rows.append(Entry(f"Slides: {slides[0]}", f"{slides[1]} slides · a clicker moves them in a take",
+                              slides=True))
+    rows.append(Entry("Open another file…", "A .txt, .md, .docx, or slides as .pdf", pick=True))
     return rows
 
 

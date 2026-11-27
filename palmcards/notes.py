@@ -1,6 +1,6 @@
 """File loading: sections, sentences, words.
 
-Supported inputs: .txt, .md, .docx. Legacy .doc is rejected.
+Supported inputs: .txt, .md, .docx, and slides as .pdf. Legacy .doc is rejected.
 
 Notes are plain text. PalmCards used to read delivery marks written in the
 file (/ // *word* [slow] [fast] [rise] [fall]); they were removed on
@@ -10,7 +10,8 @@ word ("and/or") is text, as before.
 
 Sections start at headings (markdown `#`, Word "Heading"/"Title" styles).
 In .txt and .docx, two or more consecutive blank lines/paragraphs also start
-a new section.
+a new section. A .pdf is slides (palmcards.slides): each page with text is a
+section titled "Slide N", each of its text lines a sentence of its own.
 
 Run `python -m palmcards.notes FILE` to print the parsed structure.
 """
@@ -206,6 +207,19 @@ def _docx_blocks(data: bytes) -> list[Block]:
     return blocks
 
 
+def _pdf_blocks(data: bytes) -> list[Block]:
+    """Slides: a "Slide N" heading per page with text, then each text line as a paragraph
+    (a bullet is one point to make). A page with no text has no section; it is still a slide."""
+    from palmcards.slides import page_texts
+
+    blocks: list[Block] = []
+    for i, lines in enumerate(page_texts(data)):
+        if lines:
+            blocks.append(("heading", f"Slide {i + 1}"))
+            blocks += [("para", line) for line in lines]
+    return blocks
+
+
 TIME_LINE = re.compile(r"^\s*(?:time|target|length)\s*:\s*(\d{1,2}):([0-5]\d)\s*$", re.IGNORECASE)
 QUESTIONS_HEADING = re.compile(r"^\s*(?:(?:likely|anticipated|practice)\s+)?(?:questions|q\s*&\s*a|q\s*and\s*a)\s*:?\s*$",
                                re.IGNORECASE)
@@ -269,8 +283,8 @@ def check_format(path: str | Path) -> str:
     ext = Path(path).suffix.lower()
     if ext == ".doc":
         raise ValueError("Legacy .doc files are not supported. Save the file as .docx and open that.")
-    if ext not in (".docx", ".md", ".markdown", ".txt"):
-        raise ValueError(f"Unsupported file type {ext or '(none)'}: use .txt, .md or .docx.")
+    if ext not in (".docx", ".md", ".markdown", ".txt", ".pdf"):
+        raise ValueError(f"Unsupported file type {ext or '(none)'}: use .txt, .md, .docx, or slides as .pdf.")
     return ext
 
 
@@ -281,11 +295,16 @@ def notes_from_bytes(data: bytes, path: str | Path) -> Notes:
     ext = check_format(path)
     if ext == ".docx":
         blocks = _docx_blocks(data)
+    elif ext == ".pdf":
+        blocks = _pdf_blocks(data)
     elif ext in (".md", ".markdown"):
         blocks = _md_blocks(data.decode("utf-8-sig"))
     else:
         blocks = _txt_blocks(data.decode("utf-8-sig"))
     notes = build_notes(blocks, source=path)
+    if not notes.sentences and ext == ".pdf":
+        raise ValueError(f"No text found in {path.name}: its slides are images. Write notes for them, "
+                         "then add the slides from the home card.")
     if not notes.sentences:
         raise ValueError(f"No text found in {path.name}.")
     return notes

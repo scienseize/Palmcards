@@ -118,6 +118,9 @@ class TakeRecord:
     stopped: str | None = None  # "auto": it ended itself in quiet at the end (palmcards.follow.AutoStop)
     # An answer to a practice question (the Q&A round after a take): {"question", "index", "of"}.
     answer: dict | None = None
+    # A full take with slides (palmcards.slides): [[t, slide], ...] on the app clock, 0-based slides,
+    # the first at the take's start, one per clicker press.
+    slides: list | None = None
 
     @property
     def silent(self) -> bool:
@@ -163,6 +166,9 @@ class Session:
     calibrations: list[dict] = field(default_factory=list)  # gaze/posture baselines, oldest first
     target_s: float | None = None  # the talk's target length, set with keys [ and ] (else the notes' Time: line)
     questions: list[str] = field(default_factory=list)  # practice questions the AI suggested (key y)
+    # Slides attached to written notes (the home card): {"path", "sha256", "pages"}. Not copied: display
+    # only. A PDF opened as the speech is the session's source instead, and needs none.
+    slides: dict | None = None
     _loaded_schema: int = SCHEMA
     _parsed: Notes | None = None  # notes of the pending first revision, until the folder exists
     _source_bytes: bytes | None = None
@@ -221,7 +227,8 @@ class Session:
             Path(data["notes"]), folder, data.get("gesture_log"), takes, data.get("language", "en"),
             id=data.get("id", ""), source=data.get("source"), revisions=data.get("revisions", []),
             schema=SCHEMA, current=data.get("current"), calibrations=data.get("calibrations", []),
-            target_s=data.get("target_s"), questions=data.get("questions", []), _loaded_schema=schema,
+            target_s=data.get("target_s"), questions=data.get("questions", []), slides=data.get("slides"),
+            _loaded_schema=schema,
         )
         session.orphans = session._find_orphans()
         return session
@@ -279,10 +286,11 @@ class Session:
         if self._parsed is None:
             self.acquire()
             return
+        parsed, source = self._parsed, self._source_bytes
+        self._parsed = self._source_bytes = None  # first: add_revision saves, and a save must not start over
         self._open_new_folder()
-        self._store_source(self._source_bytes)
-        self.add_revision(self._parsed, provenance="imported")
-        self._parsed = self._source_bytes = None
+        self._store_source(source)
+        self.add_revision(parsed, provenance="imported")
 
     # --- notes -------------------------------------------------------------
 
@@ -526,7 +534,7 @@ class Session:
             sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
             status=status, capture=capture, live=manifest.get("live"), vision=manifest.get("vision"),
             gaze_check=manifest.get("gaze_check"), video=manifest.get("video"), fade=manifest.get("fade"),
-            stopped=manifest.get("stopped"), answer=manifest.get("answer"),
+            stopped=manifest.get("stopped"), answer=manifest.get("answer"), slides=manifest.get("slides"),
         )
         self.takes = [t for t in self.takes if t.number != take.number] + [take]
         self.takes.sort(key=lambda t: t.number)
@@ -582,7 +590,9 @@ class Session:
         return {**video, **info, "state": "interrupted", "recovered": True}
 
     def save(self) -> None:
-        self.acquire()
+        # A new session's first save makes its folder properly (source, first revision): locking
+        # the folder alone left it behind, and the first take then made a second one.
+        self._ensure_written()
         path = self.dir / "session.json"
         if self._loaded_schema == 1 and path.exists() and not (self.dir / "session.v1.json").exists():
             shutil.copy2(path, self.dir / "session.v1.json")  # the old file, before its first rewrite
@@ -598,6 +608,7 @@ class Session:
             "calibrations": self.calibrations,
             **({"target_s": self.target_s} if self.target_s else {}),
             **({"questions": self.questions} if self.questions else {}),
+            **({"slides": self.slides} if self.slides else {}),
             # Fields a take doesn't have yet are left out, not written as null.
             "takes": [{k: v for k, v in asdict(t).items() if v is not None} for t in self.takes],
         }

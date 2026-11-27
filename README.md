@@ -1,6 +1,6 @@
 # PalmCards
 
-A gesture-controlled rehearsal mirror for words you have to say out loud. Open a `.txt`, `.md` or `.docx` file, and its text floats beside your mirrored webcam image. After that, your hands control the app.
+A gesture-controlled rehearsal mirror for words you have to say out loud. Open a `.txt`, `.md` or `.docx` file, or the PDF of your slides, and its text floats beside your mirrored webcam image. After that, your hands control the app.
 
 1. **Prepare.** Read and edit your notes with hand gestures. Select a word, a sentence or a paragraph. Try other words, change a sentence's tone, or make a paragraph shorter or fuller.
 2. **Rehearse.** Speak a take. The notes follow your voice. The take stops by itself after your last sentence.
@@ -42,10 +42,14 @@ flowchart LR
         direction TB
         p1["In the file<br/>also a Questions section"] --> p2["Rehearse<br/>Q&A round after full takes"] --> p3["Coach works on<br/>answers over a minute"]
     end
-    speech ~~~ talk ~~~ pitch
+    subgraph deck["Slides only"]
+        direction TB
+        d1["The file<br/>a PDF of the slides"] --> d2["Rehearse<br/>the clicker moves the slides"] --> d3["Coach works on<br/>bullets left out"]
+    end
+    speech ~~~ talk ~~~ pitch ~~~ deck
 ```
 
-All three get the same voice follow, takes side by side, sentence practice and fading cards. The Q&A round runs only when you turn it on with `y`.
+The written kinds get the same voice follow, takes side by side, sentence practice and fading cards. The Q&A round runs only when you turn it on with `y`. Written notes can also show their slides: add the PDF on the home card.
 
 ## Install
 
@@ -72,6 +76,7 @@ macOS asks for these on first use. Allow them for the terminal app you start Pal
 ```sh
 .venv/bin/python main.py                       # the file you opened last, else an Open dialog
 .venv/bin/python main.py my-talk.md            # a .txt, .md or .docx file
+.venv/bin/python main.py my-deck.pdf           # slides only: practise freely from them
 .venv/bin/python main.py --new my-talk.md      # a new session, not the last one continued
 .venv/bin/python main.py --open RUN            # a saved session, in Review
 ```
@@ -89,7 +94,8 @@ The **home card** lets you change speech inside the app. It shows at start when 
 - **Continue** the speech that is open now;
 - **Start it over**, as a new session (your old takes stay saved);
 - up to four **other speeches** you practised before, newest first;
-- **Open another file…**, in the macOS Open dialog.
+- **Add slides…**, a PDF to show beside your written notes in a take;
+- **Open another file…**, in the macOS Open dialog: notes, or slides as a PDF.
 
 To choose a row, raise one or two fingers and move your hand up or down, then tap. You can also use the keys: `j` and `k` move, `Enter` or `1` to `9` choose, and `l` or `Esc` close the card.
 
@@ -101,6 +107,13 @@ Notes are plain text. A blank line starts a paragraph. A section starts at a `#`
 - A section headed `Questions` (or `Q&A`, `Likely questions`) holds practice questions for the Q&A round, one per sentence.
 
 Old delivery marks such as `/`, `*word*` or `[slow]` are not supported. PalmCards removes them from the text and says how many it ignored.
+
+### Slides
+
+Export your slides as a PDF from Keynote, PowerPoint or Google Slides. You can use them in two ways:
+
+- **Slides only.** Open the PDF as the speech. Each slide with text becomes a section, and each line on it (the title and each bullet) becomes a point to make. Review then shows which bullets you covered. A deck that is only images cannot be used this way: write notes for it, then add the slides.
+- **Notes plus slides.** Open your written notes, then choose **Add slides…** on the home card (`l`). PalmCards keeps the PDF's location and reads it again each time, so a deck you export again shows its new slides.
 
 ## Prepare
 
@@ -134,6 +147,7 @@ To start a take, raise a closed fist and hold it for one second. A 3-2-1 count-i
 - **Target length.** With a target, the clock shows `REC 1:12 / 3:00` and turns orange when you go over. The label shows the time left for the current section. Press `]` or `[` to make the target 15 seconds longer or shorter.
 - **Fading cards** (key `w`, off by default). Words you said correctly in the last takes dim, then blank out, so you learn to speak from memory. If you pause, the next words come back.
 - **Q&A round** (key `y`, off by default). After a full take, three practice questions follow. Each one shows in large type, and you answer it aloud as a take of its own. The questions come from your notes, or from the language model if your notes have none.
+- **Slides.** With slides, the current slide shows on the right during a full take. A presentation clicker moves it, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the notes move with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
 - **Video** (`--video`, or the preference `video`, off by default). PalmCards records video of each take beside its audio.
 
 ## Review
@@ -172,7 +186,8 @@ Keys work when gestures don't. Press `h` in the app to see them.
 | `u` | undo the last edit (Prepare) |
 | `o` | export the notes to the session's `exports/` folder (Review) |
 | `i` | coach card, take table or Days view (Review) |
-| `l` | the home card: switch speech, start over, or open a file |
+| `l` | the home card: switch speech, start over, add slides, or open a file |
+| arrows, `Page Up` / `Page Down` | next / previous slide in a take (what a clicker sends) |
 | `]` / `[` | target length 15 s longer / shorter |
 | `w` | fading cards on or off |
 | `y` | Q&A round on or off |

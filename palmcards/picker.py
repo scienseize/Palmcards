@@ -6,15 +6,26 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-# Plain text (.txt; Markdown conforms to it too), Markdown, Word (.docx).
-TYPES = ("public.plain-text", "net.daringfireball.markdown", "org.openxmlformats.wordprocessingml.document")
-PROMPT = "Choose your notes (.txt, .md or .docx)"
+PDF = "com.adobe.pdf"
+# Plain text (.txt; Markdown conforms to it too), Markdown, Word (.docx), and slides as a PDF.
+TYPES = ("public.plain-text", "net.daringfireball.markdown", "org.openxmlformats.wordprocessingml.document", PDF)
+PROMPT = "Choose your notes (.txt, .md or .docx) or your slides (.pdf)"
 
 
 def pick_notes() -> Path | None:
-    """The file picked, or None if the dialog was cancelled or could not be shown."""
-    types = ", ".join(f'"{t}"' for t in TYPES)
-    script = f'POSIX path of (choose file with prompt "{PROMPT}" of type {{{types}}})'
+    """The notes file picked, or None if the dialog was cancelled or could not be shown."""
+    return pick(TYPES, PROMPT)
+
+
+def pick_slides() -> Path | None:
+    """Slides to show beside the notes in a take: a PDF."""
+    return pick((PDF,), "Choose your slides (a PDF from Keynote, PowerPoint or Google Slides)")
+
+
+def pick(types: tuple[str, ...], prompt: str) -> Path | None:
+    """The file picked in macOS's Open dialog, or None if it was cancelled or could not be shown."""
+    kinds = ", ".join(f'"{t}"' for t in types)
+    script = f'POSIX path of (choose file with prompt "{prompt}" of type {{{kinds}}})'
     try:
         out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=900)
     except (OSError, subprocess.TimeoutExpired):

@@ -294,6 +294,16 @@ class QA:
 
 
 @dataclass(frozen=True)
+class Slides:
+    """Slides in a take (palmcards.slides): a presentation clicker moves them. Clickers send
+    arrow keys or Page Up / Page Down; cv2.waitKeyEx's codes on macOS (63232-63235 the arrows,
+    63276 / 63277 Page Up / Down), and on Linux and Windows where they differ. A button that does
+    nothing: its code is in the gesture log (a "key" line with `code`), and goes here."""
+    next_keys: frozenset = frozenset((63235, 63233, 63277, 65363, 65364, 65366, 2555904, 2621440, 2228224))
+    prev_keys: frozenset = frozenset((63234, 63232, 63276, 65361, 65362, 65365, 2424832, 2490368, 2162688))
+
+
+@dataclass(frozen=True)
 class Fade:
     """Fading cards (palmcards.fade; preference `fade`, key w): in a take, a note
     word said in the newest takes that said its sentence, that many in a row,
@@ -588,3 +598,4 @@ METRICS = Metrics()
 GAZE = Gaze()
 REVIEW = Review()
 FADE = Fade()
+SLIDES = Slides()

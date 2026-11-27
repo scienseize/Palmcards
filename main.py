@@ -4,7 +4,8 @@
   python main.py --open RUN      reopen a saved session (a folder, or its name under sessions/) in Review
   python main.py --gaze-check    every take is a gaze check: timed prompts (camera, notes, away), then it
                                  stops itself; scripts/evaluate.py --gaze RUN compares them with the classifier
-      NOTES_FILE: .txt, .md or .docx; defaults to the file opened last, else one picked in an Open dialog.
+      NOTES_FILE: .txt, .md or .docx, or slides as .pdf; defaults to the file opened last, else one picked
+                  in an Open dialog.
                   The same file, unchanged, continues its last session (--new: a new one).
                   Reopened by itself (no file named), the home card shows first: switch speech in the app
       --lang: language spoken in the takes, for Whisper (default en)
@@ -114,7 +115,7 @@ import numpy as np
 
 from palmcards.align import counts
 from palmcards.capture import AudioRecorder, Camera, CameraError
-from palmcards.config import ANALYSIS, BODY, FADE, FOLLOW, LLM, QA, RECORDING, REHEARSE, SPEECH
+from palmcards.config import ANALYSIS, BODY, FADE, FOLLOW, LLM, QA, RECORDING, REHEARSE, SLIDES, SPEECH
 from palmcards import coach, fade, features, gaze, progress
 from palmcards import prefs as preferences
 from palmcards import render
@@ -142,12 +143,13 @@ from palmcards.video import unavailable as video_unavailable
 from palmcards.recording import TakeWriter
 from palmcards.revisions import from_snapshot
 from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
-from palmcards.style import TEXT
+from palmcards.style import LAYOUT, SLIDE, TEXT
 from palmcards.analysis import Supervisor
 from palmcards.data import latest_session_for, started
 from palmcards.paths import logs_dir
 from palmcards.home import Home, Next, entries as home_entries
-from palmcards.picker import pick_notes
+from palmcards.picker import pick_notes, pick_slides
+from palmcards.slides import Deck, slide_of
 from palmcards.asr import get_recognizer
 from palmcards.follow import AutoStop, LiveFollow
 from palmcards.speech import make_job
@@ -358,7 +360,15 @@ class Takes:
         self.answer: tuple[int, int, str] | None = None  # the answer being recorded: (k, of, question)
         self.answers: dict[int, dict] = {}  # answer take -> what was measured (coach.advise_answers)
         self.devices = devices or Devices()
-        self.follow_enabled = follow
+        # Slides (palmcards.slides): a PDF speech is its own deck, and the clicker leads (no voice
+        # follow); written notes can have a PDF attached (the home card). open_slides() opens it.
+        self.slides_only = session.notes.suffix.lower() == ".pdf"
+        self.follow_enabled = follow and not self.slides_only
+        self.deck: Deck | None = None
+        self.slide = 0  # the slide shown, 0-based
+        self.slide_log: list | None = None  # the take's [[t, slide], ...] (TakeRecord.slides); None: no slides
+        self.slide_heard = 0.0  # stopper.heard_s when the clicker reached this slide (the end of a PDF speech)
+        self.slide_width = 0
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
         self.player = None  # clip playback (Review), made at the first play
         self.backdrop = None  # the room behind you darkened (frame_loop opens it)
@@ -468,6 +478,9 @@ class Takes:
                 left = coach.budgets(self.notes, self.target_s)[self.section] - (time.perf_counter() - self.t0
                                                                                  - self.section_t)
                 budget = f" · {coach.mmss(left)} {'left' if left >= 0 else 'over'}"
+            if self.slides_only and (shown := self.slide_shown) is not None:  # a PDF speech: the slide, not the section
+                bare = slide_of(title) != shown  # an image-only slide: the bullets shown are the last slide's
+                return f"Slide {shown + 1} of {self.deck.pages}{' · no text' if bare else ''}{budget}{fading}"
             return f"Section {self.section + 1} of {len(self.notes.sections)}: {title}{budget}{fading}"
         if mode == "review" and view.mode == "focus" and view.level == "sentence" and view.focus is not None:
             said = self.board.said_in(view.focus.sentence)
@@ -1209,6 +1222,9 @@ class Takes:
             if self.answer is not None:
                 k, of, question = self.answer
                 self.writer.meta["answer"] = {"question": question, "index": k, "of": of}
+            self.slide, self.slide_heard, self.slide_log = 0, 0.0, None
+            if self.slide_full_take:
+                self.slide_log = self.writer.meta["slides"] = [[round(ev.t, 3), 0]]
             if view.faded is not None:
                 self.fade_prompted, self._fade_quiet = [], (0, ev.t)
                 self.writer.meta["fade"] = {"hidden": [list(k) for k in sorted(self.fade_hidden)],
@@ -1361,6 +1377,9 @@ class Takes:
             return False
         if self.drill is not None or self.answer is not None:  # one sentence, or an answer: once it heard speech
             at_end = self.stopper.heard_s >= REHEARSE.end_heard_s
+        elif self.slides_only:  # the clicker leads: on the last slide, once it heard speech there
+            at_end = self.slide_log is not None and self.slide == self.deck.pages - 1 \
+                and self.stopper.heard_s - self.slide_heard >= REHEARSE.end_heard_s
         else:
             f = self.follow.follower if self.follow is not None and self.follow.state == "following" else None
             last = len(self.notes.sentences) - 1
@@ -1476,6 +1495,7 @@ class Takes:
         """Stop the microphone; the take finishes writing in the background."""
         writer, self.writer = self.writer, None
         self.check = None
+        self.slide_log = None
         if self.video is not None:
             self.video.stop()  # finishes in the background, like the audio
             self.video = None
@@ -1492,6 +1512,72 @@ class Takes:
         if writer is not None:
             self.finalizing.append(writer)
         return writer
+
+    @property
+    def slide_full_take(self) -> bool:
+        """A full take with a deck: slides show (not a drill, an answer or a gaze check)."""
+        return self.deck is not None and self.drill is None and self.answer is None and not self.gaze_check
+
+    @property
+    def slide_shown(self) -> int | None:
+        """The slide to draw now (count-in and take), else None."""
+        if self.writer is not None:
+            return self.slide if self.slide_log is not None else None
+        return 0 if self.slide_full_take else None
+
+    def open_slides(self, width: int) -> None:
+        """The deck at `width` px: a PDF speech's own (the session's copy), else the PDF attached,
+        as the file is now (re-exported after a change, it shows the new slides)."""
+        self.slide_width = width
+        try:
+            if self.slides_only:
+                s = self.session
+                data = s._source_bytes or (s.dir / s.source["file"]).read_bytes()
+                self.deck = Deck(data, width, s.notes.name)
+            elif self.session.slides:
+                self.deck = Deck.open(Path(self.session.slides["path"]), width)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.deck = None
+            print(f"slides off: {exc}", file=sys.stderr)
+
+    def slides_info(self) -> tuple[str, int | None] | None:
+        """The attached slides for the home card: (name, pages; None if the file can't be read)."""
+        if not self.session.slides:
+            return None
+        return Path(self.session.slides["path"]).name, self.deck.pages if self.deck is not None else None
+
+    def attach_slides(self, path: Path) -> str:
+        """The home card: a PDF of slides beside the written notes, kept with the session."""
+        try:
+            deck = Deck.open(path, self.slide_width)
+        except (OSError, ValueError) as exc:
+            print(f"cannot open slides {path}: {exc}", file=sys.stderr)
+            return f"Couldn't open the slides: {short(exc)}"
+        self.deck = deck
+        self.session.slides = {"path": str(Path(path).resolve()), "pages": deck.pages}
+        try:
+            self.session.save()
+        except (OSError, SessionError) as exc:
+            return f"Couldn't keep the slides: {short(exc)}"
+        return f"Slides added: {deck.pages}"
+
+    def move_slide(self, step: int, t: float, view: ViewState) -> None:
+        """The clicker, in a full take. A PDF speech's section follows the slide, when it has one."""
+        if self.slide_log is None:
+            return
+        new = min(max(self.slide + step, 0), self.deck.pages - 1)
+        if new == self.slide:
+            return
+        self.slide, self.slide_heard = new, self.stopper.heard_s
+        self.slide_log.append([round(t, 3), new])
+        self.log(t, "slide", slide=new)
+        if self.slides_only and self.writer is not None:
+            section = next((i for i, s in enumerate(self.notes.sections) if slide_of(s.title) == new), None)
+            if section is not None and section != self.section:
+                self.section, self.section_t = section, t
+                view.current, view.panel_scroll, view.preview_next = self.first_of(section), 0.0, False
+                self.writer.mark_section(t, section, "key")
+                self.log(t, "section", section=section, source="slide")
 
     def recording_problem(self) -> None:
         """Surface a disk error while a take is still being recorded."""
@@ -1636,11 +1722,13 @@ class Devices:
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
     named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
     show: Callable = cv2.imshow
-    wait_key: Callable = lambda: cv2.waitKey(1) & 0xFF
+    # waitKeyEx: a clicker's arrow and page keys keep their own codes (SLIDES); no key is 255, as before.
+    wait_key: Callable = lambda: k if (k := cv2.waitKeyEx(1)) != -1 else 255
     window_open: Callable = lambda name: cv2.getWindowProperty(name, cv2.WND_PROP_VISIBLE) >= 1
     destroy_windows: Callable = cv2.destroyAllWindows
     pump: Callable = lambda: cv2.waitKey(1)  # lets the window draw a card while something loads
     pick: Callable = pick_notes  # the Open dialog (key l): a Path, or None if cancelled
+    pick_slides: Callable = pick_slides  # the Open dialog for a PDF of slides (the home card)
     fullscreen: Callable = lambda name, on: cv2.setWindowProperty(
         name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if on else cv2.WINDOW_NORMAL)
 
@@ -1745,7 +1833,7 @@ def choose_notes(given: Path | None, last_notes: str, pick: Callable[[], Path | 
 def main() -> int:
     ap = argparse.ArgumentParser(description="PalmCards rehearsal mirror")
     ap.add_argument("notes", nargs="?", type=Path,
-                    help=".txt, .md or .docx (default: the file opened last, else the sample)")
+                    help=".txt, .md or .docx, or slides as .pdf (default: the file opened last, else the sample)")
     ap.add_argument("--lang", default=SPEECH.language, help="language of the takes, for Whisper")
     ap.add_argument("--trace", action="store_true", help="record hand landmarks for offline replay")
     ap.add_argument("--no-follow", action="store_true", help="don't follow the voice during takes")
@@ -1983,6 +2071,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             print(f"video off: {why}", file=sys.stderr)
         else:
             print("video on: each take is recorded to take-NN.mp4 in the session folder")
+    takes.open_slides(round(w * (LAYOUT.hand[1] - LAYOUT.hand[0]) * SLIDE.width))  # drawn in a thread
     tutorial = Tutorial(active=not prefs.tutorial_done)
     overlay = TextOverlay(sentences, (w, h))
     warm_overlay(overlay, frame)
@@ -2009,7 +2098,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
 
     def open_home() -> Home:
         s = takes.session
-        return Home(home_entries(SESSIONS_DIR, s.dir, Path(s.notes), len(s.takes)), (w, h), log)
+        return Home(home_entries(s.dir.parent, s.dir, Path(s.notes), len(s.takes), takes.slides_info()),
+                    (w, h), log)
 
     def close_home(t: float) -> None:
         nonlocal home
@@ -2018,7 +2108,13 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
 
     def chosen(entry) -> Next | None:
         """A row chosen on the home card: what to open, else None (the speech open now:
-        the card closes; the Open dialog cancelled: it stays)."""
+        the card closes; slides added, or the Open dialog cancelled: it stays)."""
+        nonlocal note_until
+        if entry.slides:
+            if (picked := devices.pick_slides()) is not None:
+                view.note, note_until = takes.attach_slides(picked), time.perf_counter() + NOTE_S
+                home.rows = open_home().rows
+            return None
         if entry.pick:
             return Next(path=picked) if (picked := devices.pick()) is not None else None
         if entry.next is None:
@@ -2134,6 +2230,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         view.coach_progress = modes.coach_progress if modes.mode == "review" else 0.0
         view.undo_progress = modes.undo_progress if modes.mode == "prepare" else 0.0
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
+        slide_i = takes.slide_shown if modes.mode in ("count_in", "rehearse") else None
+        view.slide = takes.deck.page(slide_i) if slide_i is not None else None  # None while it draws
+        view.slide_label = f"{slide_i + 1} / {takes.deck.pages}" if slide_i is not None else ""
         if modes.mode in ("prepare", "review") and result is not None:
             sync_view(grammar, view, overlay)
         takes.sync_edit(view, overlay, start - t0)
@@ -2263,7 +2362,10 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if key in (ord("q"), 27):
             break
         now_t = time.perf_counter() - t0
-        if key == ord("x") and takes.stop_playback("key", now_t):  # x stops any playback first
+        if key in SLIDES.next_keys or key in SLIDES.prev_keys:  # a clicker: the slide in a full take
+            if view.app == "rehearse":
+                takes.move_slide(1 if key in SLIDES.next_keys else -1, now_t, view)
+        elif key == ord("x") and takes.stop_playback("key", now_t):  # x stops any playback first
             view.note, note_until = "Stopped", time.perf_counter() + NOTE_S
         elif key in KEY_COMMANDS:
             queued += modes.command(KEY_COMMANDS[key], now_t)
@@ -2354,6 +2456,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             cv2.imwrite(str(shot), frame)
             log(time.perf_counter() - t0, "screenshot", path=shot.name)
             print(f"saved {shot}")
+        elif key != 255 and view.app in ("count_in", "rehearse"):  # e.g. a clicker button SLIDES doesn't know
+            log(now_t, "key", code=key, acted=False, mode=view.app)
         if not devices.window_open(WINDOW):
             break
 

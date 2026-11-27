@@ -2459,3 +2459,28 @@ Tests: pytest (full) -> 695 passed. New: tests/test_home.py (rows, order, cap, a
   closes it without quitting, Continue goes on.
 Not checked: on the camera (choosing by hand, a tap on a row).
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: slides during a take (the user: "practise a presentation with the slides on screen",
+  then "only a PDF of the slides, no prepared text, practise freely"); plan approved with: the clicker only,
+  a home-card row to add slides, the slide's own text in the text column, both modes
+Status: implemented; automated checks passed; the user's camera and clicker check pending
+Changes: palmcards/slides.py (Quartz: CoreGraphics draws pages in a thread, PDFKit reads their text; no new
+  dependency). A PDF opened as the speech: a section "Slide N" per page with text, a sentence per line; the
+  clicker moves the slide and its section; no voice follow; quiet on the last slide ends the take. A PDF
+  attached to written notes from the home card (session.json slides {path, pages}, not copied; read as the
+  file is now, so a re-exported deck shows). A full take shows the current slide in the hand zone under REC
+  (style.SLIDE; 0.18 ms a frame) and keeps slides [[t, slide], ...]. Keys now come from cv2.waitKeyEx (no key:
+  255 as before) so a clicker's arrows and Page Up/Down are read (SLIDES.next_keys / prev_keys); an unknown key
+  in a take is logged with its code.
+  Fixed on the way: Session.save before the first take (target length [ ], or slides) locked a bare folder and
+  the first take then made a second one (an orphan without notes); save now makes the folder properly. The
+  home card listed sessions from the global SESSIONS_DIR, not the session's own root (tests saw real sessions).
+Tests: pytest (full) -> 703 passed. New: tests/test_slides.py (lines without bullets or page numbers, a PDF as
+  notes, pages drawn upright at the width, an image-only deck refused), tests/pdf.py (a text PDF written by
+  hand), home slides row, saving before the first take makes one folder, the clicker in a take with attached
+  slides, a PDF speech moving its section and ending on the last slide.
+Not checked: on the camera with a real deck; the user's clicker's key codes; per-slide timing is recorded,
+  not shown anywhere yet.
+```
