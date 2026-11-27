@@ -10,6 +10,43 @@ PalmCards runs on a Mac with Apple silicon. Windows is not supported.
 
 The app, the recording and the analysis run on your Mac. After you download the models, PalmCards works offline. An optional language model gives word meanings, other words, rewrites and AI coaching. It can run on your Mac (Ollama) or in the cloud (Anthropic). It is off by default.
 
+## How it flows
+
+```mermaid
+flowchart TD
+    open["Open a notes file<br/>last file, dialog or path"] --> home["Home card<br/>continue, start over, switch"]
+    home --> prepare["Prepare<br/>browse and edit by hand"]
+    prepare -- "raise a fist" --> rehearse["Rehearse<br/>count-in, voice follow"]
+    rehearse -- "take ends, Q&A on" --> qa["Q&A round<br/>3 questions"]
+    rehearse -- "take ends, Q&A off" --> review["Review<br/>coach card, take table"]
+    qa --> review
+    review -- "raise a fist: new take<br/>pinch and lift: practise a sentence" --> rehearse
+    review -- "V sign: edit" --> prepare
+    prepare -. "L key" .-> home
+    review -. "L key" .-> home
+```
+
+PalmCards has no setting for the kind of text. What you write in the file turns features on, and they add up: a pitch gets everything a timed talk gets, plus the Q&A round.
+
+```mermaid
+flowchart LR
+    subgraph speech["Short speech"]
+        direction TB
+        s1["In the file<br/>paragraphs only"] --> s2["Rehearse<br/>one section, no target"] --> s3["Coach works on<br/>pauses, fillers, pace"]
+    end
+    subgraph talk["Timed talk"]
+        direction TB
+        t1["In the file<br/>headings, Time: 10:00"] --> t2["Rehearse<br/>clock counts to the target"] --> t3["Coach works on<br/>the section most over"]
+    end
+    subgraph pitch["Pitch with Q&A"]
+        direction TB
+        p1["In the file<br/>also a Questions section"] --> p2["Rehearse<br/>Q&A round after full takes"] --> p3["Coach works on<br/>answers over a minute"]
+    end
+    speech ~~~ talk ~~~ pitch
+```
+
+All three get the same voice follow, takes side by side, sentence practice and fading cards. The Q&A round runs only when you turn it on with `y`.
+
 ## Install
 
 You need Python 3.12 and [uv](https://docs.astral.sh/uv/). The lock file needs 3.12, and MediaPipe has no wheels for newer versions yet.
@@ -58,7 +95,7 @@ To choose a row, raise one or two fingers and move your hand up or down, then ta
 
 ## Write your notes
 
-Notes are plain text. A heading starts a section, and a blank line starts a paragraph. Two things in the file are not part of the talk:
+Notes are plain text. A blank line starts a paragraph. A section starts at a `#` heading (`.txt`, `.md`), a Heading or Title style (`.docx`), or two blank lines (`.txt`). Two things in the file are not part of the talk:
 
 - A line `Time: 3:00` (or `Target:` or `Length:`) sets the target length of the talk.
 - A section headed `Questions` (or `Q&A`, `Likely questions`) holds practice questions for the Q&A round, one per sentence.
