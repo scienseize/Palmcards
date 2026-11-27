@@ -475,6 +475,17 @@ class Teleprompter:
     column: tuple[float, float] = (0.37, 0.63)  # x from and to, x the frame width: clear of the label (to 0.36)
     rows: int = 4  # rows of notes shown
     fill: RGB = (0, 0, 0)  # the notch's black
+    # In the notch (palmcards.notch; the user, 2026-11-27: "as big as" a 460 x 285 pt notch panel, "at
+    # least", with indicators): wider and taller, ~460 x 290 pt; in the band beside the notch the
+    # recording clock (left) and a sound wave of the microphone (right); under the notes a status row.
+    notch_column: tuple[float, float] = (0.32, 0.68)
+    notch_rows: int = 8
+    footer: float = 1.6  # the status row's height, x the notes' line height
+    side_gap: float = 0.5  # between the notch and the indicators beside it, x the line height
+    wave_bars: int = 18  # the sound wave: one bar per frame, newest at the right
+    wave_floor: float = 0.3  # mic level (0: -60 dBFS, 1: full scale) drawn as no bar
+    wave_full: float = 0.75  # ... drawn as a full bar
+    wave_heard: float = 0.4  # above this a bar is bright (picked up); under it, dim
 
 
 @dataclass(frozen=True)

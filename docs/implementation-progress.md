@@ -2619,3 +2619,18 @@ Evidence: replaying the 29 traces (102,085 hand frames): browsing points palm fi
   degrees); the chosen settings fire 0 times.
 Tests: tests/test_easter.py; pytest (full).
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: a larger notch teleprompter with indicators (the user: "the teleprompter should be as big as
+  this image at least, and should have indicators of what needs to be known, like sound wave to show that it is
+  being picked up"; the image: a 460 x 285 pt panel hanging from the notch)
+Status: implemented; automated checks passed; the user's check on the screen pending
+Changes: render.Teleprompter(notch_w=): TELEPROMPTER.notch_column (32-68% of the width) and notch_rows (8): 473 x 304
+  pt on a 208 x 37.5 pt notch (was ~350 x 155). Beside the notch: the clock with the target (left), a sound wave of
+  the microphone level (right, 18 bars, bright at 0.4 or more); under the notes a status row (holds and the take
+  stopping itself with a bar, else the section line). The notch panel hands raw pixels to an NSImage through
+  Quartz (0.3 ms) instead of a PNG (7 ms at the new size), since the wave changes every frame. Draw ~3.3 ms.
+  The window's teleprompter (no notch) is unchanged: the main overlay already shows REC and the mic there.
+Tests: test_the_notch_teleprompter_is_large_and_shows_the_clock_and_the_voice; pytest (full).
+```

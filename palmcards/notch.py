@@ -67,7 +67,8 @@ class NotchPanel:
         x0, x1, notch_h, _, scale = self.notch
         # The teleprompter at the screen's pixels: a virtual 1280 x 720 frame (the app's) times the
         # pixels per point, its rows starting under the notch.
-        self.prompter = Teleprompter(sentences, (round(1280 * scale), round(720 * scale)), top=round(notch_h * scale))
+        self.prompter = Teleprompter(sentences, (round(1280 * scale), round(720 * scale)), top=round(notch_h * scale),
+                                     notch_w=round((x1 - x0) * scale))
         gx0, _, gx1, gy1 = self.prompter.notes_glass()
         self._crop = (gx0, gx1, gy1)
         self._canvas = np.zeros((gy1, round(1280 * scale), 3), np.uint8)
@@ -149,10 +150,18 @@ class NotchPanel:
             return
         self._last = crop.copy()
         import AppKit
-        ok, png = cv2.imencode(".png", np.dstack((crop, self._mask)))
-        image = AppKit.NSImage.alloc().initWithData_(AppKit.NSData.dataWithBytes_length_(png.tobytes(), len(png)))
-        x0, x1, _, _, scale = self.notch
-        image.setSize_(((gx1 - gx0) / scale, gy1 / scale))  # points: drawn at the screen's pixels
+        import Quartz
+        # Raw pixels through Quartz, not a PNG: 0.3 ms against 7 at this size, and the sound
+        # wave changes the picture every frame. Outside the outline the colour is black, so
+        # straight alpha is already premultiplied.
+        rgba = cv2.cvtColor(np.dstack((crop, self._mask)), cv2.COLOR_BGRA2RGBA)
+        h, w = rgba.shape[:2]
+        provider = Quartz.CGDataProviderCreateWithCFData(AppKit.NSData.dataWithBytes_length_(rgba.tobytes(), rgba.nbytes))
+        cg = Quartz.CGImageCreate(w, h, 8, 32, w * 4, Quartz.CGColorSpaceCreateDeviceRGB(),
+                                  Quartz.kCGImageAlphaPremultipliedLast, provider, None, False,
+                                  Quartz.kCGRenderingIntentDefault)
+        scale = self.notch[4]
+        image = AppKit.NSImage.alloc().initWithCGImage_size_(cg, (w / scale, h / scale))  # points: the screen's pixels
         if self._panel is None:
             self._make()
         self._view.setImage_(image)

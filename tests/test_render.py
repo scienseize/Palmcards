@@ -1080,3 +1080,30 @@ def test_the_hand_in_use_is_lit_and_the_room_is_not():
     b, g, r = frame[330:620, 540:760].reshape(-1, 3).astype(int).T
     assert (r - b).max() > 40  # a yellow rim round it (BGR: red high, blue low)
     assert (frame[100, 100] == 100).all() and (frame[550, 900] == 100).all()  # the room, as the camera sees it
+
+
+def test_the_notch_teleprompter_is_large_and_shows_the_clock_and_the_voice():
+    from palmcards.render import Teleprompter
+
+    notes = parse_text("Four score and seven years ago. Our fathers brought forth a new nation. " * 6)
+    scale, notch_w, top = 2, 416, 75  # a 208 x 37.5 pt notch at 2 px a point
+    tp = Teleprompter(notes.sentences, (1280 * scale, 720 * scale), top=top, notch_w=notch_w)
+    gx0, _, gx1, gy1 = tp.notes_glass()
+    assert (gx1 - gx0) / scale >= 460 and gy1 / scale >= 285  # at least the size the user showed
+
+    def drawn(mic):
+        frame = np.zeros((gy1, 1280 * scale, 3), np.uint8)
+        state = ViewState(app="rehearse", rec_s=72, target_s=180, mic=mic, status="Section 1 of 1")
+        for _ in range(20):  # the wave fills, one bar a frame
+            frame[:] = 0
+            tp.draw(frame, state)
+        return frame
+
+    loud, quiet = drawn(0.7), drawn(0.1)
+    cx = 1280 * scale // 2
+    right = slice(cx + notch_w // 2, gx1)
+    assert loud[:top, right].max() > 200 and loud[:top, right].max() > quiet[:top, right].max()  # the voice, picked up
+    left = loud[:top, gx0:cx - notch_w // 2]
+    assert ((left[..., 2] > 200) & (left[..., 0] < 120)).any()  # the recording dot, red (BGR)
+    assert loud[top + tp.box_h:gy1, gx0:gx1].max() > 100  # the status row under the notes
+    assert (loud[:top, cx - notch_w // 2 + 4:cx + notch_w // 2 - 4] == 0).all()  # nothing under the camera

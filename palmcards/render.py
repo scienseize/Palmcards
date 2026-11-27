@@ -56,6 +56,7 @@ import math
 import random
 import re
 import textwrap
+from collections import deque
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -2904,12 +2905,18 @@ class Teleprompter(TextOverlay):
     the next section faint); the main overlay draws the rest. The sentence being said is kept on
     the top row, nearest the lens (scroll_for)."""
 
-    def __init__(self, sentences: list[Sentence], frame_size: tuple[int, int], top: int = 0):
-        """`top`: px of black above the first row (the notch's height, in the notch panel)."""
-        self.top = top
-        super().__init__(sentences, frame_size, visible_rows=TELEPROMPTER.rows, column=TELEPROMPTER.column)
+    def __init__(self, sentences: list[Sentence], frame_size: tuple[int, int], top: int = 0, notch_w: int = 0):
+        """`top`: px of black above the first row (the notch's height, in the notch panel). `notch_w`:
+        the notch's width in px; with it the panel is the notch's (larger, TELEPROMPTER.notch_*) and
+        carries the take's indicators beside the notch and under the notes (_draw_indicators)."""
+        self.top, self.notch_w = top, notch_w
+        super().__init__(sentences, frame_size,
+                         visible_rows=TELEPROMPTER.notch_rows if notch_w else TELEPROMPTER.rows,
+                         column=TELEPROMPTER.notch_column if notch_w else TELEPROMPTER.column)
         self.x = self.col_x0 + (self.col_x1 - self.col_x0 - self.box_w) // 2  # centred under the camera
         self.y = 0
+        self.footer = round(TELEPROMPTER.footer * self.line_h) if notch_w else 0
+        self._levels: deque[float] = deque(maxlen=TELEPROMPTER.wave_bars)  # the sound wave's bars
 
     @property
     def label_top(self) -> int:
@@ -2927,7 +2934,65 @@ class Teleprompter(TextOverlay):
         return self.top + self.pad
 
     def notes_glass(self) -> tuple[int, int, int, int]:
-        return self.x - self.pad, 0, self.x + self.box_w + self.pad, self.top + self.box_h + self.pad
+        return self.x - self.pad, 0, self.x + self.box_w + self.pad, self.top + self.box_h + self.pad + self.footer
+
+    def draw(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
+        super().draw(frame, state)
+        if self.notch_w:
+            self._draw_indicators(frame, state)
+        return frame
+
+    def _draw_indicators(self, frame: np.ndarray, state: ViewState) -> None:
+        """What a take needs known, where the eye already is. Beside the notch: the recording
+        clock (with the target; orange once over) or the count-in, left; the microphone as a
+        sound wave, right, its bars bright while a voice is picked up. Under the notes: the
+        hold or the take ending itself, with its bar, else the section and its time left."""
+        gx0, _, gx1, gy1 = self.notes_glass()
+        cx, cy, inset = (gx0 + gx1) / 2, self.top / 2, self.pad + self.line_h * 0.25
+        side = self.notch_w / 2 + TELEPROMPTER.side_gap * self.line_h
+        f = self._face(TYPE.small)
+        if state.app == "rehearse":
+            m, s = divmod(int(state.rec_s), 60)
+            text = f"{m}:{s:02d}"
+            if state.target_s:
+                tm, ts = divmod(int(state.target_s), 60)
+                text += f" / {tm}:{ts:02d}"
+            over = bool(state.target_s) and state.rec_s > state.target_s
+            chip = self._chip(text, f, C.label_operation if over else C.label_state, None)
+            r = max(2, round(self.line_h * 0.16))
+            cv2.circle(frame, (round(gx0 + inset + r), round(cy)), r, bgr(C.rec), -1, cv2.LINE_AA)
+            _blend(frame, round(gx0 + inset + 3 * r), round(cy - chip[0].shape[0] / 2), *chip)
+        elif state.app == "count_in" and state.count_in > 0:
+            chip = self._chip(f"Starting in {state.count_in}", f, C.label_hint, None)
+            _blend(frame, round(gx0 + inset), round(cy - chip[0].shape[0] / 2), *chip)
+        # The sound wave: one bar per frame drawn, newest at the right, mirrored about the band's middle.
+        self._levels.append(state.mic if state.app == "rehearse" else 0.0)
+        x0, x1 = cx + side, gx1 - inset
+        n = TELEPROMPTER.wave_bars
+        step = (x1 - x0) / n
+        bar_w = max(2, round(step * 0.5))
+        half = self.top * 0.32
+        for i, level in enumerate(self._levels):
+            k = min(max((level - TELEPROMPTER.wave_floor) / (TELEPROMPTER.wave_full - TELEPROMPTER.wave_floor),
+                        0.0), 1.0)
+            h = max(bar_w / 2, half * k)
+            x = round(x1 - (len(self._levels) - i - 0.5) * step)
+            heard = level >= TELEPROMPTER.wave_heard
+            color = C.label_state if heard else (*C.label_state[:3], 90)
+            _line_blend(frame, (x, round(cy - h)), (x, round(cy + h)), color[:3], bar_w, color[3] / 255)
+        # Under the notes: one row.
+        _, second, progress = self._label(state)
+        text = second if progress is not None else state.status
+        if not text:
+            return
+        row = self._wrap(text, f, gx1 - gx0 - 2 * inset, 1)[0]
+        chip = self._chip(row, f, C.label_hint, None)
+        fy = gy1 - self.footer / 2 - (self.line_h * 0.15 if progress is not None else 0)
+        _, _, _, by1 = self._blend_centered(frame, chip, cx, fy)
+        if progress is not None:
+            w = min(gx1 - gx0 - 2 * inset, chip[0].shape[1])
+            thickness = max(BAR.min_thickness, round(BAR.thickness * f.size))
+            draw_bar(frame, cx - w / 2, cx + w / 2, by1 + BAR.count_em * f.size, progress, thickness)
 
     def _draw_glass(self, frame: np.ndarray, box: tuple[float, float, float, float]) -> None:
         """The notch's black, its bottom corners rounded (its top runs off the frame)."""
