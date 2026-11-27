@@ -503,3 +503,25 @@ def test_with_qa_off_no_questions_follow_a_take(tmp_path, monkeypatch):
     assert rig.run() == 0
     assert all(t.answer is None for t in rig.session().takes)
     assert '"qa_question"' not in (tmp_path / "log.jsonl").read_text()
+
+
+def run_home(rig, home=True):
+    return main.run(rig.notes_path, notes_from_bytes(NOTES, rig.notes_path), NOTES, devices=rig.devices,
+                    sessions_root=rig.tmp / "sessions", prefs_file=rig.prefs_file, home=home)
+
+
+def test_the_home_card_at_launch_starts_the_speech_over(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={2: ord("t"), 3: ord("2")})  # t does nothing on the card
+    assert run_home(rig) == main.Next(path=rig.notes_path, new=True)
+    assert not any(r.opened for r in rig.recorders)  # no take was started
+    assert rig.camera.released == 1 and rig.tracker.closed == 1 and rig.destroyed == 1  # all closed, to reopen
+
+
+def test_l_opens_the_home_card_and_esc_closes_it_without_quitting(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={2: ord("l"), 3: 27, 4: ord("l"), 5: ord("2")})
+    assert run_home(rig, home=False) == main.Next(path=rig.notes_path, new=True)
+
+
+def test_continue_on_the_home_card_goes_on_with_the_speech(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={2: ord("1"), 3: ord("q")})
+    assert run_home(rig) == 0

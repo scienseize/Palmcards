@@ -188,7 +188,7 @@ KEYS_HELP = (
     "[ ]  Target length, 15 s shorter / longer",
     "Y  Q&A round after each take on / off",
     "C  High contrast     G  Show / hide tutorial",
-    "L  Open another notes file   F  Full screen",
+    "L  Switch speech     F  Full screen",
     "Enter  Skip a tutorial step",
     "Replay bar: yellow filler, red restart,",
     "  white long pause, blue looked away",
@@ -470,6 +470,9 @@ class ViewState:
     undo_progress: float = 0.0  # Prepare: a V sign held toward undo, 0..1
     retry_progress: float = 0.0  # Review: an open palm held toward retrying failed analysis, 0..1
     tutorial: tuple[int, int, str] | None = None  # (step, of, what to do) on the first run, or after g
+    # The home card (palmcards.home, key l): (title, detail) per row, in the notes' place, and the row picked.
+    home: tuple[tuple[str, str], ...] = ()
+    home_picked: int = 0
 
 
 @dataclass
@@ -2048,6 +2051,8 @@ class TextOverlay:
         self._glass_level(frame)
         if state.question and state.app in ("count_in", "rehearse"):
             return self._draw_question(frame, state)
+        if state.home:
+            return self._draw_home(frame, state)
         self._draw_glass(frame, self.notes_glass())
         if state.mode == "focus" and state.ops.stretch_ends is not None:  # under the text, faint
             self._draw_stretch(frame, state.ops)
@@ -2172,6 +2177,33 @@ class TextOverlay:
             self._draw_summary(frame, state.summary)
         if state.tutorial is not None:
             self._draw_tutorial(frame, *state.tutorial)
+        return frame
+
+    def _draw_home(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
+        """The home card in the notes' place: a row per choice, its title in the
+        label's state face and its detail under it in the hint's; the row picked
+        on the deep orange fill the unit under the hand has in the notes."""
+        self._draw_glass(frame, self.notes_glass())
+        big, small = self._label_face(0), self._label_face(2)
+        x, y = self.x + self.margin + self.pad // 2, self.y + self.margin + self.pad // 2
+        width = self.col_x1 - x - self.pad
+        for i, (title, detail) in enumerate(state.home):
+            title = self._wrap(title, big, width, 1)[0]
+            if i == state.home_picked:
+                chip = self._chip(title, big, C.chip_text, C.chip_fill)
+                px = max(CHIPS.pad_x[0], big.size // CHIPS.pad_x[1])
+                py = max(CHIPS.pad_y[0], big.size // CHIPS.pad_y[1])
+                _blend(frame, x - px - 1, y - py - 1, *chip)
+            else:
+                self._blend_ink(frame, self._ink(title, big, C.label_state), x, y)
+            y += big.line_h
+            for row in self._wrap(detail, small, width, 2):
+                self._blend_ink(frame, self._ink(row, small, C.label_operation if i == state.home_picked
+                                                 else C.label_hint), x, y)
+                y += small.line_h
+            y += big.line_h // 2
+        self._draw_label(frame, state, self.y + self.margin)
+        self._draw_pills(frame, state)
         return frame
 
     def _draw_meaning(self, frame: np.ndarray, meaning: str, word_bottom: float) -> None:

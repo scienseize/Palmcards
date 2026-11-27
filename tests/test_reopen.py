@@ -138,7 +138,7 @@ def test_reopening_refuses_an_old_session_without_notes(tmp_path, monkeypatch, c
     folder.mkdir()
     (folder / "session.json").write_text(json.dumps({"notes": "/x.md", "gesture_log": None, "takes": []}))
     args = argparse.Namespace(open=str(folder), trace=False, no_follow=True)
-    assert main.reopen(args) == 1
+    assert main.reopen(args, args.open) == 1
     assert "--rebind" in capsys.readouterr().err
 
 

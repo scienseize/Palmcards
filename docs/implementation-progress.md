@@ -2443,3 +2443,19 @@ Tests: pytest (full) -> 688 passed. New: the answers request keeps the round as 
   intact; the app sends each question with its answer and the measures, and shows the reply once.
 Not checked: on the camera, and the AI's coaching on real answers.
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: switching speech inside the app (the user: switching needed a quit and terminal flags)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: the home card (palmcards/home.py, render._draw_home), in the notes' place. It shows at launch when
+  main.py reopened the file from last time by itself, and on key l in Prepare or Review (l used to open the
+  Open dialog straight away). Rows: continue this speech, start it over (a new session, as --new), up to 4
+  other speeches practised before (their newest session, as --open), open another file. Chosen with one or
+  two fingers and a tap (a grammar of its own: no take starts meanwhile) or keys (j/k, Enter, 1-9; l or Esc
+  closes it). frame_loop returns home.Next; main() opens it after everything is closed.
+Tests: pytest (full) -> 695 passed. New: tests/test_home.py (rows, order, cap, a missing file, row_at, keys);
+  test_app_lifecycle: the card at launch starts the speech over (t does nothing on it), l opens it and Esc
+  closes it without quitting, Continue goes on.
+Not checked: on the camera (choosing by hand, a tap on a row).
+```
