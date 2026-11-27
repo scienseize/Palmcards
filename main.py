@@ -154,6 +154,7 @@ from palmcards.notch import NotchPanel
 from palmcards.asr import get_recognizer
 from palmcards.follow import AutoStop, LiveFollow
 from palmcards.speech import make_job
+from palmcards.easter import Friend
 from palmcards.vision import Watcher
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
@@ -2176,6 +2177,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     takes.video_on = takes.video_on or prefs.video
     takes.fade_on = takes.fade_on or prefs.fade
     takes.qa_on = prefs.qa
+    friend = Friend()  # the easter egg (palmcards.easter): its picture, if one is there
     if takes.video_on:
         if devices.video is VideoWriter and (why := video_unavailable()):
             takes.video_off = why
@@ -2313,6 +2315,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             modes.retry_ready = modes.mode == "review" and bool(takes.analysis.failed())
             modes.coach_ready = modes.mode == "review" and takes.coach_ready()
             events = modes.update(*result)
+            if modes.mode in ("prepare", "review") and friend.update(result[0], start - t0):
+                log(start - t0, "friend")
             if takes.vision is not None:
                 takes.vision.hands(*result)
         else:
@@ -2508,6 +2512,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                         draw_landmarks(frame, track.hand)
             draw_fingertips(frame, (home.grammar if home is not None else grammar).state)
 
+        friend.draw(frame, start - t0)
         snap_panel = False
         now = time.perf_counter()
         fps = 0.9 * fps + 0.1 / max(now - last, 1e-6)

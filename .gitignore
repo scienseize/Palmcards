@@ -36,3 +36,6 @@ AGENTS.md
 # Landing film: build output and dependencies
 videos/node_modules/
 videos/out/
+
+# The easter egg's picture (palmcards/easter.py): the manga's, not ours to publish
+palmcards/friend.jpg

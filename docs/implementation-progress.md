@@ -2604,3 +2604,18 @@ Changes: vision.Backdrop, config.BACKDROP, the room_dim preference (an old prefs
   the left margin, the mirror 18% of the width (PRESENTER.take_mirror, was a 46% slide centred under the camera).
 Tests: pytest (full); the hand lit and the room not; the take's slide larger than Prepare's.
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: an easter egg (the user: "This image from 20th century boys should pop up when the exact sign
+  is did with the hand, backward with pointer finger pointing up")
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: palmcards/easter.py Friend: in Prepare and Review, ONE within 15 degrees of upright with the back of the
+  hand to the camera (wrist -> index knuckle -> pinky knuckle turn over the palm squared, 0.4 or more, its sign
+  by MediaPipe's handedness), held 1.5 s (HOLD_GRACE_S forgiven, once per hold), shows palmcards/friend.jpg for
+  3 s, faded; logged `friend`. The picture is gitignored (the manga's); without it the sign does nothing.
+Evidence: replaying the 29 traces (102,085 hand frames): browsing points palm first (98% of 20,000 ONE frames);
+  1.0 s / 35 degrees / any facing fired 3 times (an edge-on hand; a back-turned browsing hand, tilted 10-35
+  degrees); the chosen settings fire 0 times.
+Tests: tests/test_easter.py; pytest (full).
+```
