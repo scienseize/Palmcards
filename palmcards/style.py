@@ -475,12 +475,18 @@ class Rec:
 
 
 @dataclass(frozen=True)
-class Slide:
-    """A full take's current slide (palmcards.slides), in the hand zone under the REC chip,
-    above the count-in's digit, with its number (TYPE.small) under it."""
-    width: float = 0.9  # x the hand zone's width, centred in it
-    top: float = 2.4  # its top, x the notes' line height below the frame's top edge
-    label_gap: int = 6  # px between the slide and its number
+class Presenter:
+    """A take with slides (palmcards.slides): the presenter layout. The slide large on the left
+    and you in a tall mirror on the right, on a canvas `scale` x the camera's frame, so on a
+    Retina screen (which stretches the 1280 x 720 frame 2x) the slide's small print stays sharp.
+    The label is where it always is; the slide and the mirror start under it."""
+    scale: int = 2  # the canvas, x the camera frame's size
+    mirror: float = 0.27  # the mirror's width, x the canvas width
+    right: float = 0.04  # the margin right of the mirror, x the canvas width
+    gap: float = 0.025  # between the slide and the mirror, x the canvas width
+    bottom: float = 0.05  # the margin under them, x the canvas height
+    background: RGB = (14, 14, 16)  # behind them: Apple's dark-mode base, a step darker than the glass
+    label_gap: int = 8  # px (at 1x) between the slide and its number
 
 
 @dataclass(frozen=True)
@@ -601,7 +607,7 @@ MOTION = Motion()
 SOUND = Sound()
 REC = Rec()
 COUNT_IN = CountIn()
-SLIDE = Slide()
+PRESENTER = Presenter()
 SUMMARY = Summary()
 HANDS = Hands()
 DEBUG = Debug()

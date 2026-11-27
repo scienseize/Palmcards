@@ -544,7 +544,7 @@ def test_slides_added_on_the_home_card_follow_the_clicker_in_a_take(tmp_path, mo
     assert [s for _, s in take.slides] == [0, 1, 2, 1]  # the third RIGHT is past the last slide: clamped
 
 
-def test_a_pdf_speech_moves_its_section_with_the_slide_and_ends_on_the_last(tmp_path, monkeypatch):
+def test_a_pdf_speech_follows_the_clicker_and_ends_on_the_last_slide(tmp_path, monkeypatch):
     from dataclasses import replace
 
     from palmcards import follow
@@ -560,5 +560,5 @@ def test_a_pdf_speech_moves_its_section_with_the_slide_and_ends_on_the_last(tmp_
                     prefs_file=rig.prefs_file) == 0
     (take,) = rig.session().takes
     assert [s for _, s in take.slides] == [0, 1, 2]
-    assert [(s["section"], s["source"]) for s in take.sections] == [(0, "start"), (1, "key")]  # slide 2: no text
+    assert [s["section"] for s in take.sections] == [0]  # one outline: the slide moves the orange row, not a section
     assert take.duration_s < 3.0 and '"auto_stop"' in (tmp_path / "log.jsonl").read_text()

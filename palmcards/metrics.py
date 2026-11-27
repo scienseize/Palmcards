@@ -33,6 +33,11 @@ the speaker. One without enough to go on is None with the reason.
            baseline: the median change, and the share of pose readings
            tilted over METRICS.tilt_deg or dropped over METRICS.head_drop.
 
+A PDF speech (`free`: its notes are the slides' titles, and the speaker talks
+around them, palmcards.slides) has pace, voice and gaze measured over all the
+speech heard, its stretches of words (`speaking_spans`), not over sentences
+of the notes said, which would leave almost all of it out.
+
 Computed after the take in the analysis worker (palmcards.speech), never
 on the camera loop; stored on the take in session.json.
 """
@@ -50,8 +55,9 @@ from palmcards.config import BODY, METRICS
 from palmcards.notes import normalize
 from palmcards.prosody import Prosody
 
-VERSION = 6  # 2: gaze; 3: posture, hands, face touches; 4: speech per sentence, voice; 5: long pauses, all of them;
-# 6: key points (sentences said, own words included), own-words sentences counted in pace, pause_before_s
+VERSION = 7  # 2: gaze; 3: posture, hands, face touches; 4: speech per sentence, voice; 5: long pauses, all of them;
+# 6: key points (sentences said, own words included), own-words sentences counted in pace, pause_before_s;
+# 7: a PDF speech's pace, voice and gaze over all its speech
 
 
 def _none(reason: str) -> dict:
@@ -73,6 +79,23 @@ def _sentence_fillers(alignment: dict) -> dict[int, list[str]]:
         s = next((s for s in spoken if s["end"] >= f["t"]), spoken[-1])
         out.setdefault(s["sentence"], []).append(f["text"])
     return out
+
+
+def speaking_spans(alignment: dict, words: list[dict]) -> list[tuple[float, float, int]]:
+    """All the speech heard, as stretches (start, end, words): words with less than
+    METRICS.long_pause_s between them; fillers and unsure words are not counted as words."""
+    unsure = set(alignment.get("unsure", []))
+    fillers = {f["word"] for f in alignment["fillers"]}
+    spans: list[list] = []
+    for i, w in enumerate(words):
+        if not normalize(w["text"]) or i in unsure:
+            continue
+        if spans and w["start"] - spans[-1][1] < METRICS.long_pause_s:
+            spans[-1][1] = max(spans[-1][1], w["end"])
+        else:
+            spans.append([w["start"], w["end"], 0])
+        spans[-1][2] += i not in fillers
+    return [(a, b, n) for a, b, n in spans]
 
 
 def heard(s: dict) -> int:
@@ -103,11 +126,15 @@ def sentence_speech(alignment: dict, gaps=()) -> list[dict]:
     return out
 
 
-def speech(alignment: dict, words: list[dict], duration_s: float, lost=()) -> dict:
-    """`lost`: (start, end) app times the recording lost."""
+def speech(alignment: dict, words: list[dict], duration_s: float, lost=(), free: bool = False) -> dict:
+    """`lost`: (start, end) app times the recording lost. `free`: pace over all the speech."""
     said = [s for s in alignment["sentences"] if s["status"] != "skipped" and s["start"] is not None]
     n_words = sum(heard(s) for s in said)
     speaking_s = sum(s["end"] - s["start"] for s in said)
+    over = "of sentences said"
+    if free:
+        spans = speaking_spans(alignment, words)
+        n_words, speaking_s, over = sum(n for *_, n in spans), sum(b - a for a, b, _ in spans), "of speech"
     out = {}
     total = len(alignment["sentences"])
     own = sum(s["status"] == "own_words" for s in said)
@@ -118,7 +145,7 @@ def speech(alignment: dict, words: list[dict], duration_s: float, lost=()) -> di
         out["key_points"] = _none("no sentences in the notes")
     if speaking_s >= METRICS.min_speaking_s and n_words >= METRICS.min_words:
         out["pace_wpm"] = {"value": round(60 * n_words / speaking_s, 1),
-                           "basis": f"{n_words} words over {speaking_s:.1f} s of sentences said"}
+                           "basis": f"{n_words} words over {speaking_s:.1f} s {over}"}
     else:
         out["pace_wpm"] = _none(f"too little said ({n_words} words, {speaking_s:.1f} s)")
     minutes = duration_s / 60
@@ -159,14 +186,18 @@ def _spread(x: np.ndarray) -> float:
     return round(float(np.percentile(x, 90) - np.percentile(x, 10)), 1)
 
 
-def voice(p: Prosody | None, alignment: dict, why: str = "") -> dict:
+def voice(p: Prosody | None, alignment: dict, why: str = "", spans=None) -> dict:
     """Pitch and loudness over the voiced frames while a sentence was being
-    said (from its first to its last word). `why`: why there is no prosody."""
+    said (from its first to its last word), or with `spans` (free speech, speaking_spans)
+    while speaking at all. `why`: why there is no prosody."""
     if p is None or not len(p):
         return _none(why or "pitch and loudness not measured")
     st = p.st
     mask = np.zeros(len(p), bool)
     per = []
+    for a, b, _ in spans or ():
+        w = p.window(a, b)
+        mask[w] |= p.voiced[w]
     for s in alignment["sentences"]:
         if s["status"] == "skipped" or s["start"] is None:
             continue
@@ -346,15 +377,17 @@ def take_metrics(alignment: dict, words: list[dict], t_start: float, duration_s:
                  gesture_log: Path | None = None, trace: Path | None = None,
                  vision: dict | None = None, face: Path | None = None,
                  calibration: dict | None = None, prosody: Prosody | None = None, prosody_why: str = "",
-                 gaps=()) -> dict:
+                 gaps=(), free: bool = False) -> dict:
+    """`free`: a PDF speech, its notes the slides' titles: pace, voice and gaze over all the speech."""
     arrays, why = take_features(vision, face)
+    spans = speaking_spans(alignment, words) if free else None
     return {
         "version": VERSION,
-        "speech": speech(alignment, words, duration_s, gaps),
-        "voice": voice(prosody, alignment, prosody_why),
+        "speech": speech(alignment, words, duration_s, gaps, free),
+        "voice": voice(prosody, alignment, prosody_why, spans),
         "hands": hands(gesture_log, trace, t_start, t_start + duration_s, arrays, why),
-        "gaze": gaze_mod.take_gaze(arrays, calibration, alignment, vision.get("calibration")) if arrays is not None
-        else _none(why),
+        "gaze": gaze_mod.take_gaze(arrays, calibration, alignment, vision.get("calibration"), spans=spans)
+        if arrays is not None else _none(why),
         "posture": posture(arrays, calibration, why),
     }
 

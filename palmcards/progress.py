@@ -133,7 +133,7 @@ def days_table(all_points: list[Point], target_s: float | None = None, n: int = 
     return tuple(f"{name:<{name_w}}" + "".join(f"  {v:>{col_w}}" for v in vals) for name, vals in rows)
 
 
-def readiness(all_points: list[Point], target_s: float | None = None) -> str:
+def readiness(all_points: list[Point], target_s: float | None = None, points: bool = True) -> str:
     """Ready, or the first thing still missing (see the module doc)."""
     full = [p for p in all_points if not p.answer]
     k = COACH.ready_takes
@@ -143,8 +143,8 @@ def readiness(all_points: list[Point], target_s: float | None = None) -> str:
     timed = sum(on_time(p.length_s, target_s) for p in last)
     if target_s and timed < k:
         return f"Not ready yet: on time in {timed} of the last {k} takes"
-    points_ok = sum((p.key_points or 0) >= COACH.ready_points for p in last)
-    if points_ok < k:
+    points_ok = sum((p.key_points or 0) >= COACH.ready_points for p in last) if points else k
+    if points_ok < k:  # (`points` False: a PDF speech, its notes are slide titles, not points to make)
         return f"Not ready yet: {COACH.ready_points:.0%} of the key points in {points_ok} of the last {k} takes"
     fillers = [p for p in last if (p.fillers_per_min or 0) > COACH.ready_fillers]
     if fillers:
@@ -159,7 +159,7 @@ def readiness(all_points: list[Point], target_s: float | None = None) -> str:
     long = [p for p in round_ if p.length_s > QA.answer_max_s]
     if long:
         return f"Not ready yet: an answer ran {mmss(long[-1].length_s)}, over {mmss(QA.answer_max_s)}"
-    parts = [f"the last {k} takes" + (" on time" if target_s else ""), "with the key points"]
+    parts = [f"the last {k} takes" + (" on time" if target_s else "")] + (["with the key points"] if points else [])
     if round_:
         parts.append(f"answers under {mmss(QA.answer_max_s)}")
     return "Ready: " + ", ".join(parts)

@@ -109,10 +109,13 @@ def _counts(labels: np.ndarray) -> dict[str, int]:
     return {c: int((labels == c).sum()) for c in CLASSES}
 
 
-def speaking(t: np.ndarray, alignment: dict) -> tuple[np.ndarray, list[tuple[int, np.ndarray]]]:
-    """Which readings fall while a sentence was being said, overall and per sentence."""
+def speaking(t: np.ndarray, alignment: dict, spans=None) -> tuple[np.ndarray, list[tuple[int, np.ndarray]]]:
+    """Which readings fall while a sentence was being said, overall and per sentence;
+    with `spans` (free speech, metrics.speaking_spans) also while speaking at all."""
     per = []
     any_ = np.zeros(len(t), dtype=bool)
+    for a, b, *_ in spans or ():
+        any_ |= (t >= a - GAZE.speech_pad_s) & (t <= b + GAZE.speech_pad_s)
     for i, s in enumerate(alignment["sentences"]):
         if s["status"] == "skipped" or s["start"] is None:
             continue
@@ -123,7 +126,7 @@ def speaking(t: np.ndarray, alignment: dict) -> tuple[np.ndarray, list[tuple[int
 
 
 def take_gaze(arrays: dict[str, np.ndarray] | None, calibration: dict | None, alignment: dict,
-              calibration_id: str | None = None, off_reason: str = "") -> dict:
+              calibration_id: str | None = None, off_reason: str = "", spans=None) -> dict:
     """The take's gaze metric: while a sentence was being said, the share of the
     judged readings looking at the screen (camera or notes) or away; how many were
     unclear; and the same per sentence. The camera/notes counts are kept, not
@@ -133,7 +136,7 @@ def take_gaze(arrays: dict[str, np.ndarray] | None, calibration: dict | None, al
     if why := usable(calibration):
         return _none(why)
     labels = classify(arrays, calibration)
-    during, per = speaking(arrays["face_t"], alignment)
+    during, per = speaking(arrays["face_t"], alignment, spans)
     counts = _counts(labels[during])
     screen = counts["camera"] + counts["notes"]
     judged = screen + counts["away"]

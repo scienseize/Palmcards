@@ -2484,3 +2484,62 @@ Tests: pytest (full) -> 703 passed. New: tests/test_slides.py (lines without bul
 Not checked: on the camera with a real deck; the user's clicker's key codes; per-slide timing is recorded,
   not shown anywhere yet.
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: slides, a PDF speech reads only its titles (the user's test on their 39-slide deck showed
+  the letter-spaced eyebrow read as single letters, lines wrapped mid-sentence, captions and footers as text;
+  the user chose "an outline of titles" over dropping the text or cleaning it up)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: slides.page_titles: each page's text in its largest font size that is words, not figures (a slide of
+  statistics sets its numbers largest); on the user's deck all 39 titles read right, the 8 statistics slides
+  included. PDFKit's per-page log lines are kept off the terminal while reading. A PDF speech is one section,
+  a paragraph per slide holding its title ("Slide N" for none), so a deck of images now opens too; the clicker
+  moves the outline's orange row (no section moves). The coach and readiness say nothing about key points or
+  titles left out for a PDF speech. A file whose parse no longer matches its session's imported revision
+  starts a new session (data.latest_session_for parsed=), so the user's first test session is not continued.
+Tests: pytest (full) -> 703 passed (titles, statistics slides, the outline's paragraphs, the coach on an
+  outline). tests/pdf.py takes a size per line.
+Not checked: on the camera; the user's clicker.
+```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: slides in their own window, tried and reverted (the user: "it's not good to create a new
+  window, revert this")
+Status: reverted before commit; the slide is drawn in the hand zone again
+Changes: none kept but Deck drawing pages when first shown (the last 6 kept) instead of all at once in a
+  thread. The problem stays open: in the hand zone the slide is too small (36% of the width) and, the mirror's
+  1280 x 720 frame being stretched 2x on the user's Retina screen, too blurred to read small print.
+```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: slides in a presenter layout (after the slide window was reverted; the user chose it over
+  a full-screen slide on a key)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: render.Presenter (style.PRESENTER): a take with slides (and its count-in, not the eye calibration's)
+  is drawn on a canvas twice the camera's frame, 2560 x 1440: the slide large on the left (1549 px wide on
+  the user's deck, so its small print is sharp on a Retina screen), a tall crop of the mirror round the face
+  zone on the right, the label, REC, the slide's number and the count-in at the canvas's size. The slide is
+  pasted once per change; a frame costs 3.2 ms (median, off screen), a new page 13.6 ms. Replaces the slide
+  in the hand zone (style.SLIDE removed).
+Tests: pytest (full); the layout's boxes, the face zone in the mirror's crop, the slide and the camera where
+  they belong.
+Not checked: imshow's cost for the 2560 x 1440 canvas (slow_frame lines in the gesture log will say).
+```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: a PDF speech measured as free speech (the user's take 2: 87 s, but no pace, "0.0 s voiced",
+  gaze "0 of 0": pace, voice and gaze went over note sentences said, and its notes are slide titles)
+Status: implemented; automated checks passed; the user's takes re-measured
+Changes: metrics.speaking_spans (every stretch of words, split at METRICS.long_pause_s; fillers and unsure words
+  not counted); take_metrics(free=) runs pace, voice and gaze over them; speech.make_job sets free for a PDF
+  speech. metrics.VERSION 7. Re-measured with --realign: take 2 now pace 125.9 wpm, pitch range 1.2 st over
+  11 s voiced, gaze screen 15% / away 85%, 93% unclear.
+Open: gaze in takes with slides. The eye calibration knows the camera and the notes column, not the slide, so
+  a look at the slide reads as away or unclear. Needs a calibration step on the slide (presenter layout).
+Tests: pytest (full) -> 705 passed. New: free speech is measured over all of it (pace, voice, gaze).
+```
+

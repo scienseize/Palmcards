@@ -10,8 +10,9 @@ word ("and/or") is text, as before.
 
 Sections start at headings (markdown `#`, Word "Heading"/"Title" styles).
 In .txt and .docx, two or more consecutive blank lines/paragraphs also start
-a new section. A .pdf is slides (palmcards.slides): each page with text is a
-section titled "Slide N", each of its text lines a sentence of its own.
+a new section. A .pdf is slides (palmcards.slides): one section, its outline, each slide
+a paragraph of its own holding the slide's title (or "Slide N" for a slide
+with no text), so paragraph N is slide N.
 
 Run `python -m palmcards.notes FILE` to print the parsed structure.
 """
@@ -208,16 +209,10 @@ def _docx_blocks(data: bytes) -> list[Block]:
 
 
 def _pdf_blocks(data: bytes) -> list[Block]:
-    """Slides: a "Slide N" heading per page with text, then each text line as a paragraph
-    (a bullet is one point to make). A page with no text has no section; it is still a slide."""
-    from palmcards.slides import page_texts
+    """Slides: the outline, a paragraph per slide holding its title, so paragraph N is slide N."""
+    from palmcards.slides import page_titles
 
-    blocks: list[Block] = []
-    for i, lines in enumerate(page_texts(data)):
-        if lines:
-            blocks.append(("heading", f"Slide {i + 1}"))
-            blocks += [("para", line) for line in lines]
-    return blocks
+    return [("para", title or f"Slide {i + 1}") for i, title in enumerate(page_titles(data))]
 
 
 TIME_LINE = re.compile(r"^\s*(?:time|target|length)\s*:\s*(\d{1,2}):([0-5]\d)\s*$", re.IGNORECASE)
@@ -302,9 +297,6 @@ def notes_from_bytes(data: bytes, path: str | Path) -> Notes:
     else:
         blocks = _txt_blocks(data.decode("utf-8-sig"))
     notes = build_notes(blocks, source=path)
-    if not notes.sentences and ext == ".pdf":
-        raise ValueError(f"No text found in {path.name}: its slides are images. Write notes for them, "
-                         "then add the slides from the home card.")
     if not notes.sentences:
         raise ValueError(f"No text found in {path.name}.")
     return notes

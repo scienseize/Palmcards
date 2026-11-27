@@ -112,7 +112,7 @@ def test_without_face_features_gaze_posture_and_touches_say_why():
     al, words, _ = aligned("Good evening everyone thank you.")
     m = metrics.take_metrics(al, words, 0.0, 30.0)
     assert m["gaze"]["value"] is None and "no face features" in m["gaze"]["reason"]
-    assert m["posture"]["value"] is None and "no face features" in m["posture"]["reason"] and m["version"] == 6
+    assert m["posture"]["value"] is None and "no face features" in m["posture"]["reason"] and m["version"] == 7
     assert "no face features" in m["hands"]["face_touches"]["reason"]
 
 
@@ -223,3 +223,30 @@ def test_key_points_and_pace_count_a_sentence_said_in_own_words():
     own = next(s for s in m["sentences"] if s["status"] == "own_words")
     assert own["wpm"] is not None  # paced on its own stretch of words
     assert m["pace_wpm"]["value"] is not None
+
+
+def test_free_speech_is_measured_over_all_of_it():
+    """A PDF speech: its notes are slide titles, said around rather than said, so pace, voice
+    and gaze go over every stretch of speech, not over note sentences said (none here)."""
+    from palmcards import gaze
+    from palmcards.prosody import analyse
+
+    first = "Revenue grew twenty percent um this year and the wards noticed it first"
+    second = "Margins held steady across every ward we visited in the pilot this spring"
+    al, words, _ = aligned(f"{first}. <2.0> {second}")
+    spans = metrics.speaking_spans(al, words)
+    assert len(spans) == 2 and [n for *_, n in spans] == [12, 13]  # the long pause splits them; "um" is no word
+    assert metrics.speech(al, words, 60.0)["pace_wpm"]["value"] is None  # no note sentence said
+    free = metrics.speech(al, words, 60.0, free=True)["pace_wpm"]
+    assert free["value"] is not None and "of speech" in free["basis"]
+
+    audio, said = utter([(w, voice(110 + 20 * i, 130 + 20 * i, 1.2))
+                         for i, w in enumerate(("Revenue", "grew", "twenty", "percent", "this", "year."))])
+    al = align([[w.norm for w in s.words] for s in parse_text(TEXT).sentences], said)
+    p = analyse(audio, RATE, 5.0)
+    assert "too little voiced sound" in metrics.voice(p, al)["reason"]  # no note sentence said: nothing
+    assert metrics.voice(p, al, spans=metrics.speaking_spans(al, said))["pitch_range_st"]["value"] > 5
+
+    t = np.array([0.0, spans[0][0] + 0.1, spans[1][0] + 0.1, spans[1][1] + 5])
+    during, _ = gaze.speaking(t, al, spans)
+    assert during.tolist() == [False, True, True, False]

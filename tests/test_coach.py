@@ -124,3 +124,12 @@ def test_a_qa_round_is_coached_on_its_longest_or_slowest_answer():
     good = advise_answers([{"question": "Who pays?", "duration_s": 30, "first_word_s": 0.8, "fillers": 0}] * 2)
     assert good.work.startswith("Short, direct answers") and good.well == "All 2 answers under 1:00"
     assert advise_answers([]) is None
+
+
+def test_a_pdf_speech_is_not_coached_on_titles_left_out():
+    """Its notes are the slides' titles: not points to make."""
+    b = Board(NOTES)
+    add(b, 1, "Most founders rehearse their pitch silently in their heads. | They walk into the room having never said it aloud.")
+    a = advise(b, 1, outline=True)
+    assert "left out" not in a.work and "not reached" not in a.work and "key points" not in a.well
+    assert a.next.startswith("Run it")

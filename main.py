@@ -129,7 +129,7 @@ from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_req
     get_provider, meaning_request, parse_coach, parse_meaning, parse_alternatives, parse_questions, parse_rewrite, \
     questions_request, rewrite_request
 from palmcards.render import (
-    HINT_SEP, REVIEW_SEP, UNDO_HINT, FocusMotion, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
+    HINT_SEP, REVIEW_SEP, UNDO_HINT, FocusMotion, Presenter, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_replay_hint,
     draw_stats,
 )
@@ -143,13 +143,13 @@ from palmcards.video import unavailable as video_unavailable
 from palmcards.recording import TakeWriter
 from palmcards.revisions import from_snapshot
 from palmcards.session import SESSIONS_DIR, Session, SessionError, recover_all
-from palmcards.style import LAYOUT, SLIDE, TEXT
+from palmcards.style import TEXT
 from palmcards.analysis import Supervisor
 from palmcards.data import latest_session_for, started
 from palmcards.paths import logs_dir
 from palmcards.home import Home, Next, entries as home_entries
 from palmcards.picker import pick_notes, pick_slides
-from palmcards.slides import Deck, slide_of
+from palmcards.slides import Deck
 from palmcards.asr import get_recognizer
 from palmcards.follow import AutoStop, LiveFollow
 from palmcards.speech import make_job
@@ -479,8 +479,7 @@ class Takes:
                                                                                  - self.section_t)
                 budget = f" · {coach.mmss(left)} {'left' if left >= 0 else 'over'}"
             if self.slides_only and (shown := self.slide_shown) is not None:  # a PDF speech: the slide, not the section
-                bare = slide_of(title) != shown  # an image-only slide: the bullets shown are the last slide's
-                return f"Slide {shown + 1} of {self.deck.pages}{' · no text' if bare else ''}{budget}{fading}"
+                return f"Slide {shown + 1} of {self.deck.pages}{budget}{fading}"
             return f"Section {self.section + 1} of {len(self.notes.sections)}: {title}{budget}{fading}"
         if mode == "review" and view.mode == "focus" and view.level == "sentence" and view.focus is not None:
             said = self.board.said_in(view.focus.sentence)
@@ -967,12 +966,13 @@ class Takes:
             if key != self._summary_key:
                 self._summary_key, self._summary = key, self.board.take_table()
                 every = sorted(self.history + progress.points(self.session), key=lambda p: p.when)
-                self._days, self._ready = progress.days_table(every, self.target_s), progress.readiness(every, self.target_s)
+                self._days, self._ready = progress.days_table(every, self.target_s), progress.readiness(every, self.target_s,
+                                                                                            points=not self.slides_only)
                 if last_answer is not None and last_answer > (n or 0):  # the newest is a Q&A round
                     since = max((t for t in self.board.takes if t < last_answer), default=0)
                     self._advice = coach.advise_answers([self.answers[m] for m in sorted(self.answers) if m > since])
                 else:
-                    self._advice = coach.advise(self.board, n, self.target_s)
+                    self._advice = coach.advise(self.board, n, self.target_s, outline=self.slides_only)
                 # The sentence to practise is the current one (orange), in view, ready to select.
                 if self._advice is not None and self._advice.sentence is not None and overlay is not None \
                         and gs.mode == "idle":
@@ -1561,8 +1561,9 @@ class Takes:
             return f"Couldn't keep the slides: {short(exc)}"
         return f"Slides added: {deck.pages}"
 
-    def move_slide(self, step: int, t: float, view: ViewState) -> None:
-        """The clicker, in a full take. A PDF speech's section follows the slide, when it has one."""
+    def move_slide(self, step: int, t: float, view: ViewState, overlay: TextOverlay) -> None:
+        """The clicker, in a full take. In a PDF speech the outline's orange row follows the slide
+        (paragraph N is slide N, palmcards.notes), scrolled into view."""
         if self.slide_log is None:
             return
         new = min(max(self.slide + step, 0), self.deck.pages - 1)
@@ -1571,13 +1572,9 @@ class Takes:
         self.slide, self.slide_heard = new, self.stopper.heard_s
         self.slide_log.append([round(t, 3), new])
         self.log(t, "slide", slide=new)
-        if self.slides_only and self.writer is not None:
-            section = next((i for i, s in enumerate(self.notes.sections) if slide_of(s.title) == new), None)
-            if section is not None and section != self.section:
-                self.section, self.section_t = section, t
-                view.current, view.panel_scroll, view.preview_next = self.first_of(section), 0.0, False
-                self.writer.mark_section(t, section, "key")
-                self.log(t, "section", section=section, source="slide")
+        if self.slides_only:
+            view.current = next((s.index for s in self.notes.sentences if s.paragraph == new), view.current)
+            view.panel_scroll = overlay.panel_scroll_to(view, view.current)
 
     def recording_problem(self) -> None:
         """Surface a disk error while a take is still being recorded."""
@@ -1883,7 +1880,7 @@ def open_notes(path: Path, args, remembered: bool = False, new: bool = False, ho
         print(f"warning: {warning}", file=sys.stderr)
     common = dict(lang=args.lang, trace=args.trace, follow=not args.no_follow, gaze_check=args.gaze_check,
                   video=args.video, fade=args.fade, devices=devices, home=home)
-    if not new and (folder := latest_session_for(SESSIONS_DIR, path, source)) is not None:
+    if not new and (folder := latest_session_for(SESSIONS_DIR, path, source, notes)) is not None:
         try:
             session = Session.load(folder)
             session.acquire()
@@ -2071,7 +2068,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             print(f"video off: {why}", file=sys.stderr)
         else:
             print("video on: each take is recorded to take-NN.mp4 in the session folder")
-    takes.open_slides(round(w * (LAYOUT.hand[1] - LAYOUT.hand[0]) * SLIDE.width))  # drawn in a thread
+    # Slides (palmcards.slides): a take with them is drawn in the presenter layout, at twice the camera's
+    # size, so the slide's small print stays sharp (render.Presenter); made only for a speech with slides.
+    presenter = Presenter(sentences, (w, h)) if takes.slides_only or takes.session.slides else None
+    if presenter is not None:
+        takes.open_slides(presenter.slide_width)  # pages drawn when first shown
+
     tutorial = Tutorial(active=not prefs.tutorial_done)
     overlay = TextOverlay(sentences, (w, h))
     warm_overlay(overlay, frame)
@@ -2109,9 +2111,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     def chosen(entry) -> Next | None:
         """A row chosen on the home card: what to open, else None (the speech open now:
         the card closes; slides added, or the Open dialog cancelled: it stays)."""
-        nonlocal note_until
+        nonlocal note_until, presenter
         if entry.slides:
             if (picked := devices.pick_slides()) is not None:
+                if presenter is None:
+                    presenter = Presenter(sentences, (w, h))
+                    takes.slide_width = presenter.slide_width
                 view.note, note_until = takes.attach_slides(picked), time.perf_counter() + NOTE_S
                 home.rows = open_home().rows
             return None
@@ -2231,7 +2236,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         view.undo_progress = modes.undo_progress if modes.mode == "prepare" else 0.0
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
         slide_i = takes.slide_shown if modes.mode in ("count_in", "rehearse") else None
-        view.slide = takes.deck.page(slide_i) if slide_i is not None else None  # None while it draws
+        view.slide = takes.deck.page(slide_i) if slide_i is not None else None  # drawn when first shown (~6 ms)
         view.slide_label = f"{slide_i + 1} / {takes.deck.pages}" if slide_i is not None else ""
         if modes.mode in ("prepare", "review") and result is not None:
             sync_view(grammar, view, overlay)
@@ -2320,6 +2325,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             # open palm stops it; the mirror and the notes come back after.
             frame = replay
             takes.draw_replay(frame, view.play_progress or 0.0)
+        elif view.slide is not None and presenter is not None and view.calibration is None:
+            frame = presenter.compose(frame, view)  # the eye calibration reads the notes: the mirror then
         else:
             overlay.draw(frame, view)
             if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
@@ -2364,7 +2371,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         now_t = time.perf_counter() - t0
         if key in SLIDES.next_keys or key in SLIDES.prev_keys:  # a clicker: the slide in a full take
             if view.app == "rehearse":
-                takes.move_slide(1 if key in SLIDES.next_keys else -1, now_t, view)
+                takes.move_slide(1 if key in SLIDES.next_keys else -1, now_t, view, overlay)
         elif key == ord("x") and takes.stop_playback("key", now_t):  # x stops any playback first
             view.note, note_until = "Stopped", time.perf_counter() + NOTE_S
         elif key in KEY_COMMANDS:

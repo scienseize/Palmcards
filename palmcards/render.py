@@ -70,7 +70,7 @@ from palmcards.notes import Sentence, parse_sentence
 from palmcards.preview import PreviewView
 from palmcards.style import (
     BAR, CHIPS, COLORS, COUNT_IN, SMALL_ON_FILL, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT,
-    GLASS, MOTION, OUTLINE, PLAYBAR, PLAYER, REC, RING, SCRIM, SHADOW, SLIDE, TEXT, TYPE, TypeStep, bgr,
+    GLASS, MOTION, OUTLINE, PLAYBAR, PLAYER, PRESENTER, REC, RING, SCRIM, SHADOW, TEXT, TYPE, TypeStep, bgr,
 )
 
 if TYPE_CHECKING:
@@ -1981,22 +1981,6 @@ class TextOverlay:
         cv2.circle(frame, (bx0 - REC.mic_dx, (by0 + by1) // 2), r0 + round(grow * state.mic), bgr(C.rec), -1,
                    cv2.LINE_AA)
 
-    def _draw_slide(self, frame: np.ndarray, state: ViewState) -> None:
-        """The take's slide in the hand zone, centred, under the REC chip, on the glass panels'
-        rounded corners and hairline edge; its number small under it. Opaque: it is the slide."""
-        img = state.slide
-        h, w = img.shape[:2]
-        x0 = round(LAYOUT.hand[0] * self.frame_w + ((LAYOUT.hand[1] - LAYOUT.hand[0]) * self.frame_w - w) / 2)
-        y0 = round(SLIDE.top * self.line_h)
-        if x0 < 0 or y0 + h > self.frame_h or x0 + w > self.frame_w:  # a smaller window than the deck was drawn for
-            return
-        roi = frame[y0:y0 + h, x0:x0 + w]
-        (inside, outside), (ys, xs, a) = _glass_mask(w, h, round(GLASS.radius * self.line_h))
-        roi[:] = cv2.blendLinear(img, roi, inside, outside)
-        roi[ys, xs] = roi[ys, xs] * (1.0 - a) + np.array(GLASS.edge[2::-1], np.float32) * a
-        chip = self._chip(state.slide_label, self._face(TYPE.small, SMALL_ON_FILL), C.dim, C.label_fill)
-        self._blend_centered(frame, chip, x0 + w / 2, y0 + h + SLIDE.label_gap + chip[0].shape[0] / 2)
-
     def _scrim_level(self, frame: np.ndarray) -> float:
         """How dark the scrim should be for this frame: the brightness of the
         camera image under the text column (before anything is drawn on it)
@@ -2027,15 +2011,16 @@ class TextOverlay:
     def _draw_glass(self, frame: np.ndarray, box: tuple[float, float, float, float]) -> None:
         draw_glass(frame, box, round(GLASS.radius * self.line_h), self._scrim_alpha or GLASS.alpha_min)
 
-    def _draw_count_in(self, frame: np.ndarray, state: ViewState) -> None:
+    def _draw_count_in(self, frame: np.ndarray, state: ViewState, cx: float | None = None) -> None:
         """The count-in's digit, in the hand zone below the recording clock (the hand
-        is down during the count-in), a bar under it emptying over each second."""
+        is down during the count-in), a bar under it emptying over each second. `cx`:
+        its centre elsewhere (the presenter layout's mirror)."""
         if state.app == "count_in" and state.count_in > 0 and state.calibration is None:
             if self._count is None or self._count[0] != state.count_in:
                 self._count = (state.count_in, state.now)
             f = self._face(TYPE.display)
             ink = self._ink(str(state.count_in), f, C.label_state)
-            cx = sum(LAYOUT.hand) / 2 * self.frame_w
+            cx = sum(LAYOUT.hand) / 2 * self.frame_w if cx is None else cx
             box = self._blend_centered(frame, ink, cx, self.frame_h * COUNT_IN.y)
             half = f.advance * COUNT_IN.bar_em / 2
             self._draw_bar(frame, cx - half, cx + half, box[3] + BAR.count_em * self.ui_size,
@@ -2181,8 +2166,6 @@ class TextOverlay:
             self._draw_gauge(frame, self.shown_tone(state), top, bottom, state.ops.closing, bounds)
         if state.app == "rehearse":
             self._draw_rec(frame, state)
-        if state.slide is not None and state.app in ("count_in", "rehearse"):
-            self._draw_slide(frame, state)
         if state.app == "review" and state.mode == "focus" and state.takes and g is None:
             self._draw_takes(frame, state)
         self._draw_count_in(frame, state)
@@ -2731,6 +2714,84 @@ def _glass_mask(w: int, h: int, r: int) -> tuple[tuple[np.ndarray, np.ndarray], 
     a = np.asarray(edge.resize((w, h), Image.LANCZOS), np.float32) / 255.0
     ys, xs = np.nonzero(a)  # only the hairline's pixels are blended
     return (mask, 1.0 - mask), (ys, xs, a[ys, xs, None])
+
+
+class Presenter:
+    """The presenter layout (PRESENTER): a take with slides, on a canvas PRESENTER.scale x the
+    camera's frame. The slide large on the left, you in a tall crop of the mirror on the right
+    (around the face zone), both under the label, with rounded corners and the glass's hairline;
+    the label, the recording clock, the slide's number and the count-in over it, from a
+    TextOverlay of the canvas's size, so they are as sharp as the slide."""
+
+    def __init__(self, sentences: list[Sentence], frame_size: tuple[int, int]):
+        fw, fh = frame_size
+        self.size = W, H = fw * PRESENTER.scale, fh * PRESENTER.scale
+        self.overlay = TextOverlay(sentences, self.size)
+        o = self.overlay
+        top = o.label_top + o.label_h + o.pad
+        mx1 = round(W * (1 - PRESENTER.right))
+        mx0 = mx1 - round(W * PRESENTER.mirror)
+        bottom = round(H * (1 - PRESENTER.bottom))
+        self.mirror = (mx0, top, mx1, bottom)
+        sx0 = round(W * LAYOUT.text[0])
+        self.slide_x = (sx0, mx0 - round(W * PRESENTER.gap))  # its height follows the page
+        self.slide_top, self.bottom = top, bottom
+        # The camera's crop: the mirror box's aspect, the frame's full height, centred on the face zone.
+        cw = min(fw, round(fh * (mx1 - mx0) / (bottom - top)))
+        cx = round(sum(LAYOUT.face) / 2 * fw - cw / 2)
+        self.crop = (min(max(cx, 0), fw - cw), cw)
+        self.radius = round(GLASS.radius * o.line_h)
+        self._canvas = np.empty((H, W, 3), np.uint8)
+        self._base: np.ndarray | None = None  # the background with the slide on it, per slide
+        self._page: np.ndarray | None = None  # the page it was made for
+
+    @property
+    def slide_width(self) -> int:
+        """The width to draw a deck's pages at (palmcards.slides.Deck)."""
+        return self.slide_x[1] - self.slide_x[0]
+
+    def _round(self, roi: np.ndarray, img: np.ndarray) -> None:
+        """`img` into `roi` with rounded corners and the hairline edge."""
+        h, w = img.shape[:2]
+        (inside, outside), (ys, xs, a) = _glass_mask(w, h, min(self.radius, w // 2, h // 2))
+        roi[:] = cv2.blendLinear(img, roi, inside, outside)
+        roi[ys, xs] = roi[ys, xs] * (1.0 - a) + np.array(GLASS.edge[2::-1], np.float32) * a
+
+    def _slide_box(self, page: np.ndarray) -> tuple[int, int, np.ndarray]:
+        """Where the page goes (x, y) and the page, made smaller if it is too tall for the room."""
+        x0, x1 = self.slide_x
+        room = self.bottom - self.slide_top
+        if page.shape[0] > room:  # a tall page (4:3, portrait): fit its height
+            page = cv2.resize(page, (round(page.shape[1] * room / page.shape[0]), room), interpolation=cv2.INTER_AREA)
+        return x0 + (x1 - x0 - page.shape[1]) // 2, self.slide_top, page
+
+    def compose(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
+        """The canvas for this frame: `frame` is the camera's (the room darkened), `state.slide` the page."""
+        if self._base is None or self._page is not state.slide:  # a new slide: made once
+            base = np.full_like(self._canvas, bgr(PRESENTER.background))
+            x, y, page = self._slide_box(state.slide)
+            self._round(base[y:y + page.shape[0], x:x + page.shape[1]], page)
+            self._base, self._page, self._slide_at = base, state.slide, (x, y, page.shape[1], page.shape[0])
+        canvas = self._canvas
+        np.copyto(canvas, self._base)
+        mx0, my0, mx1, my1 = self.mirror
+        cx, cw = self.crop
+        mirror = cv2.resize(frame[:, cx:cx + cw], (mx1 - mx0, my1 - my0), interpolation=cv2.INTER_LINEAR)
+        self._round(canvas[my0:my1, mx0:mx1], mirror)
+        o = self.overlay
+        o._glass_level(canvas)
+        o._draw_label(canvas, state, o.label_top)
+        if state.app == "rehearse":
+            o._draw_rec(canvas, state)
+        o._draw_count_in(canvas, state, (mx0 + mx1) / 2)
+        x, y, w, h = self._slide_at
+        if state.slide_label:
+            chip = o._chip(state.slide_label, o._face(TYPE.small, SMALL_ON_FILL), C.dim, C.label_fill)
+            o._blend_centered(canvas, chip, x + w / 2, y + h + PRESENTER.label_gap * PRESENTER.scale
+                              + chip[0].shape[0] / 2)
+        if state.alert:
+            o._draw_alert(canvas, state.alert, y + h + o.pad, self.size[1])
+        return canvas
 
 
 def draw_glass(frame: np.ndarray, box: tuple[float, float, float, float], radius: int, tint: float) -> None:

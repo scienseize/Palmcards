@@ -151,6 +151,7 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
         "calibration": next((c for c in session.calibrations
                              if take.vision and c["id"] == take.vision.get("calibration")), None),
         "realign": realign,
+        "free": session.notes.suffix.lower() == ".pdf",  # a PDF speech: measured over all its speech (metrics)
     }
 
 
@@ -202,7 +203,8 @@ def run_job(job: dict) -> dict:
     measured_take = metrics.take_metrics(
         alignment, data["words"], job["t_start"], job.get("duration_s", 0.0), log,
         log.with_suffix(".trace.jsonl") if log else None, job.get("vision"), Path(job["face"]) if job.get("face") else None, job.get("calibration"),
-        measured.get("prosody"), "pitch and loudness failed (see the worker's log)", job.get("gaps", []))
+        measured.get("prosody"), "pitch and loudness failed (see the worker's log)", job.get("gaps", []),
+        job.get("free", False))
     # What produced these metrics, so they can be checked or reproduced later.
     measured_take["provenance"] = {
         "notes_revision": job.get("revision"),

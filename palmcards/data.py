@@ -41,10 +41,15 @@ def find(root: Path, name: str) -> Path:
     return hits[0]
 
 
-def latest_session_for(root: Path, notes: Path, data: bytes) -> Path | None:
+def latest_session_for(root: Path, notes: Path, data: bytes, parsed=None) -> Path | None:
     """The newest session imported from `notes` whose kept copy of it is `data`, byte for
     byte: opening the same, unchanged file again continues it (its edits, its takes). A
-    changed file starts a new session. Only folders named for the file's stem are read."""
+    changed file starts a new session. With `parsed` (the file as PalmCards reads it now),
+    so does a file that now reads differently (a PDF read for its titles, not every line).
+    Only folders named for the file's stem are read."""
+    from palmcards.revisions import content_hash, to_snapshot
+
+    now = content_hash(to_snapshot(parsed)[0]) if parsed is not None else None
     notes = Path(notes).expanduser().resolve()
     digest = hashlib.sha256(data).hexdigest()
     for folder in reversed(sessions(root)):
@@ -54,8 +59,9 @@ def latest_session_for(root: Path, notes: Path, data: bytes) -> Path | None:
             s = Session.load(folder)
         except SessionError:
             continue
+        imported = next((r["hash"] for r in s.revisions if r.get("provenance") == "imported"), None)
         if (s.source or {}).get("sha256") == digest and s.current_revision is not None \
-                and Path(s.notes).expanduser().resolve() == notes:
+                and Path(s.notes).expanduser().resolve() == notes and now in (None, imported):
             return folder
     return None
 

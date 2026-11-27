@@ -20,6 +20,9 @@ Work on, the first that applies (COACH settings):
   4. fillers in one place, the sentence with the most,
   5. a pace outside COACH.pace_low .. pace_high,
   6. looking away from the screen more than COACH.away_share.
+A PDF speech (`outline`, palmcards.slides) has its slides' titles for notes,
+not points to make: nothing about key points or sentences left out, and the
+next step is a full run.
 Went well: the largest gain over the take before it, else what is already
 good in this one. Next: a drill of the sentence to work on, else a full run
 again (after a drill: a full run, to put the part back in place).
@@ -95,25 +98,27 @@ def _over_time(board, n: int, target_s: float | None) -> tuple[str, int] | None:
             f"for its {mmss(budget[worst])}"), worst
 
 
-def advise(board, number: int, target_s: float | None = None) -> Advice | None:
+def advise(board, number: int, target_s: float | None = None, outline: bool = False) -> Advice | None:
     """The coaching for take `number` (None until it is analysed). `target_s`: the
-    talk's target length, if one is set."""
+    talk's target length, if one is set. `outline`: the notes are a PDF's slide titles."""
     if number not in board.rows:
         return None
     if number in board.drills:
         return _drill(board, number)
     full = [t for t in board.takes if t not in board.drills and t < number]
     before = full[-1] if full else None
-    well = _went_well(board, number, before, target_s)
+    well = _went_well(board, number, before, target_s, outline)
     if (over := _over_time(board, number, target_s)) is not None:
         work, section = over
-        if section < 0:
+        if section < 0 or outline:
             return Advice(well, work, "Run it through again, a little tighter")
         first = board.notes.sections[section].sentences[0].index
         return Advice(well, work, "Tighten it in Prepare: select its paragraph, then bring two L-hands together",
                       first)
-    work, sentence = _work_on(board, number)
-    if sentence is not None:
+    work, sentence = _work_on(board, number, outline)
+    if sentence is not None and outline:  # a slide's title: run the talk again, not the title
+        nxt = "Run it through again"
+    elif sentence is not None:
         nxt = "Practise it: select it, then pinch and lift"
     elif work.startswith("You stopped"):
         nxt = "Run it through again, to the end"
@@ -132,16 +137,16 @@ def _text(board, i: int) -> str:
     return opening(board.notes.sentences[i].text)
 
 
-def _work_on(board, n: int) -> tuple[str, int | None]:
+def _work_on(board, n: int, outline: bool = False) -> tuple[str, int | None]:
     rows = board.rows[n]
     said = sorted(i for i, r in rows.items() if r["status"] != "skipped")
-    if not said:
+    if not said and not outline:
         return "Nothing was heard in this take: check the microphone", None
-    missed = [i for i, r in rows.items() if r["status"] == "skipped" and i < said[-1]]
+    missed = [i for i, r in rows.items() if r["status"] == "skipped" and i < said[-1]] if not outline else []
     if missed:
         more = f" (and {len(missed) - 1} more)" if len(missed) > 1 else ""
         return f"You left out {_text(board, missed[0])}{more}", missed[0]
-    if (left := len(board.notes.sentences) - 1 - said[-1]) > 0:
+    if not outline and (left := len(board.notes.sentences) - 1 - said[-1]) > 0:
         return f"You stopped after {_text(board, said[-1])}: {left} sentence{'s' if left != 1 else ''} not reached", None
     # The longest silence between one sentence said and the next.
     timed = sorted((r["start"], i) for i, r in rows.items() if r.get("start") is not None)
@@ -181,10 +186,10 @@ def _on_time(board, n: int, target_s: float | None) -> bool:
         abs(length - target_s) <= max(COACH.over_s, COACH.over_share * target_s)
 
 
-def _went_well(board, n: int, before: int | None, target_s: float | None = None) -> str:
-    now = _facts(board, n)
+def _went_well(board, n: int, before: int | None, target_s: float | None = None, outline: bool = False) -> str:
+    now = _facts(board, n, outline)
     if before is not None:
-        then = _facts(board, before)
+        then = _facts(board, before, outline)
         gains = []  # (size of the gain, what to say)
         if _on_time(board, n, target_s) and not _on_time(board, before, target_s):
             gains.append((1.5, f"On time: {mmss(board.durations[n])} for {mmss(target_s)}"))
@@ -218,10 +223,11 @@ def _num(x: float) -> str:
     return f"{x:g}" if x != int(x) else f"{int(x)}"
 
 
-def _facts(board, n: int) -> dict:
+def _facts(board, n: int, outline: bool = False) -> dict:
     rows = board.rows[n]
     speech = (board.metrics.get(n) or {}).get("speech")
-    return {"said": sum(r["status"] != "skipped" for r in rows.values()), "of": len(board.notes.sentences),
+    return {"said": 0 if outline else sum(r["status"] != "skipped" for r in rows.values()),
+            "of": 0 if outline else len(board.notes.sentences),
             "fillers": value(speech, "fillers_per_min"), "pauses": value(speech, "long_pauses"),
             "restarts": sum(board.restarts.get(n, {}).values()), "pace": value(speech, "pace_wpm"),
             "away": _away(board, n)}

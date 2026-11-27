@@ -44,7 +44,7 @@ flowchart LR
     end
     subgraph deck["Slides only"]
         direction TB
-        d1["The file<br/>a PDF of the slides"] --> d2["Rehearse<br/>the clicker moves the slides"] --> d3["Coach works on<br/>bullets left out"]
+        d1["The file<br/>a PDF of the slides"] --> d2["Rehearse<br/>the clicker moves the slides"] --> d3["Coach works on<br/>time, pauses, fillers"]
     end
     speech ~~~ talk ~~~ pitch ~~~ deck
 ```
@@ -112,7 +112,7 @@ Old delivery marks such as `/`, `*word*` or `[slow]` are not supported. PalmCard
 
 Export your slides as a PDF from Keynote, PowerPoint or Google Slides. You can use them in two ways:
 
-- **Slides only.** Open the PDF as the speech. Each slide with text becomes a section, and each line on it (the title and each bullet) becomes a point to make. Review then shows which bullets you covered. A deck that is only images cannot be used this way: write notes for it, then add the slides.
+- **Slides only.** Open the PDF as the speech. The text column becomes your outline: one row per slide with its title, the current one in orange. PalmCards reads only each slide's title (its largest words), because the rest of a designed slide (small headers, captions, footers) is not what you say. A slide with no text shows as "Slide 7". Review measures your voice and your timing; it does not count points left out.
 - **Notes plus slides.** Open your written notes, then choose **Add slides…** on the home card (`l`). PalmCards keeps the PDF's location and reads it again each time, so a deck you export again shows its new slides.
 
 ## Prepare
@@ -147,7 +147,7 @@ To start a take, raise a closed fist and hold it for one second. A 3-2-1 count-i
 - **Target length.** With a target, the clock shows `REC 1:12 / 3:00` and turns orange when you go over. The label shows the time left for the current section. Press `]` or `[` to make the target 15 seconds longer or shorter.
 - **Fading cards** (key `w`, off by default). Words you said correctly in the last takes dim, then blank out, so you learn to speak from memory. If you pause, the next words come back.
 - **Q&A round** (key `y`, off by default). After a full take, three practice questions follow. Each one shows in large type, and you answer it aloud as a take of its own. The questions come from your notes, or from the language model if your notes have none.
-- **Slides.** With slides, the current slide shows on the right during a full take. A presentation clicker moves it, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the notes move with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
+- **Slides.** With slides, a full take switches to a presenter layout: the current slide large and sharp on the left, you in a smaller mirror on the right. A presentation clicker moves the slide, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the outline's orange row moves with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
 - **Video** (`--video`, or the preference `video`, off by default). PalmCards records video of each take beside its audio.
 
 ## Review
