@@ -14,15 +14,16 @@ The app, the recording and the analysis run on your Mac. After you download the 
 
 ```mermaid
 flowchart TD
-    open["Open a notes file<br/>last file, dialog or path"] --> home["Home card<br/>continue, start over, switch"]
-    home --> prepare["Prepare<br/>browse and edit by hand"]
+    open["Start PalmCards"] --> home["Home card<br/>your speeches, the sample, a file"]
+    home -- "a new speech" --> prepare["Prepare<br/>browse and edit by hand"]
+    home -- "a speech with takes" --> review
     prepare -- "raise a fist" --> rehearse["Rehearse<br/>count-in, voice follow"]
     rehearse -- "take ends, Q&A on" --> qa["Q&A round<br/>3 questions"]
     rehearse -- "take ends, Q&A off" --> review["Review<br/>coach card, take table"]
     qa --> review
     review -- "raise a fist: new take<br/>pinch and lift: practise a sentence" --> rehearse
     review -- "V sign: edit" --> prepare
-    prepare -. "L key" .-> home
+    prepare -. "V sign, L or Esc" .-> home
     review -. "L key" .-> home
 ```
 
@@ -81,15 +82,17 @@ macOS asks for these on first use. Allow them for the terminal app you start Pal
 .venv/bin/python main.py --open RUN            # a saved session, in Review
 ```
 
-Other options: `--video` records video of each take, `--fade` turns on fading cards, `--llm ollama|anthropic` turns on the language model, `--no-follow` stops the notes following your voice, and `--lang xx` sets the language you speak (default `en`).
+Other options: `--video` records video for one run when you turned the `video` preference off, `--fade` turns on fading cards, `--llm ollama|anthropic` turns on the language model, `--no-follow` stops the notes following your voice, and `--lang xx` sets the language you speak (default `en`).
 
 If you open a file that has not changed since you last rehearsed it, PalmCards continues that session, with your edits and takes. A changed file starts a new session.
 
-The window opens at once and says what is loading. If PalmCards cannot continue (no camera picture, models not downloaded, a file it cannot read), the window says what to do. Everything the app prints is also kept in `logs/` beside the sessions, one file a day.
+The window opens at once, in full screen (`f` switches it), and says what is loading. If PalmCards cannot continue (no camera picture, models not downloaded, a file it cannot read), the window says what to do. Everything the app prints is also kept in `logs/` beside the sessions, one file a day.
 
 ### Switch speech without quitting
 
-The **home card** lets you change speech inside the app. It shows when you hold a V sign in Prepare with nothing to undo, and when you press `l` in Prepare or Review. The switch is smooth: the camera and hand tracking stay on, so nothing loads on screen. It lists:
+When you start PalmCards without a file, it shows a home card first, with nothing open: your speeches, the sample, and **Open a file…**. Nothing opens until you choose a row. If you cancel the Open dialog, the card stays. `q` quits.
+
+Inside a speech, the **home card** lets you change speech without quitting. It opens when you hold a V sign in Prepare with nothing to undo, or press `l` (Prepare or Review) or `Esc` (Prepare). The switch is smooth: the window, the camera and hand tracking stay on, so nothing loads on screen. It lists:
 
 - **Continue** the speech that is open now;
 - **Start it over**, as a new session (your old takes stay saved);
@@ -98,8 +101,6 @@ The **home card** lets you change speech inside the app. It shows when you hold 
 - **Open another file…**, in the macOS Open dialog: notes, or slides as a PDF.
 
 To choose a row, raise one or two fingers and move your hand up or down, then tap. You can also use the keys: `j` and `k` move, `Enter` or `1` to `9` choose, and `l` or `Esc` close the card.
-
-When you start PalmCards without a file, it shows a home card first, with nothing open: your speeches, the sample, and **Open a file…**. Nothing opens until you choose a row. If you cancel the Open dialog, the card stays. `q` quits.
 
 ## Write your notes
 
@@ -119,7 +120,7 @@ Export your slides as a PDF from Keynote, PowerPoint or Google Slides. You can u
 
 ## Prepare
 
-Hold a hand in the box on the right of the frame. The highlight follows your hand in the notes on the left. On the first run, a tutorial card teaches one gesture at a time (`g` shows or hides it).
+Hold a hand in the box on the right of the frame. The highlight follows your hand in the notes on the left. The hand that PalmCards reads lights up, with a soft yellow rim (cyan for a second hand), so you can see which hand is in use. On the first run, a tutorial card teaches one gesture at a time (`g` shows or hides it).
 
 | Hand shape | Browses |
 | --- | --- |
@@ -143,14 +144,14 @@ Meanings, other words, tone and length need the optional language model. Without
 
 To start a take, raise a closed fist and hold it for one second. A 3-2-1 count-in follows. The count-in is one second once the session has a take.
 
-- **Eye calibration.** In the first count-in of a session, look into the camera lens, then read the orange sentence. PalmCards uses this to tell when you look at the screen and when you look away.
-- **Teleprompter in the notch.** In a take, your notes move into the MacBook's notch: a black panel grows down out of it, above every window, and shows the sentence you are saying on its top line, right under the camera, so reading looks like looking into the lens. It works with slides too. On a screen without a notch, the notes sit at the top centre of the PalmCards window instead.
+- **Eye calibration.** In the first count-in of a session, look into the camera lens, then read the orange sentence (with slides: read the slide). PalmCards uses this to tell when you look at the screen and when you look away.
+- **Teleprompter in the notch.** In a take, your notes move into the MacBook's notch: a black panel, about 470 x 300 points, grows down out of it, above every window, and shows the sentence you are saying on its top line, right under the camera, so reading looks like looking into the lens. Beside the notch it shows the recording clock (left) and a sound wave of your microphone (right): bright bars mean your voice is picked up. Under the notes, one row shows the section and its time left, or a bar while the take stops. It works with written notes plus slides too. On a screen without a notch, the notes sit at the top centre of the PalmCards window instead.
 - **Voice follow.** The current sentence is orange, and the notes scroll as you speak. You can move by key: `n` and `b` for the next and previous section, `j` and `k` for the next and previous sentence.
 - **Stop.** The take stops by itself after a short silence at the end of your last sentence. To stop earlier, hold an OK sign (thumb and index fingertips in a circle, the other fingers up) for 1.5 seconds, anywhere in the frame. In a take, this is the only gesture command.
 - **Target length.** With a target, the clock shows `REC 1:12 / 3:00` and turns orange when you go over. The label shows the time left for the current section. Press `]` or `[` to make the target 15 seconds longer or shorter.
 - **Fading cards** (key `w`, off by default). Words you said correctly in the last takes dim, then blank out, so you learn to speak from memory. If you pause, the next words come back.
 - **Q&A round** (key `y`, off by default). After a full take, three practice questions follow. Each one shows in large type, and you answer it aloud as a take of its own. The questions come from your notes, or from the language model if your notes have none.
-- **Slides.** With slides, a full take switches to a presenter layout: the current slide as large as the screen allows, and your whole camera picture small at the bottom right, like a face cam in a demo video. A presentation clicker moves the slide, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the outline's orange row moves with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
+- **Slides.** With slides, a full take is a presenter view: the current slide as large as the screen allows on the left, and a column on the right with the label, the recording clock, a preview of the next slide, and your whole camera picture as a face cam, like in a demo video. The 3-2-1 count-in shows over the slide. A presentation clicker moves the slide, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the outline's orange row moves with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
 - **Video** (on by default). PalmCards records video of each take beside its audio, so you can watch the take in Review. To turn it off: `python -m palmcards.prefs set video false`.
 
 ## Review
@@ -216,7 +217,7 @@ PalmCards keeps preferences in `prefs.json` in its data folder. Some change with
 .venv/bin/python -m palmcards.prefs set sounds true      # soft sounds for gestures
 ```
 
-Useful ones: `reach` (the size of the hand box, 0.6 to 1.4), `video`, `fade`, `qa`, `sounds` (soft sounds for gestures, off by default), `reduced_motion` (`auto` follows macOS), `count_in_again_s`, and the hold times `start_hold_s` and `done_hold_s`.
+Useful ones: `reach` (the size of the hand box, 0.6 to 1.4), `video` (on by default), `fullscreen` (on by default, key `f`), `fade`, `qa`, `sounds` (soft sounds for gestures, off by default), `reduced_motion` (`auto` follows macOS), `count_in_again_s`, and the hold times `start_hold_s` and `done_hold_s`.
 
 ## The optional language model
 
@@ -227,7 +228,7 @@ It is off by default. It is used only when you ask by gesture: a word's meaning,
 
 ## What the measurements rest on
 
-Each measurement keeps what it rests on. Where there is too little to go on, PalmCards shows "-" and keeps the reason, instead of a guess. Gaze reports only "on screen" against "away": telling the camera from the notes is not reliable yet. Fillers are detected in English only. There is no accent correction.
+Each measurement keeps what it rests on. Where there is too little to go on, PalmCards shows "-" and keeps the reason, instead of a guess. Gaze reports only "on screen" against "away": telling the camera from the notes is not reliable yet. In takes with slides, the eye calibration now reads the slide, but how well gaze holds up there is not checked yet. Fillers are detected in English only. There is no accent correction.
 
 How well the measurements hold up on real takes is still being checked. See [docs/evaluation.md](docs/evaluation.md). To check gaze with prompted takes, run `python main.py --gaze-check`, then `python scripts/evaluate.py --gaze RUN`. To export every take's measurements: `python scripts/evaluate.py --table --csv takes.csv`.
 
@@ -235,7 +236,7 @@ How well the measurements hold up on real takes is still being checked. See [doc
 
 Sessions are in `sessions/` in this folder when it exists, otherwise in `~/Library/Application Support/PalmCards/sessions`. Set `PALMCARDS_DATA` to use another folder. Each session is one folder that holds:
 
-- the audio of each take, and its video if you turned video on;
+- the audio of each take, and its video (on by default);
 - a byte-for-byte copy of the notes you imported, and each revision of them, so later edits never change old results;
 - the transcripts and each take's measurements.
 
