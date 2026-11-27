@@ -2543,3 +2543,50 @@ Open: gaze in takes with slides. The eye calibration knows the camera and the no
 Tests: pytest (full) -> 705 passed. New: free speech is measured over all of it (pace, voice, gaze).
 ```
 
+```text
+Date: 2026-11-27
+Phase / issue IDs: video on by default; a PDF speech shows its slides in Prepare and Review and plays per
+  slide (the user: "video should be on by default, because the user would want to watch their take";
+  "the text layout that shows the headers of the slides is unnecessary ... both should show the slides";
+  chose hand and clicker to flip, and an open palm to play a slide's part)
+Status: implemented; automated checks passed; the user's camera check pending
+Changes: prefs.video defaults to true; prefs.save writes only values that differ from the defaults (a saved
+  file used to pin every default, so a changed default never reached anyone). A PDF speech's Prepare and Review
+  use the presenter layout: the slide of the row the hand is on (the hidden outline gives browsing its rows),
+  the whole camera frame (hand and fingertips) top right, Review's coach card under it, the label in slides'
+  words (view.slides, slide_hints). No edits in Prepare, no drills in Review (ModeMachine.no_drill). An open
+  palm on a selected slide plays playback.slide_span of the newest take that showed it, video included.
+  Review frame 10.8 ms off screen (the coach card's glass at 2x), a take's 3.2.
+Tests: pytest (full); slide_span, prefs saving only changes, video on by default.
+```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: teleprompter at the notch, full screen by default (the user: "the app should be full screen
+  and the area of the text ... should be around the notch ... so it looks like you're looking on camera";
+  "what if the feature becomes a teleprompter that is on the notch"; slides at top centre)
+Status: implemented; automated checks passed; the user's check on the screen pending
+Changes: render.Teleprompter (style.TELEPROMPTER): a take's notes at the top centre, 37-63% of the width (clear
+  of the label), 4 rows, a black panel flush with the top, the current sentence's first row on top, crisp (only
+  the bottom fades), no scrollbar; drawn after the main overlay (ViewState.teleprompter), 1.3 ms. prefs
+  fullscreen defaults to true. A take with slides: the slide centred under the camera (46% of the width, from
+  the label's height down), the mirror right of it.
+Not checked: where macOS puts a full-screen OpenCV window against the notch (letterboxing a 16:9 frame on a
+  16:10 screen may leave a band above it), on the user's screen.
+```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: the teleprompter in the notch itself (the user: "It should be built directly into the mac
+  notch, like textream")
+Status: implemented; automated checks passed; the user's check pending
+Changes: palmcards/notch.py NotchPanel: a native AppKit panel (pyobjc, no new dependency) over the notch, above
+  the menu bar and every window, on every Space, ignoring the mouse; render.Teleprompter drawn into it at the
+  screen's pixels with the notch's height of black above its rows (350 x 155 points on this MacBook, whose
+  notch is 208 x 37.5). Shown in a take with written notes (slides added too), hidden otherwise; redrawn only
+  when its picture changes (~4 ms). No notch: the window's teleprompter (top centre). conftest.no_notch keeps
+  tests from opening it. Textream's README was read for its look (Dynamic Island-shaped, 280-500 px wide); its
+  Swift source could not be fetched (HTTP 503), so the AppKit setup is PalmCards' own.
+Not checked: on the screen (window level over OpenCV's full screen, the panel against the notch's edges).
+```
+

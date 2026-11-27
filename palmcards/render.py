@@ -57,12 +57,14 @@ import random
 import re
 import textwrap
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from palmcards.coach import Practice
 from palmcards.config import CURSOR, KNOB, OPS
 from palmcards.gestures import FINGER_TIPS, HAND_CONNECTIONS, INDEX_TIP, THUMB_TIP, TIPS
 from palmcards.motion import Spring, rubberband
@@ -70,7 +72,8 @@ from palmcards.notes import Sentence, parse_sentence
 from palmcards.preview import PreviewView
 from palmcards.style import (
     BAR, CHIPS, COLORS, COUNT_IN, SMALL_ON_FILL, SUMMARY, DEBUG, DETAIL, FILL, GAUGE, HANDS, HIGH_CONTRAST, LABEL, LAYOUT,
-    GLASS, MOTION, OUTLINE, PLAYBAR, PLAYER, PRESENTER, REC, RING, SCRIM, SHADOW, TEXT, TYPE, TypeStep, bgr,
+    GLASS, MOTION, OUTLINE, PLAYBAR, PLAYER, PRESENTER, REC, RING, SCRIM, SHADOW, TELEPROMPTER, TEXT, TYPE, TypeStep,
+    bgr,
 )
 
 if TYPE_CHECKING:
@@ -173,28 +176,41 @@ def review_hint(state: "ViewState") -> tuple[str, str]:
     if state.coach_ready:
         return f"{FIST_HINT[0]} · Hold an open palm for AI coaching", f"{FIST_HINT[1]} · Palm: AI coach"
     return FIST_HINT
-KEYS_HELP = (
-    "Keys, for when gestures won't do",
-    "T  Record a take     X  Stop (audio, take)",
-    "N B  Next / previous section  U  Undo edit",
-    "J K  Next / previous sentence (Space: next)",
-    "      or scroll a selected panel",
-    "A  Play / stop       P  Back to Prepare",
-    "O  Export the notes (in Review)",
-    "E  Calibrate eyes at the next take",
-    "M  Flip a replayed video (mirror or not)",
-    "W  Fading cards on / off",
-    "I  Coach card, take table or days (Review)",
-    "[ ]  Target length, 15 s shorter / longer",
-    "Y  Q&A round after each take on / off",
-    "C  High contrast     G  Show / hide tutorial",
-    "L  Switch speech     F  Full screen",
-    "Enter  Skip a tutorial step",
-    "Replay bar: yellow filler, red restart,",
-    "  white long pause, blue looked away",
-    "R  Retry analysis    H  Hide    Q, Esc  Quit",
-    "Error details: logs/, beside the sessions",
-)
+def shortcut_page(state):
+    """Title and key/action pairs for the current help page."""
+    general = (("C", "High contrast"), ("F", "Full screen"), ("Q / Esc", "Quit"))
+    if state.home:
+        if state.keys_page % 2:
+            return "Window controls", (*general[:2], ("Q", "Quit"))
+        return "Speech chooser", (("J / K", "Next / previous"), ("Enter", "Open selection"),
+                                   (f"1–{len(state.home)}", "Open by number"), ("L / Esc", "Back"))
+    setup = state.app in ("prepare", "review")
+    index = state.keys_page % (3 if setup else 2)
+    if index == 2 or (index == 1 and not setup):
+        return "Window controls", (*general, ("E", "Calibrate next take"), ("D", "Debug overlay"),
+                                   ("S", "Save screenshot"))
+    if index == 1:
+        return "Rehearsal settings", (("[ / ]", "Target time − / +15 s"), ("W", "Fading cards"),
+                                      ("Y", "Q&A after takes"), ("G", "Gesture tutorial"), ("L", "Switch speech"))
+    nav = ("J / K", "Scroll selection" if state.mode == "focus" else "Next / previous sentence")
+    if state.app == "review":
+        rows = [("Enter", "Start suggested practice")] if state.practice and state.mode != "focus" else []
+        return "Review shortcuts", (*rows, ("T", "Record a take"), ("I", "Change review panel"),
+                                    ("A / X", "Play or stop audio"), nav, ("P", "Back to Prepare"),
+                                    ("O", "Export notes"), ("R", "Retry analysis"), ("M", "Flip replay video"))
+    if state.app == "prepare":
+        tutorial = (("Enter", "Skip tutorial step"),) if state.tutorial else ()
+        return "Prepare shortcuts", (("T", "Record a take"), nav, ("Space", "Move forward"),
+                                     ("U", "Undo edit"), *tutorial)
+    title = "Count-in shortcuts" if state.app == "count_in" else "Recording shortcuts"
+    stop = "Cancel count-in" if state.app == "count_in" else "Stop recording"
+    rows = [("X", stop)]
+    if state.drill is None:
+        rows.extend((nav, ("Space", "Next sentence")))
+        if state.app == "rehearse":
+            rows.append(("N / B", "Next / previous section"))
+    return title, tuple(rows)
+
 
 
 @functools.cache
@@ -420,6 +436,7 @@ class ViewState:
     count_in: int = 0  # 3, 2, 1
     end_progress: float = 0.0  # rehearse: how far the quiet at the end has got to stopping the take (AutoStop)
     calibration: str | None = None  # count_in: the calibration step, "camera" (look into the lens) or "notes"
+    spoken: tuple[int, int] | None = None  # confirmed (sentence, word) for the teleprompter
     rec_s: float = 0.0  # length of the take so far
     target_s: float | None = None  # rehearse: the talk's target length (the REC clock counts toward it)
     question: str = ""  # count_in, rehearse: the practice question being answered (the Q&A round), in the notes' place
@@ -429,6 +446,8 @@ class ViewState:
     drill: int | None = None  # count_in, rehearse: the one sentence a drill rehearses
     detail: tuple[str, ...] = ()  # Review focus: the lines under the sentence (a take each)
     summary: tuple[str, ...] = ()  # Review, browsing: the take table (palmcards.review), a line each
+    practice: Practice | None = None
+    drill_end: int | None = None
     coach: tuple[tuple[str, str], ...] = ()  # Review, browsing: the coach card (palmcards.coach), (heading, text) rows
     coach_ready: bool = False  # Review: an open palm held would ask the AI coach about the newest take
     coach_progress: float = 0.0  # ... how far that hold has got
@@ -439,6 +458,7 @@ class ViewState:
     focus_motion: FocusMotion | None = None
     lift: float = 0.0  # pinch + lift: how far the pinched hand has risen toward a commit, 0..1
     alert: str = ""  # persistent: recording or analysis trouble, until it is dealt with
+    keys_page: int = 0
     keys_help: bool = False  # the keyboard fallback, shown with `h`
     # Rehearse: the next section shown faint under the current one, while its
     # predecessor's last sentence is being said (hides the follow's lag).
@@ -476,6 +496,12 @@ class ViewState:
     # A full take with slides (palmcards.slides): the slide shown (BGR, drawn at its size) and "3 / 12".
     slide: np.ndarray | None = None
     slide_label: str = ""
+    # A take with written notes read from the teleprompter at the notch (render.Teleprompter): the
+    # left column's notes are not drawn.
+    teleprompter: bool = False
+    # A PDF speech in Prepare or Review (render.Presenter): the label's first line is `title`
+    # ("Slide 5 of 39"), its hints `status`, in slides' words; hold bars as usual.
+    slides: bool = False
 
 
 @dataclass
@@ -488,6 +514,7 @@ class Panel:
     header_h: int = 0  # extra room for the edit target, status and gestures
     scale: float = 1.0  # the unit's text size over the notes' (TEXT.focus_scales)
     block: tuple[int, int] = (0, 0)  # the unit and its detail lines: (top, bottom), px into the content
+    word_edges: dict[tuple[int, int], tuple[int, int, int]] = field(default_factory=dict)  # right, top, bottom
 
 
 @dataclass(frozen=True)
@@ -583,10 +610,11 @@ class TextOverlay:
         frame_size: tuple[int, int],
         columns: int | None = None,
         visible_rows: int | None = TEXT.visible_rows,
+        column: tuple[float, float] = LAYOUT.text,
     ):
         self.sentences = sentences
         self.frame_w, self.frame_h = w, h = frame_size
-        self.col_x0, self.col_x1 = (int(f * w) for f in LAYOUT.text)  # the text column
+        self.col_x0, self.col_x1 = (int(f * w) for f in column)  # the text column (the teleprompter's: its own)
         # The notes' size: smaller until a row of the column holds TEXT.min_columns characters.
         size = max(TEXT.min_size, h // TEXT.rows_per_frame)
         while size > TEXT.min_size:
@@ -636,6 +664,7 @@ class TextOverlay:
 
         self._count: tuple[int, float] | None = None  # the count-in's digit and when it came up
         self._wraps: dict = {}  # TextOverlay._wrap's rows, kept
+        self.practice_box = None
         self.summary_box: tuple[int, int, int, int] | None = None  # the take table as last drawn (bottom right)
         self._scrim: np.ndarray | None = None  # its shape across the columns, 1 at full strength
         self._scrim_alpha: float | None = None  # its strength, following the room's brightness
@@ -751,7 +780,7 @@ class TextOverlay:
         return self._label(state)[2]
 
     def _label(self, state: ViewState) -> tuple[str, str, float | None]:
-        if state.title and state.app not in ("count_in", "rehearse"):
+        if state.title and not state.slides and state.app not in ("count_in", "rehearse"):
             return state.title, state.note or state.status, None
         if state.app in ("count_in", "rehearse"):
             progress = None
@@ -774,10 +803,14 @@ class TextOverlay:
                 second += HINT_SEP + ("Hold an OK sign to cancel" if state.app == "count_in" else
                                       "Hold an OK sign to stop")
             title = MODES[state.app] if state.drill is None else "Practising a sentence"
+            if state.drill is not None and state.drill_end is not None:
+                title = "Practising a transition"
             return state.title or title, second, progress
 
         level = state.level or ""
-        if state.mode == "focus":
+        if state.slides:  # a PDF speech in the presenter layout: where you are in the deck
+            first = state.title
+        elif state.mode == "focus":
             first = self._focus_title(state, level)
         elif state.mode == "browse":
             first = f"Browsing {LEVELS.get(level, (level,))[0]}"
@@ -801,6 +834,8 @@ class TextOverlay:
             second, progress = "Keep holding to stop", state.palm_progress
         elif state.drop_progress > 0 and state.mode == "focus":  # the hand is down: say what happens, and how not to
             second, progress = f"Going back{HINT_SEP}Raise your hand to stay", state.drop_progress
+        elif state.slides:  # the app's own hints, in slides' words (Presenter)
+            second = state.status
         elif preview is not None:
             second = self._preview_line(preview, bool(state.llm))
         elif ops.kind == "ring":
@@ -1110,7 +1145,7 @@ class TextOverlay:
     def _panel_unit(self, state: ViewState) -> tuple[int, ...] | None:
         """Sentences shown enlarged in the panel instead of the scrolling text, if any."""
         if state.app in ("count_in", "rehearse") and state.drill is not None:
-            return (state.drill,)
+            return tuple(range(state.drill, (state.drill_end if state.drill_end is not None else state.drill) + 1))
         if state.app in ("count_in", "rehearse"):
             first = next((i for i, s in enumerate(self.sentences) if s.section == state.section), 0)
             unit = self.unit("section", first)
@@ -1129,7 +1164,7 @@ class TextOverlay:
 
     def _panel_current(self, state: ViewState, unit: tuple[int, ...] | None) -> int | None:
         """Rehearse: the sentence drawn in orange inside the section panel."""
-        if unit and state.app in ("count_in", "rehearse") and state.drill is None and state.current in unit:
+        if unit and state.app in ("count_in", "rehearse") and (state.drill is None or state.drill_end is not None) and state.current in unit:
             return state.current
         return None
 
@@ -1202,12 +1237,16 @@ class TextOverlay:
         draw, ud = ImageDraw.Draw(img), ImageDraw.Draw(under)
         where: dict[int, tuple[int, int]] = {}
 
+        word_edges = {}
         dimmed, hidden = faded if faded is not None and replacement is None else ((), ())
 
         def draw_rows(rows_, f, colors, y_, bold_=None, strong=lambda si: False, fade_=False):
             for row in rows_:
                 for col, sp in row.spans:
                     color, shown = colors(sp.sentence), sp
+                    if fade_ and sp.word is not None and sp.sentence == current:
+                        right = round(self.pad + (col + len(sp.text)) * f.advance)
+                        word_edges[(sp.sentence, sp.word)] = (right, y_, y_ + f.line_h)
                     if fade_ and sp.word is not None:  # fading cards: a word said take after take
                         if (sp.sentence, sp.word) in hidden:
                             color, shown = C.faint, Span("_" * len(sp.text), sp.role, sp.word, sp.sentence)
@@ -1253,7 +1292,7 @@ class TextOverlay:
         block = (block_top, y)
         draw_rows(below, self.notes, lambda si: C.faint, y + gap)
         color, inv = _premultiply(_on_glass(img, under))
-        self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y, scale=scale, block=block)
+        self._panel_key, self._panel = key, Panel(panel_h, color, inv, rows_y, scale=scale, block=block, word_edges=word_edges)
         return self._panel
 
     # --- the panel's viewport ------------------------------------------------
@@ -1508,9 +1547,18 @@ class TextOverlay:
             m.spring.snap(target, state.now)
         m.spring.retarget(target, state.now, _r(MOTION.scroll))
 
-    def _panel_view(self, panel: Panel, scroll: int, view_h: int) -> tuple[np.ndarray, np.ndarray]:
+    def _panel_view(self, panel: Panel, scroll: int, view_h: int, spoken=None) -> tuple[np.ndarray, np.ndarray]:
         """The panel's content through its viewport at `scroll` px."""
-        return _window(panel.color, panel.inv, scroll, view_h)
+        color, inv = _window(panel.color, panel.inv, scroll, view_h)
+        edge = panel.word_edges.get(spoken)
+        if edge is not None:
+            right, top, bottom = edge
+            # The viewport normally borrows the cached pixels. Shade only the
+            # visible prefix so a word update never re-rasterizes the section.
+            color = color.copy()
+            color[:max(0, top - scroll)] *= 0.65
+            color[max(0, top - scroll):max(0, bottom - scroll), :right] *= 0.65
+        return color, inv
 
     @staticmethod
     def _receding(state: ViewState, color: np.ndarray, inv: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -1645,33 +1693,8 @@ class TextOverlay:
         if (rows := self._wraps.get(key)) is None:
             if len(self._wraps) >= CHIP_CACHE_MAX:
                 self._wraps.clear()
-            rows = self._wraps[key] = self._wrap_rows(text, f, width, max_rows)
+            rows = self._wraps[key] = _wrap_measured(text, f, width, max_rows)
         return list(rows)
-
-    def _wrap_rows(self, text: str, f: Face, width: float, max_rows: int | None) -> tuple[str, ...]:
-        def fits(s: str) -> bool:
-            return _text_w(f.font, s, f.tracking) <= width
-
-        rows: list[str] = []
-        for word in text.split(" "):  # runs of spaces kept: hints are set apart by two
-            if rows and fits(joined := f"{rows[-1]} {word}"):
-                rows[-1] = joined
-                continue
-            if not word:
-                continue
-            while not fits(word) and len(word) > 1:  # a word wider than a row: broken where it must be
-                cut = max(1, next((k for k in range(len(word) - 1, 0, -1) if fits(word[:k])), 1))
-                rows.append(word[:cut])
-                word = word[cut:]
-            rows.append(word)
-        rows = [r.strip() for r in rows] or [text]
-        if max_rows is not None and len(rows) > max_rows:
-            rows = rows[:max_rows]
-            last = rows[-1]
-            while last and not fits(last + "…"):
-                last = last[:-1]
-            rows[-1] = last.rstrip() + "…"
-        return tuple(rows)
 
     # --- drawing: HUD and operation stubs ----------------------------------
 
@@ -2028,6 +2051,18 @@ class TextOverlay:
         else:
             self._count = None
 
+    def _draw_take_chrome(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
+        """A take whose notes are on the teleprompter: everything else a take shows, where it
+        always is (the label, the recording clock, the count-in, the keys, the alert line)."""
+        if state.app == "rehearse":
+            self._draw_rec(frame, state)
+        self._draw_count_in(frame, state)
+        self._draw_label(frame, state, self.label_top)
+        low = self._draw_pills(frame, state)
+        if state.alert:
+            self._draw_alert(frame, state.alert, self.label_top + self.label_h + self.pad, low)
+        return frame
+
     def _draw_question(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
         """The Q&A round: the question in the notes' place (glass, the focus face,
         wrapped to the text column), the label, the recording clock, the count-in."""
@@ -2057,7 +2092,13 @@ class TextOverlay:
             return self._draw_question(frame, state)
         if state.home:
             return self._draw_home(frame, state)
-        self._draw_glass(frame, self.notes_glass())
+        if state.teleprompter and state.app in ("count_in", "rehearse"):
+            return self._draw_take_chrome(frame, state)
+        left, top, right, bottom = self.notes_glass()
+        if state.app in ("prepare", "review") and state.mode != "focus" and not (
+                state.focus_motion and state.focus_motion.last):
+            bottom = min(bottom, top + (len(self.rows) + MOTION.give_rows) * self.line_h + 2 * self.pad)
+        self._draw_glass(frame, (left, top, right, bottom))
         if state.mode == "focus" and state.ops.stretch_ends is not None:  # under the text, faint
             self._draw_stretch(frame, state.ops)
         box_top = self.y + self.margin
@@ -2076,7 +2117,7 @@ class TextOverlay:
             scroll = int(round(self.shown_panel_scroll(state)))
             top = self._panel_top(view_h, panel.header_h)
             bottom = top + view_h
-            color, inv = self._panel_view(panel, scroll, view_h)
+            color, inv = self._panel_view(panel, scroll, view_h, state.spoken)
             clamped = int(self.clamp_panel_scroll(state, scroll))
             if panel.height > view_h or clamped != scroll:
                 color, inv = self._faded(color, inv, scroll / self.line_h,
@@ -2176,7 +2217,7 @@ class TextOverlay:
         # Bottom right: the take table (Review, browsing), the first-run tutorial.
         self.summary_box = None
         if state.app == "review" and state.coach and state.mode != "focus":
-            self._draw_coach(frame, state.coach)
+            self._draw_coach(frame, state.coach, practice=state.practice)
         elif state.app == "review" and state.summary and state.mode != "focus":
             self._draw_summary(frame, state.summary)
         if state.tutorial is not None:
@@ -2184,30 +2225,38 @@ class TextOverlay:
         return frame
 
     def _draw_home(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
-        """The home card in the notes' place: a row per choice, its title in the
-        label's state face and its detail under it in the hint's; the row picked
-        on the deep orange fill the unit under the hand has in the notes."""
-        self._draw_glass(frame, self.notes_glass())
-        big, small = self._label_face(0), self._label_face(2)
-        x, y = self.x + self.margin + self.pad // 2, self.y + self.margin + self.pad // 2
-        width = self.col_x1 - x - self.pad
-        for i, (title, detail) in enumerate(state.home):
-            title = self._wrap(title, big, width, 1)[0]
-            if i == state.home_picked:
-                chip = self._chip(title, big, C.chip_text, C.chip_fill)
-                px = max(CHIPS.pad_x[0], big.size // CHIPS.pad_x[1])
-                py = max(CHIPS.pad_y[0], big.size // CHIPS.pad_y[1])
-                _blend(frame, x - px - 1, y - py - 1, *chip)
-            else:
-                self._blend_ink(frame, self._ink(title, big, C.label_state), x, y)
-            y += big.line_h
-            for row in self._wrap(detail, small, width, 2):
-                self._blend_ink(frame, self._ink(row, small, C.label_operation if i == state.home_picked
-                                                 else C.label_hint), x, y)
-                y += small.line_h
-            y += big.line_h // 2
-        self._draw_label(frame, state, self.y + self.margin)
-        self._draw_pills(frame, state)
+        """Numbered choices with a fixed detail area for the current selection."""
+        left, top, right, bottom = self.notes_glass()
+        pad = self.pad
+        title, detail = self._face(TYPE.operation), self._label_face(2)
+        key = self._face(TYPE.small, "semibold")
+        row_h = title.line_h + pad
+        key_w = key.line_h + pad
+        text_x = left + 2 * pad + key_w
+        width = right - text_x - pad
+        low = self._draw_pills(frame, state)
+        bottom = min(bottom, low - pad // 2)
+        footer_h = 2 * detail.line_h + 2 * pad
+        count = max(1, min(len(state.home), (bottom - top - 2 * pad - footer_h) // row_h))
+        first = min(max(0, state.home_picked - count // 2), len(state.home) - count)
+        y = top + pad
+        footer = y + count * row_h + pad // 2
+        self._draw_glass(frame, (left, top, right, footer + footer_h))
+        for i in range(first, first + count):
+            picked = i == state.home_picked
+            badge = self._chip(str(i + 1), key, C.chip_text if picked else C.text,
+                               C.chip_fill if picked else C.dark_fill)
+            self._blend_centered(frame, badge, left + pad + key_w / 2, y + row_h / 2)
+            line = self._wrap(state.home[i][0], title, width, 1)[0]
+            self._blend_ink(frame, self._ink(line, title, C.orange if picked else C.text),
+                            text_x, y + (row_h - title.line_h) // 2)
+            y += row_h
+        cv2.line(frame, (left + pad, footer), (right - pad, footer), bgr(C.scroll_track), 1)
+        for j, line in enumerate(self._wrap(state.home[state.home_picked][1], detail, right - left - 2 * pad, 2)):
+            self._blend_ink(frame, self._ink(line, detail, C.label_hint), left + pad,
+                            footer + pad + j * detail.line_h)
+        self.summary_box = None
+        self._draw_label(frame, state, top)
         return frame
 
     def _draw_meaning(self, frame: np.ndarray, meaning: str, word_bottom: float) -> None:
@@ -2268,7 +2317,7 @@ class TextOverlay:
             else:
                 x += chip[0].shape[1] + self.pad // 2
         if state.keys_help:
-            top = self._draw_keys(frame, low)
+            top = self._draw_keys(frame, low, state)
         elif state.app in ("prepare", "count_in", "rehearse", "review"):
             chip = self._chip("H  Keys", f, C.dim, C.label_fill)
             _blend(frame, x, low - chip[0].shape[0], *chip)
@@ -2289,62 +2338,112 @@ class TextOverlay:
         _blend(frame, x, y, color, inv)
         self.summary_box = (x, y, x + w, y + h)
 
-    def _draw_coach(self, frame: np.ndarray, rows: tuple[tuple[str, str], ...]) -> None:
-        """The coach card at the bottom right, where the take table goes (key i swaps
-        them): each point's heading small and dim, its text in the label's state
-        face, wrapped to the hand zone, right-aligned like the tutorial card."""
-        small, big = self._label_face(2), self._label_face(1)
-        pad = round(GLASS.pad * self.line_h)
-        right = self.frame_w - SUMMARY.right - pad
-        width = right - LAYOUT.hand[0] * self.frame_w
+    def _draw_coach(self, frame: np.ndarray, rows: tuple[tuple[str, str], ...],
+                    column: tuple[float, float] | None = None, practice: Practice | None = None) -> None:
+        """Group each coaching point under its heading, aligned for reading."""
+        heading, body = self._label_face(2), self._label_face(1)
+        pad = max(self.pad, round(GLASS.pad * self.line_h))
+        left, right = column or (LAYOUT.hand[0] * self.frame_w, self.frame_w - SUMMARY.right)
+        width = right - left - 2 * pad
         lines = []
-        for heading, text in rows:
-            lines.append((heading, small, C.label_hint))
-            lines += [(row, big, C.orange if heading.startswith("Work on") else C.label_state)
-                      for row in self._wrap(text, big, width)]
-        y = self.frame_h - SUMMARY.bottom - pad - sum(f.line_h for _, f, _ in lines)
-        left = right - max(_text_w(f.font, row, f.tracking) for row, f, _ in lines)
-        self._draw_glass(frame, (left - pad, y - pad, right + pad, self.frame_h - SUMMARY.bottom))
-        self.summary_box = (left, y, right, self.frame_h - SUMMARY.bottom)
-        for row, f, color in lines:
-            ink = self._ink(row, f, color)
-            self._blend_ink(frame, ink, right - (ink[0].shape[1] - 2 * ink[2]), y)
+        self.practice_box = None
+        if practice:
+            title = self._label_face(0)
+            for text, f, color in ((practice.title, title, C.label_state), (practice.cue, body, C.text),
+                                   (practice.progress, heading, C.label_hint)):
+                lines.extend((line, f, color, pad if i == 0 else 0)
+                             for i, line in enumerate(self._wrap(text, f, width, 3)))
+            button = self._chip(practice.action + "  ↵", heading, C.chip_text, C.chip_fill)
+        for label, text in (() if practice else rows):
+            lines.append((label, heading, C.orange if label.startswith("Work on") else C.label_hint, pad))
+            lines.extend((line, body, C.label_state, 0) for line in self._wrap(text, body, width))
+        bottom = self.frame_h - SUMMARY.bottom
+        top = bottom - pad - sum(f.line_h + gap for _, f, _, gap in lines)
+        if practice:
+            top -= pad + button[0].shape[0]
+        self._draw_glass(frame, (left, top, right, bottom))
+        self.summary_box = (int(left), int(top), int(right), int(bottom))
+        y = top
+        for line, f, color, gap in lines:
+            y += gap
+            self._blend_ink(frame, self._ink(line, f, color), left + pad, y)
             y += f.line_h
+
+        if practice:
+            x, y = int(left + pad), int(y + pad)
+            _blend(frame, x, y, *button)
+            self.practice_box = (x, y, x + button[0].shape[1], y + button[0].shape[0])
 
     def _draw_tutorial(self, frame: np.ndarray, step: int, of: int, text: str) -> None:
-        """One gesture at a time, at the bottom right under the hand box (it
-        teaches the hand), right-aligned: where it is in the steps and how to
-        skip (the label's hint), then what to do (the label's state)."""
+        """Give the next gesture priority, with progress and keyboard actions nearby."""
         small, big = self._label_face(2), self._label_face(0)
-        dots = " ".join("●" if k < step else "○" for k in range(of))
         pad = round(GLASS.pad * self.line_h)
-        right = self.frame_w - SUMMARY.right - pad
-        width = right - LAYOUT.hand[0] * self.frame_w
-        rows = [(row, small, C.label_hint) for row in self._wrap(f"{dots}   Enter: skip  ·  G: hide", small, width)] + \
-            [(row, big, C.label_state) for row in self._wrap(text, big, width)]
-        y = self.frame_h - SUMMARY.bottom - pad - sum(f.line_h for _, f, _ in rows)
-        left = right - max(_text_w(f.font, row, f.tracking) for row, f, _ in rows)
-        self._draw_glass(frame, (left - pad, y - pad, right + pad, self.frame_h - SUMMARY.bottom))
-        for row, f, color in rows:
-            ink = self._ink(row, f, color)
-            self._blend_ink(frame, ink, right - (ink[0].shape[1] - 2 * ink[2]), y)
-            y += f.line_h
+        right = self.frame_w - SUMMARY.right
+        left = max(round(LAYOUT.hand[0] * self.frame_w), right - 21 * big.size)
+        width = right - left - 2 * pad
+        rows = self._wrap(text, big, width)
+        progress = f"Gesture {step} of {of}"
+        actions = "Enter to skip  ·  G to hide"
+        action_ink = self._ink(actions, small, C.label_hint)
+        action_width = action_ink[0].shape[1] - 2 * action_ink[2]
+        compact = _text_w(small.font, progress, small.tracking) + pad + action_width <= width
+        bottom = self.frame_h - SUMMARY.bottom
+        meta_h = small.line_h if compact else 2 * small.line_h
+        top = bottom - 2 * pad - pad // 2 - meta_h - len(rows) * big.line_h
+        self._draw_glass(frame, (left, top, right, bottom))
+        x, y = left + pad, top + pad
+        self._blend_ink(frame, self._ink(progress, small, C.orange), x, y)
+        if compact:
+            self._blend_ink(frame, action_ink, right - pad - action_width, y)
+        else:
+            self._blend_ink(frame, action_ink, x, y + small.line_h)
+        y += meta_h + pad // 2
+        for line in rows:
+            self._blend_ink(frame, self._ink(line, big, C.label_state), x, y)
+            y += big.line_h
 
-    def _draw_keys(self, frame: np.ndarray, low: int) -> int:
-        """The keyboard fallback (TYPE.small, smaller if need be), bottom left,
-        ending at `low`, as large as fits the text column. Returns its top."""
-        st = TYPE.small
-        size = self._face(st).size
-        widest = max(KEYS_HELP, key=len)
-        while True:
-            f = face(size, SMALL_ON_FILL, st.tracking, st.leading, family="mono")  # columns line up
-            px = max(CHIPS.pad_x[0], size // CHIPS.pad_x[1])
-            if size <= 8 or _text_w(f.font, widest, f.tracking) + 2 * px + 2 <= self.col_x1 - self.x:
-                break
-            size -= 1
-        block = self._block(KEYS_HELP, f, (C.node_text,) * len(KEYS_HELP), C.dark_fill)
-        top = low - block[0].shape[0]
-        _blend(frame, self.x + self.margin, top, *block)
+    def _draw_keys(self, frame: np.ndarray, low: int, state: ViewState) -> int:
+        title, rows = shortcut_page(state)
+        width = self.col_x1 - self.x
+        cache_key = ("shortcuts", title, rows, width, C.label_hint)
+        if cache_key not in self._chips:
+            pad = self.pad
+            body = self._label_face(2)
+            heading = self._label_face(1)
+            key = self._face(TYPE.small, "semibold")
+            cap_h = key.line_h + 4
+            key_w = round(max(_text_w(key.font, k, key.tracking) for k, _ in rows)) + 10
+            label_x = 2 * pad + key_w
+            layouts = [(k, self._wrap(label, body, width - label_x - pad)) for k, label in rows]
+            row_heights = [max(cap_h, len(lines) * body.line_h) + 4 for _, lines in layouts]
+            first = pad + heading.line_h + pad
+            footer_y = first + sum(row_heights) + pad // 2
+            height = footer_y + pad + key.line_h + pad
+            img = Image.new("RGBA", (width, height), CLEAR)
+            d = ImageDraw.Draw(img)
+            d.rounded_rectangle((0, 0, width - 1, height - 1), radius=pad, fill=(29, 29, 31, 255),
+                                outline=(78, 78, 82, 255))
+            _text(d, (pad, pad + heading.dy), title, heading.font, heading.tracking, fill=C.label_state)
+            y = first
+            for (k, lines), rh in zip(layouts, row_heights):
+                cap_y = y + (rh - cap_h) // 2
+                d.rounded_rectangle((pad, cap_y, pad + key_w, cap_y + cap_h - 1), radius=4,
+                                    fill=(57, 57, 61, 255), outline=(91, 91, 95, 255))
+                x = pad + (key_w - _text_w(key.font, k, key.tracking)) / 2
+                _text(d, (x, cap_y + 2 + key.dy), k, key.font, key.tracking, fill=C.label_state)
+                for j, line in enumerate(lines):
+                    ty = y + (rh - len(lines) * body.line_h) // 2 + j * body.line_h
+                    _text(d, (label_x, ty + body.dy), line, body.font, body.tracking, fill=C.text)
+                y += rh
+            d.line((pad, footer_y, width - pad, footer_y), fill=(75, 75, 80, 255))
+            _text(d, (pad, footer_y + pad + key.dy), "Tab  More keys     H  Close", key.font, key.tracking,
+                  fill=C.orange)
+            if len(self._chips) >= CHIP_CACHE_MAX:
+                self._chips.clear()
+            self._chips[cache_key] = _premultiply(img)
+        patch = self._chips[cache_key]
+        top = low - patch[0].shape[0]
+        _blend(frame, self.x, top, *patch)
         return top
 
     # --- drawing: the take player ------------------------------------------
@@ -2571,25 +2670,66 @@ def draw_hand_area(frame: np.ndarray, cursor: RelativeCursor, avoid: tuple[int, 
         frame[ay0:ay1, ax0:ax1] = keep
 
 
+def _wrap_measured(text: str, f: Face, width: float, max_rows: int | None) -> tuple[str, ...]:
+    def fits(s: str) -> bool:
+        return _text_w(f.font, s, f.tracking) <= width
+
+    rows: list[str] = []
+    for word in text.split(" "):  # runs of spaces kept: hints are set apart by two
+        if rows and fits(joined := f"{rows[-1]} {word}"):
+            rows[-1] = joined
+            continue
+        if not word:
+            continue
+        while not fits(word) and len(word) > 1:  # a word wider than a row: broken where it must be
+            cut = max(1, next((k for k in range(len(word) - 1, 0, -1) if fits(word[:k])), 1))
+            rows.append(word[:cut])
+            word = word[cut:]
+        rows.append(word)
+    rows = [r.strip() for r in rows] or [text]
+    if max_rows is not None and len(rows) > max_rows:
+        rows = rows[:max_rows]
+        last = rows[-1]
+        while last and not fits(last + "…"):
+            last = last[:-1]
+        rows[-1] = last.rstrip() + "…"
+    return tuple(rows)
+
+
+@functools.lru_cache(maxsize=8)
+def _brand_mark(size: int) -> Image.Image:
+    with Image.open(Path(__file__).with_name("brand-mark.png")) as mark:
+        mark.thumbnail((size, size), Image.Resampling.LANCZOS)
+        return mark.copy()
+
+
 def draw_card(frame: np.ndarray, title: str, rows: tuple[str, ...] = ()) -> None:
-    """A screen of its own, for while there is no camera picture (starting up)
-    or none to come (an error the user can act on): the name, the title in the
-    label's step and colour, the rows in the operation's, at the text column."""
+    """Show startup status or recovery instructions before the mirror is available."""
     h, w = frame.shape[:2]
-    frame[:] = bgr(C.label_fill)
+    frame[:] = bgr(C.dark_fill)
     ui = max(TEXT.ui_min_size, h // TEXT.ui_rows_per_frame)
-    name, head, body = (face(round(ui * st.scale), st.weight, st.tracking, st.leading, family=st.family)
-                        for st in (TYPE.small, TYPE.label, TYPE.operation))
+    brand = face(ui, "semibold", -0.02, 1.2, family="ui")
+    head = face(round(1.75 * ui), "semibold", -0.025, 1.12, family="ui")
+    body = face(round(.86 * ui), "regular", 0, 1.4, family="ui")
     x = round(LAYOUT.text[0] * w)
-    columns = max(20, min(64, int((w - 2 * x) / (body.font.getlength("n") + body.tracking))))  # a comfortable measure
-    lines = [(name, "PalmCards", C.dim), (head, title, C.label_state)]
-    lines += [(body, part, C.label_operation) for row in rows for part in (textwrap.wrap(row, columns) or [""])]
+    width = min(w - 2 * x, 32 * ui)
     img = Image.new("RGBA", (w, h), CLEAR)
     draw = ImageDraw.Draw(img)
-    y = round(h * 0.3)
-    for f, text, ink in lines:
-        _text(draw, (x, y + f.dy), text, f.font, f.tracking, fill=ink)
-        y += f.line_h + (f.line_h // 2 if f is not body else 0)
+    y = round(h * 0.08)
+    mark = brand.line_h
+    img.alpha_composite(_brand_mark(mark), (x, y))
+    _text(draw, (x + 1.4 * mark, y + brand.dy), "PalmCards", brand.font, brand.tracking, fill=C.text)
+    y += 2 * mark
+    draw.line((x, y, w - x, y), fill=C.node_outline)
+    y += 2 * mark
+    lines = [(head, title, C.label_state)]
+    lines.extend((body, row, C.text) for row in rows)
+    for f, text, color in lines:
+        for line in _wrap_measured(text, f, width, None):
+            _text(draw, (x, y + f.dy), line, f.font, f.tracking, fill=color)
+            y += f.line_h
+        if f is head:
+            y += ui // 2
     _blend(frame, 0, 0, *_premultiply(img))
 
 
@@ -2716,6 +2856,85 @@ def _glass_mask(w: int, h: int, r: int) -> tuple[tuple[np.ndarray, np.ndarray], 
     return (mask, 1.0 - mask), (ys, xs, a[ys, xs, None])
 
 
+class Teleprompter(TextOverlay):
+    """A take with written notes (TELEPROMPTER): the take's notes at the top centre, right under
+    the camera, on a black panel flush with the top edge (the notch running on down). It draws the
+    notes only, as the take's notes panel always does (the current sentence orange, fading cards,
+    the next section faint); the main overlay draws the rest. The sentence being said is kept on
+    the top row, nearest the lens (scroll_for)."""
+
+    def __init__(self, sentences: list[Sentence], frame_size: tuple[int, int], top: int = 0):
+        """`top`: px of black above the first row (the notch's height, in the notch panel)."""
+        self.top = top
+        super().__init__(sentences, frame_size, visible_rows=TELEPROMPTER.rows, column=TELEPROMPTER.column)
+        self.x = self.col_x0 + (self.col_x1 - self.col_x0 - self.box_w) // 2  # centred under the camera
+        self.y = 0
+
+    @property
+    def label_top(self) -> int:
+        return 0
+
+    @property
+    def label_h(self) -> int:
+        return 0
+
+    @property
+    def max_panel_h(self) -> int:
+        return self.box_h
+
+    def _panel_top(self, view_h: int, extra_header: int = 0) -> int:
+        return self.top + self.pad
+
+    def notes_glass(self) -> tuple[int, int, int, int]:
+        return self.x - self.pad, 0, self.x + self.box_w + self.pad, self.top + self.box_h + self.pad
+
+    def _draw_glass(self, frame: np.ndarray, box: tuple[float, float, float, float]) -> None:
+        """The notch's black, its bottom corners rounded (its top runs off the frame)."""
+        x0, y0, x1, y1 = (int(v) for v in box)
+        r = round(GLASS.radius * self.line_h)
+        cv2.rectangle(frame, (x0, 0), (x1, max(0, y1 - r)), bgr(TELEPROMPTER.fill), -1)
+        cv2.rectangle(frame, (x0 + r, 0), (x1 - r, y1), bgr(TELEPROMPTER.fill), -1)
+        for cx in (x0 + r, x1 - r):
+            cv2.circle(frame, (cx, y1 - r), r, bgr(TELEPROMPTER.fill), -1, cv2.LINE_AA)
+
+    def panel_max_scroll(self, state: ViewState) -> float:
+        # The last line can reach the camera too. _window pads below it.
+        panel = self.panel(state)
+        return float(panel.block[1]) if panel is not None else 0.0
+
+    def scroll_for(self, state: ViewState) -> float:
+        """Keep the row containing the confirmed word at the lens."""
+        panel = self.panel(state)
+        if panel is None or state.current not in panel.rows:
+            return state.panel_scroll
+        if (edge := panel.word_edges.get(state.spoken)) is not None:
+            return edge[1]
+        return panel.rows[state.current][0]
+
+    def _faded(self, color: np.ndarray, inv: np.ndarray, top: float = 1.0, bottom: float = 1.0):
+        """Only the bottom fades: the top row is the one being read, crisp."""
+        return super()._faded(color, inv, 0.0, bottom)
+
+    def _draw_scrollbar(self, *args, **kwargs) -> None:
+        pass  # no bar, no "More": the voice scrolls it
+
+    # Everything but the notes is the main overlay's.
+    def _draw_label(self, frame, state, top) -> None:
+        pass
+
+    def _draw_rec(self, frame, state) -> None:
+        pass
+
+    def _draw_count_in(self, frame, state, cx=None) -> None:
+        pass
+
+    def _draw_pills(self, frame, state) -> int:
+        return self.frame_h
+
+    def _draw_alert(self, frame, alert, bottom, low) -> int:
+        return bottom
+
+
 class Presenter:
     """The presenter layout (PRESENTER): a take with slides, on a canvas PRESENTER.scale x the
     camera's frame. The slide large on the left, you in a tall crop of the mirror on the right
@@ -2736,18 +2955,25 @@ class Presenter:
         sx0 = round(W * LAYOUT.text[0])
         self.slide_x = (sx0, mx0 - round(W * PRESENTER.gap))  # its height follows the page
         self.slide_top, self.bottom = top, bottom
-        # The camera's crop: the mirror box's aspect, the frame's full height, centred on the face zone.
-        cw = min(fw, round(fh * (mx1 - mx0) / (bottom - top)))
-        cx = round(sum(LAYOUT.face) / 2 * fw - cw / 2)
-        self.crop = (min(max(cx, 0), fw - cw), cw)
         self.radius = round(GLASS.radius * o.line_h)
+        # A take: the slide centred under the camera (reading it looks like eye contact), from the
+        # label's height down; you in a tall mirror right of it.
+        tw = round(W * PRESENTER.take_slide)
+        self.take_slide_x = ((W - tw) // 2, (W + tw) // 2)
+        tx1 = self.take_slide_x[1] + round(W * PRESENTER.gap)
+        self.take_mirror = (tx1, top, mx1, bottom)
+        # The camera's crop for it: the mirror's aspect, the frame's full height, centred on the face zone.
+        tcw = min(fw, round(fh * (mx1 - tx1) / (bottom - top)))
+        self.take_crop = (min(max(round(sum(LAYOUT.face) / 2 * fw - tcw / 2), 0), fw - tcw), tcw)
         self._canvas = np.empty((H, W, 3), np.uint8)
-        self._base: np.ndarray | None = None  # the background with the slide on it, per slide
+        self._base: np.ndarray | None = None  # the background with the slide on it, per slide and layout
         self._page: np.ndarray | None = None  # the page it was made for
+        self._take: bool | None = None  # ... and whether for a take
 
     @property
     def slide_width(self) -> int:
-        """The width to draw a deck's pages at (palmcards.slides.Deck)."""
+        """The width to draw a deck's pages at (palmcards.slides.Deck): the larger layout's
+        (Prepare and Review); a take's is drawn smaller from it."""
         return self.slide_x[1] - self.slide_x[0]
 
     def _round(self, roi: np.ndarray, img: np.ndarray) -> None:
@@ -2757,26 +2983,38 @@ class Presenter:
         roi[:] = cv2.blendLinear(img, roi, inside, outside)
         roi[ys, xs] = roi[ys, xs] * (1.0 - a) + np.array(GLASS.edge[2::-1], np.float32) * a
 
-    def _slide_box(self, page: np.ndarray) -> tuple[int, int, np.ndarray]:
-        """Where the page goes (x, y) and the page, made smaller if it is too tall for the room."""
-        x0, x1 = self.slide_x
+    def _slide_box(self, page: np.ndarray, take: bool) -> tuple[int, int, np.ndarray]:
+        """Where the page goes (x, y) and the page, made smaller to fit its box (a take's is
+        narrower; a tall page, 4:3 or portrait, fits its height)."""
+        x0, x1 = self.take_slide_x if take else self.slide_x
         room = self.bottom - self.slide_top
-        if page.shape[0] > room:  # a tall page (4:3, portrait): fit its height
-            page = cv2.resize(page, (round(page.shape[1] * room / page.shape[0]), room), interpolation=cv2.INTER_AREA)
+        scale = min((x1 - x0) / page.shape[1], room / page.shape[0], 1.0)
+        if scale < 1.0:
+            page = cv2.resize(page, (round(page.shape[1] * scale), round(page.shape[0] * scale)),
+                              interpolation=cv2.INTER_AREA)
         return x0 + (x1 - x0 - page.shape[1]) // 2, self.slide_top, page
 
     def compose(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
-        """The canvas for this frame: `frame` is the camera's (the room darkened), `state.slide` the page."""
-        if self._base is None or self._page is not state.slide:  # a new slide: made once
+        """The canvas for this frame: `frame` is the camera's (the room darkened; in Prepare and
+        Review with the fingertips on it), `state.slide` the page. A take shows a tall crop round
+        your face; Prepare and Review the whole frame, where your hand browses, and Review its
+        coach card under it."""
+        whole = state.app in ("prepare", "review")
+        if self._base is None or self._page is not state.slide or self._take is whole:  # a new slide: made once
             base = np.full_like(self._canvas, bgr(PRESENTER.background))
-            x, y, page = self._slide_box(state.slide)
+            x, y, page = self._slide_box(state.slide, not whole)
             self._round(base[y:y + page.shape[0], x:x + page.shape[1]], page)
-            self._base, self._page, self._slide_at = base, state.slide, (x, y, page.shape[1], page.shape[0])
+            self._base, self._page, self._take = base, state.slide, not whole
+            self._slide_at = (x, y, page.shape[1], page.shape[0])
         canvas = self._canvas
         np.copyto(canvas, self._base)
-        mx0, my0, mx1, my1 = self.mirror
-        cx, cw = self.crop
-        mirror = cv2.resize(frame[:, cx:cx + cw], (mx1 - mx0, my1 - my0), interpolation=cv2.INTER_LINEAR)
+        mx0, my0, mx1, my1 = self.mirror if whole else self.take_mirror
+        if whole:  # the whole frame, the hand box included
+            my1 = my0 + round((mx1 - mx0) * frame.shape[0] / frame.shape[1])
+            mirror = cv2.resize(frame, (mx1 - mx0, my1 - my0), interpolation=cv2.INTER_AREA)
+        else:
+            cx, cw = self.take_crop
+            mirror = cv2.resize(frame[:, cx:cx + cw], (mx1 - mx0, my1 - my0), interpolation=cv2.INTER_LINEAR)
         self._round(canvas[my0:my1, mx0:mx1], mirror)
         o = self.overlay
         o._glass_level(canvas)
@@ -2791,6 +3029,10 @@ class Presenter:
                               + chip[0].shape[0] / 2)
         if state.alert:
             o._draw_alert(canvas, state.alert, y + h + o.pad, self.size[1])
+        if whole and state.app == "review" and state.coach:
+            o._draw_coach(canvas, state.coach, (mx0, mx1), state.practice)
+        if whole:
+            o._draw_pills(canvas, state)
         return canvas
 
 

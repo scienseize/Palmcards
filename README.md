@@ -112,7 +112,7 @@ Old delivery marks such as `/`, `*word*` or `[slow]` are not supported. PalmCard
 
 Export your slides as a PDF from Keynote, PowerPoint or Google Slides. You can use them in two ways:
 
-- **Slides only.** Open the PDF as the speech. The text column becomes your outline: one row per slide with its title, the current one in orange. PalmCards reads only each slide's title (its largest words), because the rest of a designed slide (small headers, captions, footers) is not what you say. A slide with no text shows as "Slide 7". Review measures your voice and your timing; it does not count points left out.
+- **Slides only.** Open the PDF as the speech. Prepare and Review show your slides, large, with you on the right: point a finger and move up or down to flip through them (or use the clicker). In Review, tap to select a slide and hold an open palm to watch that slide's part of your newest take. Review measures your voice and your timing; it does not count points left out.
 - **Notes plus slides.** Open your written notes, then choose **Add slides…** on the home card (`l`). PalmCards keeps the PDF's location and reads it again each time, so a deck you export again shows its new slides.
 
 ## Prepare
@@ -142,13 +142,14 @@ Meanings, other words, tone and length need the optional language model. Without
 To start a take, raise a closed fist and hold it for one second. A 3-2-1 count-in follows. The count-in is one second once the session has a take.
 
 - **Eye calibration.** In the first count-in of a session, look into the camera lens, then read the orange sentence. PalmCards uses this to tell when you look at the screen and when you look away.
+- **Teleprompter in the notch.** In a take, your notes move into the MacBook's notch: a black panel grows down out of it, above every window, and shows the sentence you are saying on its top line, right under the camera, so reading looks like looking into the lens. It works with slides too. On a screen without a notch, the notes sit at the top centre of the PalmCards window instead.
 - **Voice follow.** The current sentence is orange, and the notes scroll as you speak. You can move by key: `n` and `b` for the next and previous section, `j` and `k` for the next and previous sentence.
 - **Stop.** The take stops by itself after a short silence at the end of your last sentence. To stop earlier, hold an OK sign (thumb and index fingertips in a circle, the other fingers up) for 1.5 seconds, anywhere in the frame. In a take, this is the only gesture command.
 - **Target length.** With a target, the clock shows `REC 1:12 / 3:00` and turns orange when you go over. The label shows the time left for the current section. Press `]` or `[` to make the target 15 seconds longer or shorter.
 - **Fading cards** (key `w`, off by default). Words you said correctly in the last takes dim, then blank out, so you learn to speak from memory. If you pause, the next words come back.
 - **Q&A round** (key `y`, off by default). After a full take, three practice questions follow. Each one shows in large type, and you answer it aloud as a take of its own. The questions come from your notes, or from the language model if your notes have none.
-- **Slides.** With slides, a full take switches to a presenter layout: the current slide large and sharp on the left, you in a smaller mirror on the right. A presentation clicker moves the slide, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the outline's orange row moves with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
-- **Video** (`--video`, or the preference `video`, off by default). PalmCards records video of each take beside its audio.
+- **Slides.** With slides, a full take switches to a presenter layout: the current slide large and sharp, centred under the camera, you in a smaller mirror on the right. A presentation clicker moves the slide, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the outline's orange row moves with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
+- **Video** (on by default). PalmCards records video of each take beside its audio, so you can watch the take in Review. To turn it off: `python -m palmcards.prefs set video false`.
 
 ## Review
 

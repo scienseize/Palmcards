@@ -609,7 +609,9 @@ class Run:
             log=lambda: GestureLog(work / "gesture.jsonl"), recorder=make_mic, player=SilentPlayer,
             live=make_live, llm=llm, vision=watcher, backdrop=lambda strength: None,  # a still wall: no one to cut out
             named_window=lambda *a: None, show=self.show, wait_key=self.wait_key,
-            window_open=lambda n: True, destroy_windows=lambda: None, pump=lambda: None)
+            window_open=lambda n: True, destroy_windows=lambda: None, pump=lambda: None,
+            fullscreen=lambda name, on: None,  # no window here (full screen is on by default)
+            notch=lambda sentences: None)  # nor a notch panel: the window's teleprompter
         real_supervisor = main.Supervisor
         main.Supervisor = lambda: CassetteAnalysis(live_dir, src.start, self.clock, self)
         try:

@@ -43,10 +43,11 @@ def test_the_presenter_layout_puts_the_slide_left_and_the_mirror_right_sharp():
     notes = notes_from_bytes(make_pdf(DECK), "deck.pdf")
     p = Presenter(notes.sentences, (1280, 720))
     assert p.size == (2560, 1440)  # twice the camera's frame: a Retina screen shows it at its own pixels
-    x0, x1 = p.slide_x
-    mx0, my0, mx1, my1 = p.mirror
+    x0, x1 = p.take_slide_x  # a take: the slide centred under the camera, the mirror right of it
+    mx0, my0, mx1, my1 = p.take_mirror
     assert x0 < x1 < mx0 < mx1 <= 2560 and p.slide_top == my0 and my1 <= 1440
-    crop_x, crop_w = p.crop  # the mirror shows the face zone, not the room
+    assert abs((x0 + x1) / 2 - 1280) <= 1
+    crop_x, crop_w = p.take_crop  # the mirror shows the face zone, not the room
     assert crop_x <= LAYOUT.face[0] * 1280 and crop_x + crop_w >= LAYOUT.face[1] * 1280
     page = Deck(make_pdf(DECK), p.slide_width).page(0)
     camera = np.full((720, 1280, 3), 90, np.uint8)
@@ -54,3 +55,66 @@ def test_the_presenter_layout_puts_the_slide_left_and_the_mirror_right_sharp():
     assert out.shape == (1440, 2560, 3)
     assert (out[p.slide_top + 40, x0 + 40:x1 - 40] > 200).all()  # the slide's paper, where it should be
     assert abs(int(out[(my0 + my1) // 2, (mx0 + mx1) // 2, 0]) - 90) < 5  # the camera, in the mirror
+
+
+def test_a_slide_plays_from_when_it_came_up_to_when_the_clicker_moved_on():
+    from palmcards.playback import slide_span
+    from palmcards.session import TakeRecord
+
+    take = TakeRecord(number=2, wav="take-02.wav", started="", t_start=100.0, duration_s=60.0, sample_rate=16000,
+                      peak=0.5, slides=[[100.0, 0], [112.5, 1], [140.0, 2], [150.0, 1]])
+    assert slide_span(take, 0) == (100.0, 112.5)
+    assert slide_span(take, 1) == (112.5, 140.0)  # its first time up
+    assert slide_span(take, 2) == (140.0, 150.0)
+    assert slide_span(take, 5) is None  # never shown
+    last = TakeRecord(number=3, wav="take-03.wav", started="", t_start=0.0, duration_s=30.0, sample_rate=16000,
+                      peak=0.5, slides=[[0.0, 0], [20.0, 1]])
+    assert slide_span(last, 1) == (20.0, 30.0)  # up until the take ended
+
+
+def test_the_teleprompter_sits_under_the_camera_with_the_sentence_being_said_on_top():
+    from palmcards.notes import parse_text
+    from palmcards.render import PanelMotion, Teleprompter, ViewState
+
+    notes = parse_text("One two three four five six seven. " * 12)
+    tp = Teleprompter(notes.sentences, (1280, 720))
+    assert tp.y == 0 and abs(tp.x + tp.box_w / 2 - 640) <= tp.pad  # top centre: where the camera is
+    assert tp.x > 0.36 * 1280  # clear of the label, top left
+    state = ViewState(app="rehearse", section=0, current=6, panel_motion=PanelMotion())
+    panel = tp.panel(state)
+    assert tp.scroll_for(state) == panel.rows[6][0]  # its first row on the top row
+
+
+def test_the_notch_teleprompter_starts_its_rows_under_the_notch():
+    from palmcards.notes import parse_text
+    from palmcards.notch import NotchPanel
+
+    notes = parse_text("One two three four five six seven. " * 12)
+    panel = NotchPanel(notes.sentences, (751.0, 959.0, 37.5, 1112.0, 2.0))  # this MacBook's notch, 2x
+    p = panel.prompter
+    assert p.top == 75 and p._panel_top(0) == 75 + p.pad  # the first row under the camera's 37.5 points
+    gx0, gx1, gy1 = panel._crop
+    assert 280 <= (gx1 - gx0) / 2 <= 500  # as wide as Textream's, in points
+    assert panel._mask[0].all() and not panel._mask[-1, 0]  # straight across the top, bottom corners round
+
+
+def test_spoken_words_scroll_inside_one_sentence_without_rebuilding_the_panel():
+    import numpy as np
+    from palmcards.notes import parse_text
+    from palmcards.render import Teleprompter, ViewState
+
+    notes = parse_text(" ".join(["Reading the next few words"] * 12) + ".")
+    tp = Teleprompter(notes.sentences, (1280, 720))
+    state = ViewState(app="rehearse")
+    panel = tp.panel(state)
+    first = tp.scroll_for(state)
+    state.spoken = (0, 24)
+    assert tp.panel(state) is panel
+    right, row, bottom = panel.word_edges[state.spoken]
+    assert tp.scroll_for(state) == row > first
+    height = bottom - row
+    original = panel.color[row:bottom].copy()
+    drawn, _ = tp._panel_view(panel, row, height, state.spoken)
+    assert np.any(original[:, :right]) and np.allclose(drawn[:, :right], original[:, :right] * .65)
+    assert np.array_equal(original[:, right:], drawn[:, right:])
+    assert np.array_equal(original, panel.color[row:bottom])

@@ -26,3 +26,10 @@ def steady_motion_and_silence(monkeypatch):
     monkeypatch.setattr(prefs, "system_reduce_motion", lambda: False)
     monkeypatch.setattr(render, "REDUCED", False)
     monkeypatch.setattr(sounds, "nssound_player", lambda: (lambda name: None))
+
+
+@pytest.fixture(autouse=True)
+def no_notch(monkeypatch):
+    """No test opens the real notch teleprompter (palmcards.notch): every screen has no notch."""
+    from palmcards import notch
+    monkeypatch.setattr(notch, "notch_rect", lambda: None)

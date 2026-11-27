@@ -59,10 +59,24 @@ def clip_span(take: TakeRecord, sentences: list[int]) -> tuple[float, float] | N
     return (t0, t1) if t1 > t0 else None
 
 
-def span_clip(session: Session, take: TakeRecord, sentences: list[int]) -> tuple[np.ndarray, int] | None:
+def slide_span(take: TakeRecord, slide: int) -> tuple[float, float] | None:
+    """App times a slide was up in a take (palmcards.slides: the take's [[t, slide], ...]): from its
+    first arrival to when the clicker moved on (or the take's end). None if the take never showed it."""
+    log = take.slides or []
+    at = next((k for k, (_, s) in enumerate(log) if s == slide), None)
+    if at is None:
+        return None
+    end = log[at + 1][0] if at + 1 < len(log) else take.t_start + take.duration_s
+    t0, t1 = max(take.t_start, log[at][0]), min(take.t_start + take.duration_s, end)
+    return (t0, t1) if t1 > t0 else None
+
+
+def span_clip(session: Session, take: TakeRecord, sentences: list[int],
+              span: tuple[float, float] | None = None) -> tuple[np.ndarray, int] | None:
     """The audio of the take's sentences (its own indices) from the first word
-    said to the last (clip_span), or None if none of them was said (or not yet aligned)."""
-    span = clip_span(take, sentences)
+    said to the last (clip_span), or None if none of them was said (or not yet aligned).
+    With `span` (app times), that stretch instead."""
+    span = span or clip_span(take, sentences)
     if span is None:
         return None
     audio, rate = read_wav(session.dir / take.wav, span[0] - take.t_start, span[1] - take.t_start)

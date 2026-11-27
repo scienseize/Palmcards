@@ -30,6 +30,8 @@ def test_a_held_palm_plays_nothing_in_prepare():
 
 
 class FakeTakes:
+    slides_only = False  # written notes (a PDF speech plays per slide)
+
     def __init__(self):
         self.played = []
 

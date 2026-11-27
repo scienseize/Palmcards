@@ -32,18 +32,11 @@ def bgr(c: RGB | RGBA) -> tuple[int, int, int]:
 
 @dataclass(frozen=True)
 class Colors:
-    # Text, Kat's style: off-white notes; the unit under the hand on an orange
-    # fill in dark text, the rest of its paragraph on a slate-blue fill, one
-    # tight fill per row; an orange bar beside the paragraph. Without a hand
-    # the current sentence is orange. Dimmed while something else has focus.
-    # Apple's dark-mode system colours, on glass (GLASS): labels in white at
-    # Apple's label opacities (primary, secondary 60%, tertiary 30%), the
-    # accent in system orange. The unit under the hand on an orange fill in
-    # white, the rest of its paragraph on a faint white fill, an orange bar
-    # beside it; with no hand up the current sentence is orange.
+    # The active unit uses dark ink on solid amber so the camera cannot
+    # change its contrast. Unselected notes stay light on the dark material.
     text: RGBA = (255, 255, 255, 240)
-    unit_fill: RGBA = (230, 110, 0, 245)  # deeper than system orange: white semibold on it holds 3:1
-    unit_text: RGBA = (255, 255, 255, 255)
+    unit_fill: RGBA = (255, 172, 64, 255)
+    unit_text: RGBA = (38, 27, 16, 255)
     context_fill: RGBA = (255, 255, 255, 36)
     orange: RGBA = (255, 159, 10, 255)  # system orange (dark)
     orange_text: RGBA = (255, 159, 10, 255)  # the current sentence, the focused word
@@ -51,7 +44,7 @@ class Colors:
     # (with weight and size: TYPE.label, operation, hint).
     label_state: RGBA = (255, 255, 255, 255)  # what you are doing: "Browsing sentences"
     label_operation: RGBA = (255, 159, 10, 255)  # the status of what you are doing
-    label_hint: RGBA = (235, 235, 245, 165)  # what you can do next: secondary label
+    label_hint: RGBA = (245, 245, 248, 206)  # what you can do next: secondary label
     # Dimmed text is white made see-through, not grey.
     dim: RGBA = (235, 235, 245, 160)  # secondary: Rehearse's other sentences; a focused word's sentence
     faint: RGBA = (235, 235, 245, 80)  # tertiary: context around a focused unit
@@ -70,8 +63,8 @@ class Colors:
     # pale wall they would vanish, in a dark room it doesn't show.
     rim: RGBA = (0, 0, 0, 110)
     # Chips and nodes.
-    chip_fill: RGBA = (230, 110, 0, 245)  # word under the cursor, picked ring node
-    chip_text: RGBA = (255, 255, 255, 255)
+    chip_fill: RGBA = (255, 172, 64, 255)  # word under the cursor, picked ring node
+    chip_text: RGBA = (38, 27, 16, 255)
     dark_fill: RGBA = (28, 28, 30, 225)  # system gray 6 (dark): the take table, the keys
     node_text: RGBA = (255, 255, 255, 240)
     node_outline: RGBA = (255, 255, 255, 46)  # a hairline: light catching the edge
@@ -149,8 +142,8 @@ class Glass:
     One panel holds the label, one the notes (its column, LAYOUT.text); the
     take table, the tutorial and the pills have their own."""
     tint: RGB = (22, 22, 26)
-    alpha_min: float = 0.42  # dark room
-    alpha_max: float = 0.78  # white wall
+    alpha_min: float = 0.54  # dark room
+    alpha_max: float = 0.84  # white wall
     shrink: int = 6
     sigma: float = 2.5
     radius: float = 0.75  # x the notes' line height
@@ -475,6 +468,16 @@ class Rec:
 
 
 @dataclass(frozen=True)
+class Teleprompter:
+    """A take with written notes: the notes at the top centre, under the camera (the MacBook's
+    notch), so reading them looks like eye contact. A black panel flush with the top edge, as
+    if the notch ran on down; the sentence being said on its top row, the next ones under it."""
+    column: tuple[float, float] = (0.37, 0.63)  # x from and to, x the frame width: clear of the label (to 0.36)
+    rows: int = 4  # rows of notes shown
+    fill: RGB = (0, 0, 0)  # the notch's black
+
+
+@dataclass(frozen=True)
 class Presenter:
     """A take with slides (palmcards.slides): the presenter layout. The slide large on the left
     and you in a tall mirror on the right, on a canvas `scale` x the camera's frame, so on a
@@ -487,6 +490,7 @@ class Presenter:
     bottom: float = 0.05  # the margin under them, x the canvas height
     background: RGB = (14, 14, 16)  # behind them: Apple's dark-mode base, a step darker than the glass
     label_gap: int = 8  # px (at 1x) between the slide and its number
+    take_slide: float = 0.46  # a take: the slide centred under the camera (below the label's height), x the width
 
 
 @dataclass(frozen=True)
@@ -608,6 +612,7 @@ SOUND = Sound()
 REC = Rec()
 COUNT_IN = CountIn()
 PRESENTER = Presenter()
+TELEPROMPTER = Teleprompter()
 SUMMARY = Summary()
 HANDS = Hands()
 DEBUG = Debug()

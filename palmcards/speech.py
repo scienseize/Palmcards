@@ -127,8 +127,9 @@ def make_job(session: Session, take: TakeRecord, notes: Notes, realign: bool = F
     from palmcards.analysis import analysis_config
 
     sentences = [[w.norm for w in s.words] for s in notes.sentences]
-    if take.drill is not None:  # only the drilled sentence can be matched
-        sentences = [words if i == take.drill else [] for i, words in enumerate(sentences)]
+    if take.drill is not None:
+        end = take.drill_end if take.drill_end is not None else take.drill
+        sentences = [words if take.drill <= i <= end else [] for i, words in enumerate(sentences)]
     return {
         "take": take.number,
         "revision": take.revision,

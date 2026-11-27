@@ -588,6 +588,7 @@ class GestureEvent:
     value: float | None = None  # tone (-1 cold .. 1 warm) or length ratio
     source: str | None = None  # a mode event from a key rather than a gesture: "key"
     sentence: int | None = None  # "drill": the sentence it rehearses, set when the drill is decided
+    drill_end: int | None = None
 
 
 @dataclass
@@ -1396,6 +1397,7 @@ class ModeMachine:
         self.count_in_end = 0.0
         self.quick_count_in = False  # set by the app: the session has a take, so REHEARSE.count_in_again_s
         self.drill = False  # the count-in or take is a drill
+        self.no_drill = False  # set by the app: a PDF speech (its notes are slide titles) has no drills
         self._back_to = "prepare"
         self._fist_since: float | None = None
         self._fist_last = -math.inf
@@ -1419,7 +1421,8 @@ class ModeMachine:
         events: list[GestureEvent] = []
         if self.mode in ("prepare", "review"):
             events += self.grammar.step(track_events, t)
-            if self.mode == "review" and any(e.kind == "commit" and e.level == "sentence" for e in events):
+            if self.mode == "review" and not self.no_drill \
+                    and any(e.kind == "commit" and e.level == "sentence" for e in events):
                 # The app fills in `sentence` (the focused one) before any handler clears the focus.
                 events.append(GestureEvent("drill", t, "sentence"))
                 self._enter("count_in", t)
@@ -1482,7 +1485,7 @@ class ModeMachine:
             return [GestureEvent("take_start", t)]
         return []
 
-    def command(self, name: str, t: float) -> list[GestureEvent]:
+    def command(self, name: str, t: float, sentence: int | None = None, drill_end: int | None = None) -> list[GestureEvent]:
         """The transitions the gestures make, for the keyboard fallback (usable
         when hand tracking isn't): "start" a take, "stop" it (or cancel the
         count-in), "next" section, back to "prepare" from Review. Anything
@@ -1492,6 +1495,10 @@ class ModeMachine:
         if name == "start" and self.mode in ("prepare", "review"):
             events.append(GestureEvent("count_in", t))
             self._enter("count_in", t)
+        elif name == "practice" and self.mode == "review" and sentence is not None and not self.no_drill:
+            events.append(GestureEvent("drill", t, "sentence", source="key", sentence=sentence, drill_end=drill_end))
+            self._enter("count_in", t)
+            self.drill = True
         elif name == "stop" and self.mode == "rehearse":
             events.append(GestureEvent("take_stop", t))
             self._enter("review", t)

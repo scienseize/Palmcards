@@ -129,7 +129,7 @@ from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_req
     get_provider, meaning_request, parse_coach, parse_meaning, parse_alternatives, parse_questions, parse_rewrite, \
     questions_request, rewrite_request
 from palmcards.render import (
-    HINT_SEP, REVIEW_SEP, UNDO_HINT, FocusMotion, Presenter, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
+    DROP_HINT, HINT_SEP, REVIEW_SEP, UNDO_HINT, FocusMotion, Presenter, Teleprompter, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
     draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_replay_hint,
     draw_stats,
 )
@@ -137,7 +137,7 @@ from palmcards.motion import Spring
 from palmcards.review import Board
 from palmcards.sounds import Cues
 from palmcards.pick import Picker
-from palmcards.playback import ClipPlayer, Playback, clip_marks, clip_span, replay_words, span_clip
+from palmcards.playback import ClipPlayer, Playback, clip_marks, clip_span, replay_words, slide_span, span_clip
 from palmcards.video import VideoReader, VideoWriter
 from palmcards.video import unavailable as video_unavailable
 from palmcards.recording import TakeWriter
@@ -150,6 +150,7 @@ from palmcards.paths import logs_dir
 from palmcards.home import Home, Next, entries as home_entries
 from palmcards.picker import pick_notes, pick_slides
 from palmcards.slides import Deck
+from palmcards.notch import NotchPanel
 from palmcards.asr import get_recognizer
 from palmcards.follow import AutoStop, LiveFollow
 from palmcards.speech import make_job
@@ -189,6 +190,8 @@ def play_focus(view: ViewState, overlay: TextOverlay, takes: "Takes | None") -> 
     sentence = view.focus.sentence if view.focus is not None else view.current
     if view.app != "review" or takes is None:
         return ""
+    if takes.slides_only:  # a PDF speech: the slide's part of the newest take that showed it
+        return takes.play_slide(takes.notes.sentences[sentence].paragraph)
     if view.mode == "focus" and view.level == "paragraph":
         return takes.play_paragraph(overlay.unit("paragraph", sentence))
     return takes.play_sentence(sentence)
@@ -206,6 +209,20 @@ def play_target(view: ViewState, overlay: TextOverlay, board: Board) -> tuple | 
         unit = tuple(overlay.unit("paragraph", sentence))
         return "review", unit, board.paragraph_shown(unit)
     return "review", (sentence,), board.shown(sentence)
+
+
+def slide_hints(view: ViewState) -> str:
+    """A PDF speech in Prepare and Review: the gestures that act now, in slides' words (the
+    label's hint row, after HINT_SEP)."""
+    if view.mode == "focus":
+        if view.app == "review":
+            hints = ["Hold an open palm to stop"] if view.playing else ["Hold an open palm to play this slide"]
+            return HINT_SEP + REVIEW_SEP.join(hints + [DROP_HINT])
+        return HINT_SEP + DROP_HINT
+    if view.mode == "browse":
+        hints = ["Move up or down to flip"] + (["Tap to select this slide"] if view.app == "review" else [])
+        return HINT_SEP + REVIEW_SEP.join(hints)
+    return HINT_SEP + REVIEW_SEP.join(["Point a finger to flip through the slides", "Raise a fist to record"])
 
 
 FIST_HINT = "To record, lower your hand, then raise a\u00a0fist"  # never "fist" alone on a row
@@ -405,6 +422,8 @@ class Takes:
         self._closed = False
         self.last_saved = ""
         self.board = Board(notes)  # the analysed takes, side by side, for Review
+        self.drill_end = None
+        self._practice = None
         self.drill: int | None = None  # the sentence the current count-in or take drills
         self._summary_key, self._summary = None, ()  # Review's take table, and what it was made from
         self._advice = None  # the coach's advice for the newest take (palmcards.coach)
@@ -469,7 +488,8 @@ class Takes:
         if mode in ("count_in", "rehearse") and self.answer is not None:
             return "Answer it aloud: the answer first, then one reason"
         if mode in ("count_in", "rehearse") and self.drill is not None:
-            return f"Sentence {self.drill + 1}"
+            return (f"Sentences {self.drill + 1}–{self.drill_end + 1}" if self.drill_end is not None
+                    else f"Sentence {self.drill + 1}")
         if mode in ("count_in", "rehearse"):
             title = self.notes.sections[self.section].title or "Untitled"
             fading = " · Fading cards" if view.faded is not None else ""
@@ -834,18 +854,60 @@ class Takes:
         self.log(time.perf_counter() - self.t0, "play", take=n, sentences=list(sentences))
         return f"Playing take {n}"
 
-    def _play(self, n: int, sentences: list[int]) -> bool:
+    def slide_of_row(self, view: ViewState, current: bool = False) -> int:
+        """A PDF speech: the slide of the outline row the hand is on (browsing, or selected), else of
+        the current one (paragraph N is slide N). `current`: the current row's, whatever the hand does."""
+        row = view.current
+        if not current and view.mode == "browse" and view.hover is not None:
+            row = view.hover.sentence
+        elif not current and view.mode == "focus" and view.focus is not None:
+            row = view.focus.sentence
+        return self.notes.sentences[min(row, len(self.notes.sentences) - 1)].paragraph
+
+    def row_of_slide(self, slide: int) -> int:
+        """The first outline row of a slide (clamped to the deck)."""
+        slide = min(max(slide, 0), self.notes.sentences[-1].paragraph)
+        return next(s.index for s in self.notes.sentences if s.paragraph == slide)
+
+    def slide_take(self, slide: int) -> int | None:
+        """The newest take that showed this slide (a PDF speech's Review plays it)."""
+        return next((t.number for t in reversed(self.session.takes) if slide_span(t, slide) is not None), None)
+
+    def slide_target(self, view: ViewState) -> tuple | None:
+        """What a PDF speech's Review would play now (see play_target): the slide shown, from its take."""
+        if view.app != "review" or not self.notes.sentences:
+            return None
+        sentence = view.focus.sentence if view.mode == "focus" and view.focus is not None else view.current
+        slide = self.notes.sentences[min(sentence, len(self.notes.sentences) - 1)].paragraph
+        return "review", ("slide", slide), self.slide_take(slide)
+
+    def play_slide(self, slide: int) -> str:
+        """A PDF speech: play the slide's part of the newest take that showed it, from when the
+        clicker brought it up to when it moved on, with the take's video when it has one."""
+        n = self.slide_take(slide)
+        if n is None:
+            return "No take showed this slide yet"
+        if not self._play(n, [], slide_span(self.session.take(n), slide), ("slide", slide)):
+            return self._play_error or "Nothing to play"
+        self.log(time.perf_counter() - self.t0, "play", take=n, slide=slide)
+        return f"Playing take {n}, slide {slide + 1}"
+
+    def _play(self, n: int, sentences: list[int], span: tuple[float, float] | None = None,
+              target: tuple | None = None) -> bool:
         """Play take n's audio for these sentences (current notes' indices;
-        sentences edited since the take are left out). False if there is
-        nothing to play, or it failed (then _play_error says so)."""
+        sentences edited since the take are left out), or for `span` (app times). False if
+        there is nothing to play, or it failed (then _play_error says so)."""
         self._play_error = ""
         take = self.session.take(n)
-        own = {cur: old for old, cur in (self.session.sentence_map(take) or {}).items()}
-        mine = [own[i] for i in sentences if i in own]
-        clip = span_clip(self.session, take, mine) if mine else None
+        if span is None:
+            own = {cur: old for old, cur in (self.session.sentence_map(take) or {}).items()}
+            mine = [own[i] for i in sentences if i in own]
+            clip = span_clip(self.session, take, mine) if mine else None
+            span = clip_span(take, mine) if clip is not None else None
+        else:
+            clip = span_clip(self.session, take, [], span)
         if clip is None:
             return False
-        span = clip_span(take, mine)
         reader = self._video_reader(take)
         # What the replay shows besides the video: marks on its bar, and (if asked for) captions.
         self.replay_span, self.replay_marks, self.replay_words = span, [], []
@@ -856,7 +918,8 @@ class Takes:
             except Exception as exc:  # the replay plays on without them
                 print(f"take {n}: replay marks not shown: {exc}", file=sys.stderr)
         try:
-            self.playback.start_clip(self.clip_player(), clip, ("review", tuple(sentences), n), time.perf_counter(),
+            self.playback.start_clip(self.clip_player(), clip, ("review", target or tuple(sentences), n),
+                                     time.perf_counter(),
                                      video=reader, video_t0=span[0])
         except Exception as exc:  # no output device
             print(f"could not play: {exc}", file=sys.stderr)
@@ -913,7 +976,8 @@ class Takes:
         """Every frame: forget what has finished, stop what the screen no longer
         shows, and hold the focus while its audio plays."""
         now = time.perf_counter()
-        if self.playback.poll(now) and self.playback.target != play_target(view, overlay, self.board):
+        target = self.slide_target(view) if self.slides_only else play_target(view, overlay, self.board)
+        if self.playback.poll(now) and self.playback.target != target:
             self.stop_playback("target", t)
         grammar.set_focus_hold(t, "play" if self.playback.playing and view.mode == "focus" else None)
         view.playing = self.playback.playing
@@ -936,6 +1000,7 @@ class Takes:
     def sync_review(self, grammar: Grammar, view: ViewState, overlay: "TextOverlay | None" = None,
                     t: float = 0.0) -> None:
         """Review: the takes to point at, the focused sentence in each take, and the take table."""
+        view.practice = None
         gs = grammar.state
         focused = view.focus.sentence if view.mode == "focus" and view.focus is not None else None
         said = self.board.said_in(focused) if focused is not None and view.level == "sentence" else []
@@ -973,6 +1038,16 @@ class Takes:
                     self._advice = coach.advise_answers([self.answers[m] for m in sorted(self.answers) if m > since])
                 else:
                     self._advice = coach.advise(self.board, n, self.target_s, outline=self.slides_only)
+                self._practice = None
+                if self._advice and last_answer is not None and last_answer > (n or 0):
+                    self._practice = coach.Practice("Practice your next answer", self._advice.work,
+                                                    "Q&A review", "Start full take")
+                elif self._advice:
+                    record = next((t for t in self.session.takes if t.number == n), None)
+                    pair = None
+                    if record and record.drill_end is not None and record.revision == self.session.current_revision:
+                        pair = (record.drill, record.drill_end)
+                    self._practice = coach.practice(self.board, n, self._advice, self.slides_only, pair)
                 # The sentence to practise is the current one (orange), in view, ready to select.
                 if self._advice is not None and self._advice.sentence is not None and overlay is not None \
                         and gs.mode == "idle":
@@ -981,7 +1056,8 @@ class Takes:
             view.summary = self._days if self.panel_view == "days" else self._summary
             a = self._advice
             ai = self.ai_advice.get(self._coach_subject())  # the AI's, on the take or the round the card is about
-            if self.panel_view != "coach" or a is None:
+            view.practice = self._practice if self.panel_view == "coach" else None
+            if self.panel_view not in ("coach", "detail") or a is None:
                 view.coach = ()
             elif ai is not None:  # the AI coach's, asked for with an open palm
                 view.coach = (("Went well · AI", ai[0]), ("Work on · AI", ai[1]), ("Next · AI", ai[2]),
@@ -1159,6 +1235,7 @@ class Takes:
             self.stop_playback("take", ev.t)
             if ev.source != "qa":  # a take or drill started by hand: the Q&A round, if any, is over
                 self.answer, self.qa_queue, self.qa_next_at = None, [], None
+            self.drill_end = ev.drill_end if ev.kind == "drill" else None
             self.drill = ev.sentence if ev.kind == "drill" else None
             if self.drill is not None:
                 self.log(ev.t, "drill", sentence=self.drill)
@@ -1178,7 +1255,7 @@ class Takes:
             view.current = self.drill if self.drill is not None else self.first_of(self.section)
             view.panel_scroll, view.preview_next = 0.0, False
             view.faded = None if self.answer else self._fade_start()
-            if self.drill is None and self.answer is None and self._ensure_follow():
+            if (self.drill is None or self.drill_end is not None) and self.answer is None and self._ensure_follow():
                 self.follow.prepare()  # the model loads during the count-in
             check = self.gaze_check and self.drill is None and self.answer is None
             if self.vision is not None and self.answer is None \
@@ -1211,7 +1288,7 @@ class Takes:
                 number = self.session.begin_take()
                 self.writer = TakeWriter(self.session.dir, number, self.recorder.rate, {
                     "started": datetime.now().isoformat(timespec="milliseconds"), "requested_t": round(ev.t, 3),
-                    "drill": self.drill, "revision": self.session.current_revision})
+                    "drill": self.drill, "drill_end": self.drill_end, "revision": self.session.current_revision})
             except (OSError, SessionError) as exc:
                 print(f"cannot record: {exc}", file=sys.stderr)
                 self.log(ev.t, "record_error", error=str(exc))
@@ -1232,8 +1309,10 @@ class Takes:
             self.recorder.start(self.writer)
             self.stopper = AutoStop()
             self._start_video(number)
-            if self.drill is None and self.answer is None and self.follow is not None:
+            if (self.drill is None or self.drill_end is not None) and self.answer is None and self.follow is not None:
                 self.follow.start_take(self.section)
+                if self.drill is not None:
+                    self.follow.jump(self.section, self.drill)
                 self.recorder.tap = self.follow.tap
             if self.vision is not None:
                 self.vision.begin_take(ev.t)
@@ -1375,7 +1454,11 @@ class Takes:
         speech), see AutoStop. Never during a gaze check, which ends on its own."""
         if self.writer is None or self.recorder is None or self.check is not None:
             return False
-        if self.drill is not None or self.answer is not None:  # one sentence, or an answer: once it heard speech
+        if self.drill is not None and self.drill_end is not None and self.follow and self.follow.state == "following":
+            at = self.follow.follower.at if self.follow.follower else None
+            last_word = len(self.notes.sentences[self.drill_end].words) - 1
+            at_end = at is not None and at >= (self.drill_end, max(0, last_word - FOLLOW.handoff_words))
+        elif self.drill is not None or self.answer is not None:  # one sentence, or an answer: once it heard speech
             at_end = self.stopper.heard_s >= REHEARSE.end_heard_s
         elif self.slides_only:  # the clicker leads: on the last slide, once it heard speech there
             at_end = self.slide_log is not None and self.slide == self.deck.pages - 1 \
@@ -1470,9 +1553,13 @@ class Takes:
     def poll_follow(self, view: ViewState, overlay: TextOverlay) -> None:
         """Move the display with the voice: the sentence, the section (recorded
         with source "voice"), and the preview of the next section."""
-        if self.follow is None or self.writer is None or self.drill is not None:
+        if self.follow is None or self.writer is None or (self.drill is not None and self.drill_end is None):
             return
         for ev in self.follow.poll():
+            if self.drill is not None:
+                if ev.kind == "sentence":
+                    view.current = max(self.drill, min(self.drill_end, ev.index))
+                continue
             if ev.kind == "section" and ev.index == self.section + 1:
                 self.section, self.section_t = ev.index, ev.t
                 self.writer.mark_section(ev.t, ev.index, "voice")
@@ -1702,6 +1789,41 @@ class Takes:
         self.session.release()
 
 
+def mirror_crop(shape, aspect):
+    """Even-sized centre crop, shared by the overlay, tracking and video encoder."""
+    h, w = shape[:2]
+    if not aspect:
+        return slice(None), slice(None)
+    width = min(w, round(h * aspect / 2) * 2)
+    height = min(h, round(w / aspect / 2) * 2)
+    x, y = (w - width) // 2, (h - height) // 2
+    return slice(y, y + height), slice(x, x + width)
+
+
+def mirror_display_aspect(name):
+    if sys.platform == "darwin":
+        from AppKit import NSApp
+        if (app := NSApp()) is not None:
+            for window in app.windows():
+                if window.title() == name and (screen := window.screen()) is not None:
+                    size = screen.frame().size
+                    return size.width / (size.height - screen.safeAreaInsets().top)
+    return None
+
+
+def open_mirror_window(name: str, width: int, height: int) -> None:
+    cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(name, width, height)
+    if sys.platform == "darwin":
+        from AppKit import NSApplication, NSColor
+        for window in NSApplication.sharedApplication().windows():
+            if window.title() == name:
+                # Cocoa fits the camera image inside the window. Its uncovered
+                # area takes the window background, including in full screen.
+                window.setBackgroundColor_(NSColor.blackColor())
+                break
+
+
 @dataclass
 class Devices:
     """What the app opens. Tests pass fakes, so failures can be injected
@@ -1717,7 +1839,7 @@ class Devices:
     vision: Callable = Watcher.open  # face and pose; None or an error: off (they are optional)
     backdrop: Callable = Backdrop  # (strength) the room behind you darkened; None or an error: off
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
-    named_window: Callable = lambda name, w, h: (cv2.namedWindow(name, cv2.WINDOW_NORMAL), cv2.resizeWindow(name, w, h))
+    named_window: Callable = open_mirror_window
     show: Callable = cv2.imshow
     # waitKeyEx: a clicker's arrow and page keys keep their own codes (SLIDES); no key is 255, as before.
     wait_key: Callable = lambda: k if (k := cv2.waitKeyEx(1)) != -1 else 255
@@ -1726,6 +1848,7 @@ class Devices:
     pump: Callable = lambda: cv2.waitKey(1)  # lets the window draw a card while something loads
     pick: Callable = pick_notes  # the Open dialog (key l): a Path, or None if cancelled
     pick_slides: Callable = pick_slides  # the Open dialog for a PDF of slides (the home card)
+    notch: Callable = NotchPanel.create  # the teleprompter in the notch, or None (no notch: the window's)
     fullscreen: Callable = lambda name, on: cv2.setWindowProperty(
         name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if on else cv2.WINDOW_NORMAL)
 
@@ -2041,13 +2164,15 @@ def warm_overlay(overlay: TextOverlay, frame: np.ndarray) -> None:
 
 # Keys that act as usual while the home card is open (no key: 255): quit, keys help, full screen, contrast.
 # The card takes j, k, Space, Enter, 1-9, and l or Esc to close it; every other key does nothing there.
-HOME_PASS = frozenset((255, ord("q"), ord("h"), ord("f"), ord("c")))
+HOME_PASS = frozenset((255, 9, ord("q"), ord("h"), ord("f"), ord("c")))
 
 
 def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentences, devices: Devices,
                start_mode: str | None = None, prefs_file: Path | None = None, note: str = "",
                show_home: bool = False) -> Next | None:
     frame = camera.read()
+    crop = mirror_crop(frame.shape, mirror_display_aspect(WINDOW))
+    frame = np.ascontiguousarray(frame[crop])
     h, w = frame.shape[:2]
     prefs = preferences.load(prefs_file)
     preferences.apply(prefs)  # before the overlay and the machines are built: box, holds, contrast
@@ -2077,11 +2202,19 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     tutorial = Tutorial(active=not prefs.tutorial_done)
     overlay = TextOverlay(sentences, (w, h))
     warm_overlay(overlay, frame)
+    # A take with written notes reads them from a teleprompter at the notch, top centre, under the
+    # camera, so reading looks like eye contact (render.Teleprompter); its scroll springs on its own.
+    teleprompter = None if takes.slides_only else Teleprompter(sentences, (w, h))
+    prompter_motion = PanelMotion()
+    # On a Mac with a notch, the teleprompter is in the notch itself, above every window (palmcards.notch).
+    notch = None if takes.slides_only else devices.notch(sentences)
+    notch_motion = PanelMotion()
     modes = ModeMachine((w, h), log)
     if start_mode:
         modes.enter(start_mode, 0.0)
     grammar = modes.grammar
     grammar.defer_edit_commit = True
+    modes.no_drill = takes.slides_only  # a PDF speech: its notes are slide titles, nothing to drill
     view = ViewState(panel_motion=PanelMotion(), focus_motion=FocusMotion(), scroll_bounce=Spring())
     cues = Cues() if prefs.sounds else None
     ring_turn_seen = 0
@@ -2127,6 +2260,17 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         return entry.next
 
     home = open_home() if show_home else None
+    practice_click = False
+    action_box = None
+
+    def click_action(event, x, y, flags, userdata):
+        nonlocal practice_click
+        if event == cv2.EVENT_LBUTTONUP and action_box:
+            left, top, right, bottom = action_box
+            practice_click = left <= x < right and top <= y < bottom
+
+    if devices.show is cv2.imshow:
+        cv2.setMouseCallback(WINDOW, click_action)
     queued: list[GestureEvent] = []  # from keys, handled with the next frame's events
     page_t, page_pause_until = last, 0.0
     hint_after, rehearse_open_since = 0.0, None
@@ -2141,7 +2285,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     gc.callbacks.append(gc_watch)
 
     while True:
-        frame = camera.read()
+        frame = np.ascontiguousarray(camera.read()[crop])
         start = time.perf_counter()
         for ms, generation in gc_watch.drain():
             log(start - t0, "gc", ms=round(ms, 1), generation=generation)
@@ -2149,6 +2293,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             notes_seen = takes.notes_version
             sentences = takes.notes.sentences
             overlay = TextOverlay(sentences, (w, h))
+            teleprompter = teleprompter and Teleprompter(sentences, (w, h))
+            if notch is not None:
+                notch.rebuild(sentences)
             grammar.reset()
             view.focus, view.edit_preview, view.ops = None, None, OpsView()
             view.mode, view.level = "idle", None
@@ -2234,6 +2381,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         view.coach_ready = modes.mode == "review" and takes.coach_ready() and not takes.analysis.failed()
         view.coach_progress = modes.coach_progress if modes.mode == "review" else 0.0
         view.undo_progress = modes.undo_progress if modes.mode == "prepare" else 0.0
+        view.drill_end = takes.drill_end if takes.drill is not None else None
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
         slide_i = takes.slide_shown if modes.mode in ("count_in", "rehearse") else None
         view.slide = takes.deck.page(slide_i) if slide_i is not None else None  # drawn when first shown (~6 ms)
@@ -2286,10 +2434,22 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             notes_seen = takes.notes_version
             sentences = takes.notes.sentences
             overlay = TextOverlay(sentences, (w, h))
+            teleprompter = teleprompter and Teleprompter(sentences, (w, h))
+            if notch is not None:
+                notch.rebuild(sentences)
             view.current = min(view.current, len(sentences) - 1)
             view.scroll = overlay.clamp_scroll(view.scroll)
         view.status = takes.status(modes.mode, view)
         view.alert = takes.alert_line(modes.mode)
+        # A PDF speech in Prepare and Review: its slides, not the outline (render.Presenter), the hand
+        # flipping through them as it browses rows, a tap selecting one, an open palm playing it.
+        view.slides = takes.slides_only and takes.deck is not None and presenter is not None and home is None \
+            and modes.mode in ("prepare", "review")
+        if view.slides:
+            grammar.operations = False  # nothing to edit in a slide's title
+            slide_i = takes.slide_of_row(view)
+            view.slide, view.slide_label = takes.deck.page(slide_i), ""
+            view.title, view.status = f"Slide {slide_i + 1} of {takes.deck.pages}", slide_hints(view)
         view.home = () if home is None else tuple((row.title, row.detail) for row in home.rows)
         if home is not None:
             view.home_picked, view.title = home.picked, "Choose a speech"
@@ -2318,7 +2478,20 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
 
         handled = time.perf_counter()
         overlay.follow(view, snap=snap_panel)
-        snap_panel = False
+        # A take with written notes reads them from the teleprompter (the notch's, else the window's).
+        prompting = teleprompter is not None and view.app in ("count_in", "rehearse") and not view.question
+        if prompting:
+            follower = takes.follow.follower if (view.app == "rehearse" and takes.follow is not None
+                                                  and takes.follow.state == "following") else None
+            at = follower.at if follower is not None else None
+            prompt = replace(view, teleprompter=False, panel_motion=notch_motion if notch else prompter_motion,
+                             focus_motion=None, scroll_bounce=None,
+                             spoken=at if at is not None and at[0] == view.current else None)
+            prompt.panel_scroll = (notch or teleprompter).scroll_for(prompt)
+            if notch is not None:
+                notch.show(prompt, snap=snap_panel)
+        elif notch is not None:
+            notch.hide()
         if (replay := takes.replay_frame()) is not None:
             # A take's video while its clip plays, as others see you: nothing on
             # it but how far it has got. Hands are still tracked live, so a fresh
@@ -2326,9 +2499,17 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             frame = replay
             takes.draw_replay(frame, view.play_progress or 0.0)
         elif view.slide is not None and presenter is not None and view.calibration is None:
+            if view.slides:  # Prepare and Review: the hand browses, so the mirror shows it
+                if prefs.show_hand_box and p is not None:
+                    draw_hand_area(frame, grammar.cursor, None)
+                draw_fingertips(frame, grammar.state)
             frame = presenter.compose(frame, view)  # the eye calibration reads the notes: the mirror then
         else:
+            view.teleprompter = prompting
             overlay.draw(frame, view)
+            if prompting and notch is None:  # no notch: the take's notes at the window's top centre
+                teleprompter.follow(prompt, snap=snap_panel)
+                teleprompter.draw(frame, prompt)
             if prefs.show_hand_box and not show_debug and view.app in ("prepare", "review") and p is not None:
                 draw_hand_area(frame, (home.grammar if home is not None else grammar).cursor, overlay.summary_box)
             if show_debug:
@@ -2339,6 +2520,7 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                         draw_landmarks(frame, track.hand)
             draw_fingertips(frame, (home.grammar if home is not None else grammar).state)
 
+        snap_panel = False
         now = time.perf_counter()
         fps = 0.9 * fps + 0.1 / max(now - last, 1e-6)
         work_ms = 0.9 * work_ms + 0.1 * (now - start) * 1000
@@ -2350,6 +2532,11 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         draw_stats(frame, stats)
 
         drawn = time.perf_counter()
+        action_box = None
+        if modes.mode == "review" and view.practice and view.coach and not home and replay is None:
+            owner = presenter.overlay if view.slide is not None and presenter is not None else overlay
+            action_box = owner.practice_box
+        practice_click = False
         devices.show(WINDOW, frame)
         key = devices.wait_key()
         shown = time.perf_counter()
@@ -2369,9 +2556,19 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         if key in (ord("q"), 27):
             break
         now_t = time.perf_counter() - t0
+        if action_box and (practice_click or key == ENTER):
+            suggestion = view.practice
+            if suggestion.first is None:
+                queued += modes.command("start", now_t)
+            else:
+                queued += modes.command("practice", now_t, suggestion.first, suggestion.last)
+            continue
         if key in SLIDES.next_keys or key in SLIDES.prev_keys:  # a clicker: the slide in a full take
+            step = 1 if key in SLIDES.next_keys else -1
             if view.app == "rehearse":
-                takes.move_slide(1 if key in SLIDES.next_keys else -1, now_t, view, overlay)
+                takes.move_slide(step, now_t, view, overlay)
+            elif view.slides:  # Prepare and Review: flip through them
+                view.current = takes.row_of_slide(takes.slide_of_row(view, current=True) + step)
         elif key == ord("x") and takes.stop_playback("key", now_t):  # x stops any playback first
             view.note, note_until = "Stopped", time.perf_counter() + NOTE_S
         elif key in KEY_COMMANDS:
@@ -2395,6 +2592,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                     view.scroll = overlay.scroll_to(view.current)
         elif key == ord("h"):
             view.keys_help = not view.keys_help
+            view.keys_page = 0
+        elif key == 9 and view.keys_help:
+            view.keys_page += 1
         elif key == ENTER and tutorial.card is not None:
             tutorial.skip()
             if tutorial.done:
@@ -2416,9 +2616,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             preferences.save(prefs, prefs_file)
             view.note, note_until = takes.toggle_qa(prefs.qa, time.perf_counter() - t0), time.perf_counter() + NOTE_S
         elif key == ord("i") and view.app == "review":  # the coach card, or the take table
-            views = ("coach", "table", "days")
+            views = ("coach", "table", "days", "detail")
             takes.panel_view = views[(views.index(takes.panel_view) + 1) % len(views)]
-            view.note = {"coach": "Coach card", "table": "Take table", "days": "Progress over days"}[takes.panel_view]
+            view.note = {"coach": "Suggested practice", "detail": "Detailed feedback", "table": "Take table", "days": "Progress over days"}[takes.panel_view]
             note_until = time.perf_counter() + NOTE_S
         elif key == ord("w") and view.app in ("prepare", "review"):  # fading cards, from the next take
             prefs.fade = takes.fade_on = not prefs.fade
@@ -2430,6 +2630,9 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             preferences.save(prefs, prefs_file)
             render.set_contrast(prefs.high_contrast)
             overlay = TextOverlay(sentences, (w, h))  # its cached text was drawn in the old colours
+            teleprompter = teleprompter and Teleprompter(sentences, (w, h))
+            if notch is not None:
+                notch.rebuild(sentences)
         elif key == ord("u") and view.app == "prepare":
             view.note, note_until = takes.undo(), time.perf_counter() + NOTE_S
         elif key == ord("a") and view.app == "review":  # play, or stop what plays
@@ -2469,6 +2672,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             break
 
     gc.callbacks.remove(gc_watch)
+    if notch is not None:
+        notch.close()
     if modes.mode == "rehearse":  # quit mid-take: keep what was recorded, as a normal take
         takes.handle(GestureEvent("take_stop", time.perf_counter() - t0), modes, view, overlay)
     return next_notes

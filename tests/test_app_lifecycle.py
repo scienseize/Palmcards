@@ -205,7 +205,7 @@ class Rig:
             log=lambda: GestureLog(tmp_path / "log.jsonl"), named_window=lambda *a: None, show=lambda *a: None,
             live=live or (lambda language, clock, hints: FakeLive()), vision=vision or (lambda: None), backdrop=lambda strength: None,
             wait_key=wait_key, window_open=lambda name: True, destroy_windows=destroy, pump=lambda: None,
-            pick=lambda: None, fullscreen=lambda name, on: None)
+            pick=lambda: None, fullscreen=lambda name, on: None, notch=lambda sentences: None)
         if video_writer is not None:
             self.devices.video = video_writer
         self.notes_path = tmp_path / "talk.md"
@@ -345,6 +345,7 @@ def test_a_camera_failure_mid_take_keeps_the_video_too(tmp_path, monkeypatch):
 
 def test_without_video_a_take_has_none(tmp_path, monkeypatch):
     rig = Rig(tmp_path, monkeypatch, keys={25: ord("q")})
+    rig.prefs_file.write_text('{"video": false}\n')  # turned off: it is on by default
     assert rig.run() == 0
     assert rig.session().take(1).video is None and not list(rig.session().dir.glob("*.mp4"))
 
@@ -357,11 +358,10 @@ def test_video_asked_for_but_unavailable_is_said_on_the_take(tmp_path, monkeypat
     assert "video off: PyAV is not installed" in capsys.readouterr().err
 
 
-def test_the_video_preference_turns_it_on_without_the_flag(tmp_path, monkeypatch):
+def test_video_is_on_by_default_without_the_flag(tmp_path, monkeypatch):
     pytest.importorskip("av")
     rig = Rig(tmp_path, monkeypatch, keys={25: ord("q")}, video_writer=software_video)
-    rig.prefs_file.write_text('{"video": true}\n')
-    assert rig.run() == 0
+    assert rig.run() == 0  # no preferences saved: the defaults
     assert rig.session().take(1).video["state"] == "saved"
 
 

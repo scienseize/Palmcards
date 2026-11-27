@@ -14,12 +14,13 @@ sessions (which are evidence and never change with your settings).
   reduced_motion nothing moves or scales, things fade (true / false; auto: as macOS's
                  Accessibility > Display > Reduce motion)
   sounds         soft sound cues in Prepare and Review (focus, back, commit, the ring's steps)
-  video          record video of each take, replayed in Review (off by default; main.py --video
-                 for one run). Video is far more personal than the audio: it stays in the session
+  video          record video of each take, replayed in Review (on by default: you want to watch
+                 your take; off: python -m palmcards.prefs set video false, and then
+                 main.py --video records one run). Video is far more personal than the audio: it stays in the session
                  folder; python -m palmcards.data drop-video deletes it
   replay_mirrored  Review replays a take's video mirrored, as in the app (key m); by default
                  flipped back, as others see you
-  fullscreen     the window fills the screen (key f in the app)
+  fullscreen     the window fills the screen (key f in the app); on by default
   room_dim       how dark the room behind you is drawn: 0 as the camera sees it, 1 black (default 0.6)
   fade           fading cards: in a take, words said take after take dim, then blank
                  (key w in the app; main.py --fade for one run)
@@ -46,9 +47,9 @@ class Prefs:
     show_hand_box: bool = True
     reduced_motion: bool | None = None  # None: as macOS's setting
     sounds: bool = False
-    video: bool = False  # record video of each take (palmcards.video); main.py --video for one run
+    video: bool = True  # record video of each take (palmcards.video), to watch it in Review
     replay_mirrored: bool = False  # Review replays a take's video mirrored (key m); else as others see you
-    fullscreen: bool = False  # the window fills the screen (key f)
+    fullscreen: bool = True  # the window fills the screen (key f): the teleprompter sits under the notch
     fade: bool = False  # fading cards (palmcards.fade; key w); main.py --fade for one run
     qa: bool = False  # the Q&A round after each full take (key y)
     room_dim: float = BACKDROP.strength  # the room behind you darkened by this (palmcards.vision.Backdrop)
@@ -87,9 +88,13 @@ def load(where: Path | None = None) -> Prefs:
 
 
 def save(prefs: Prefs, where: Path | None = None) -> None:
+    """Only what differs from the defaults is written, so a default changed later reaches everyone
+    who never changed it (an old file holding every default keeps them, as written)."""
     where = where or path()
     where.parent.mkdir(parents=True, exist_ok=True)
-    write_atomic(where, (json.dumps(asdict(prefs.checked()), indent=1) + "\n").encode())
+    default = asdict(Prefs())
+    changed = {k: v for k, v in asdict(prefs.checked()).items() if v != default[k]}
+    write_atomic(where, (json.dumps(changed, indent=1) + "\n").encode())
 
 
 def hand_box(reach: float) -> tuple[float, float, float, float]:

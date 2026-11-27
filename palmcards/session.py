@@ -120,6 +120,7 @@ class TakeRecord:
     answer: dict | None = None
     # A full take with slides (palmcards.slides): [[t, slide], ...] on the app clock, 0-based slides,
     # the first at the take's start, one per clicker press.
+    drill_end: int | None = None  # inclusive end of a transition drill
     slides: list | None = None
 
     @property
@@ -531,7 +532,7 @@ class Session:
         take = TakeRecord(
             number=manifest["take"], wav=manifest["wav"], started=manifest["started"], t_start=round(t_start, 3),
             duration_s=round(manifest["samples"] / rate, 3), sample_rate=rate, peak=manifest["peak"],
-            sections=sections, drill=manifest.get("drill"), revision=manifest.get("revision"),
+            sections=sections, drill=manifest.get("drill"), drill_end=manifest.get("drill_end"), revision=manifest.get("revision"),
             status=status, capture=capture, live=manifest.get("live"), vision=manifest.get("vision"),
             gaze_check=manifest.get("gaze_check"), video=manifest.get("video"), fade=manifest.get("fade"),
             stopped=manifest.get("stopped"), answer=manifest.get("answer"), slides=manifest.get("slides"),

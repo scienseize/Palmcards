@@ -1037,3 +1037,28 @@ def test_text_from_kept_glyph_masks_matches_pillows_own():
         images.append(np.asarray(img))
     assert (images[0] == images[1]).all() and (images[1] == images[2]).all()
     assert _MASKS  # kept for the next frame
+
+
+@pytest.mark.parametrize("frame_size", [(640, 360), (1280, 720), (1920, 1080)])
+def test_last_home_choice_and_its_detail_fit_above_keyboard_help(frame_size, monkeypatch):
+    w, h = frame_size
+    ov = TextOverlay(parse_text(TEXT).sentences, frame_size)
+    entries = tuple((f"Speech {i}", f"Saved take {i}") for i in range(8))
+    state = ViewState(home=entries, home_picked=7, keys_help=True, title="Choose a speech")
+    frame = np.full((h, w, 3), 200, np.uint8)
+    low = ov._draw_pills(frame.copy(), state)
+    boxes = []
+    drawn = set()
+    ink = ov._ink
+
+    def record_ink(text, face, color):
+        drawn.add(text)
+        return ink(text, face, color)
+
+    monkeypatch.setattr(ov, "_ink", record_ink)
+    monkeypatch.setattr(ov, "_draw_glass", lambda f, box: boxes.append(box))
+    ov.draw(frame, state)
+    left, top, right, bottom = boxes[0]
+    assert ov.y <= top < bottom <= low
+    assert (left, right) == (ov.notes_glass()[0], ov.notes_glass()[2])
+    assert entries[-1][0] in drawn and entries[-1][1] in drawn

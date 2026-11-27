@@ -44,6 +44,57 @@ class Advice:
     sentence: int | None = None  # the sentence to practise (Notes.sentences index)
 
 
+@dataclass(frozen=True)
+class Practice:
+    title: str
+    cue: str
+    progress: str
+    action: str
+    first: int | None = None
+    last: int | None = None
+
+
+def practice(board, n, advice, outline=False, previous_pair=None):
+    """One executable next step, based on the same analysed take as the coach."""
+    rows = board.rows[n]
+    sentences = board.notes.sentences
+    heard = [i for i in sorted(rows) if rows[i]["status"] != "skipped"]
+    first, last = advice.sentence, None
+    progress = f"{len(heard)} of {len(sentences)} sentences reached"
+    previous = [t for t in board.takes if t < n and t not in board.drills]
+    if previous and n not in board.drills:
+        old = sum(r["status"] != "skipped" for r in board.rows[previous[-1]].values())
+        if delta := len(heard) - old:
+            progress += f"  ·  {delta:+d} since take {previous[-1]}"
+    if previous_pair is not None:
+        start, end = previous_pair
+        count = sum(i in heard for i in range(start, end + 1))
+        progress = f"{count} of {end - start + 1} practice sentences reached"
+        if count == end - start + 1:
+            return Practice("Put the transition back into the talk", "Start from the beginning and carry through the transition.",
+                            progress, "Start full take")
+        first, last = start, end
+    elif not outline and advice.work.startswith("You stopped") and heard and heard[-1] + 1 < len(sentences):
+        first, last = heard[-1], heard[-1] + 1
+    if last is not None:
+        cue = f"Say {opening(sentences[first].text, 7)} then {opening(sentences[last].text, 7)} in one take."
+        return Practice(f"Connect sentences {first + 1} and {last + 1}", cue, progress,
+                        "Practice these two sentences", first, last)
+    if n in board.drills:
+        progress = f"Practice take {n}"
+    if first is not None and not outline:
+        cue = opening(sentences[first].text, 8)
+        goal = f"Say {cue} straight through."
+        if advice.work.startswith("You left out"):
+            goal = f"Say the point beginning {cue} in your own words."
+        elif "fillers" in advice.work:
+            goal = f"Say {cue} once. Replace a filler with a quiet breath."
+        elif "pause before" in advice.work:
+            goal = f"Take one breath, then begin {cue}."
+        return Practice(f"Practice sentence {first + 1}", goal, progress, "Practice this sentence", first)
+    return Practice("Try the next full take", advice.work, f"Take {n}" if outline else progress, "Start full take")
+
+
 def opening(text: str, words: int = COACH.quote_words) -> str:
     """A sentence's first few words, quoted: “We started this project…”."""
     parts = text.split()

@@ -222,3 +222,45 @@ def test_the_replay_can_be_mirrored_and_is_always_captioned(tmp_path, monkeypatc
     # Captions once a word has been said (0.25 s into the clip): a line above the bar, across the middle.
     captioned = [i for i in replayed if (frames[i][285:318, 330:350] != 0).any()]  # above the bar and its ticks
     assert captioned and captioned[0] > replayed[0]
+
+
+@pytest.mark.parametrize("click", [False, True])
+def test_review_action_starts_and_saves_the_suggested_pair(tmp_path, monkeypatch, click):
+    from palmcards.gestures import ModeMachine
+    from palmcards.render import TextOverlay
+
+    from dataclasses import replace
+    from palmcards import gestures
+    monkeypatch.setattr(gestures, "REHEARSE", replace(gestures.REHEARSE, count_in_s=.15, count_in_again_s=.15))
+    session = saved_session(tmp_path)
+    take = session.take(1)
+    session.set_result(1, take.transcript_name, alignment(["spoken", "skipped", "skipped"]))
+    rig = Rig(tmp_path, monkeypatch, script={}, keys={3: 255 if click else main.ENTER, 170: ord("x"), 180: ord("q")})
+    monkeypatch.setattr(main, "ModeMachine", ModeMachine)
+    original = TextOverlay._draw_coach
+    button = []
+    def draw(overlay, *args, **kwargs):
+        original(overlay, *args, **kwargs)
+        if overlay.practice_box:
+            button.append(overlay.practice_box)
+    monkeypatch.setattr(TextOverlay, "_draw_coach", draw)
+    if click:
+        callbacks = []
+        monkeypatch.setattr(main.cv2, "imshow", rig.devices.show)
+        monkeypatch.setattr(main.cv2, "setMouseCallback", lambda _, cb: callbacks.append(cb))
+        wait = rig.devices.wait_key
+        def wait_and_click():
+            k = wait()
+            if len(button) == 2 and callbacks:
+                x, y, right, bottom = button[-1]
+                callbacks.pop()(main.cv2.EVENT_LBUTTONUP, (x+right)//2, (y+bottom)//2, 0, None)
+            return k
+        rig.devices.wait_key = wait_and_click
+    assert main.run(session.notes, session.current_notes(), b"", devices=rig.devices, session=session,
+                    prefs_file=rig.prefs_file) == 0
+    assert button
+    drill = Session.load(session.dir).takes[-1]
+    assert (drill.drill, drill.drill_end) == (0, 1)
+    from palmcards.speech import make_job
+    scoped = make_job(session, drill, session.current_notes())["sentences"]
+    assert scoped[0] and scoped[1] and scoped[2] == []

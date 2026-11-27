@@ -30,6 +30,8 @@ def test_preferences_load_save_and_clamp(tmp_path, capsys):
     prefs.save(prefs.Prefs(reach=5.0, start_hold_s=0.01, high_contrast=True), path)
     back = prefs.load(path)
     assert (back.reach, back.start_hold_s, back.high_contrast) == (1.4, 0.3, True)  # clamped to usable values
+    # Only what differs from the defaults is kept: a default changed later reaches whoever never changed it.
+    assert set(json.loads(path.read_text())) == {"reach", "start_hold_s", "high_contrast"}
     path.write_text(json.dumps({"reach": 0.8, "from_a_newer_version": 1}))
     assert prefs.load(path).reach == 0.8  # unknown keys ignored
     path.write_text("{broken")
