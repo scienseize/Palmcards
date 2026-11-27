@@ -36,26 +36,33 @@ def test_pages_are_drawn_upright_at_the_width_asked():
     assert (deck.page(1).mean(axis=2) > 200).all()  # an empty page is the page's colour
 
 
-def test_the_presenter_layout_puts_the_slide_left_and_the_mirror_right_sharp():
+def test_the_presenter_layout_puts_the_slide_left_and_the_column_right_sharp():
     from palmcards.render import Presenter, ViewState
-    from palmcards.style import LAYOUT
 
     notes = notes_from_bytes(make_pdf(DECK), "deck.pdf")
     p = Presenter(notes.sentences, (1280, 720))
     assert p.size == (2560, 1440)  # twice the camera's frame: a Retina screen shows it at its own pixels
-    x0, x1 = p.take_slide_x  # a take: the slide large from the left margin, the mirror right of it
+    x0, x1 = p.take_slide_x  # a take: the slide large from the left margin, a face cam bottom right
     mx0, my0, mx1, my1 = p.take_mirror
-    assert x0 < x1 < mx0 < mx1 <= 2560 and p.slide_top == my0 and my1 <= 1440
+    y0 = p.take_slide_y
+    assert x0 < x1 < mx0 < mx1 <= 2560 and y0 < my0 and my1 == y0 + round((x1 - x0) * 9 / 16) <= 1440  # level feet
+    assert abs((mx1 - mx0) / (my1 - my0) - 1280 / 720) < 0.01  # the whole frame, nothing cropped
     assert x0 == p.slide_x[0] and x1 - x0 > p.slide_x[1] - p.slide_x[0]  # larger than Prepare's
     assert p.slide_width == x1 - x0  # pages are drawn at the take's width, never scaled up
-    crop_x, crop_w = p.take_crop  # the mirror shows the face zone, not the room
-    assert crop_x <= LAYOUT.face[0] * 1280 and crop_x + crop_w >= LAYOUT.face[1] * 1280
     page = Deck(make_pdf(DECK), p.slide_width).page(0)
     camera = np.full((720, 1280, 3), 90, np.uint8)
-    out = p.compose(camera, ViewState(app="rehearse", slide=page, slide_label="1 / 4"))
+    camera[:, :40] = 250  # the frame's left edge: shown too (the old tall crop cut it off)
+    nxt = np.zeros_like(page)
+    nxt[:] = (40, 160, 40)  # the next slide: green, to find it
+    out = p.compose(camera, ViewState(app="rehearse", slide=page, next_slide=nxt, slide_label="1 / 4",
+                                      status="Slide 1 of 4"))
     assert out.shape == (1440, 2560, 3)
-    assert (out[p.slide_top + 40, x0 + 40:x1 - 40] > 200).all()  # the slide's paper, where it should be
-    assert abs(int(out[(my0 + my1) // 2, (mx0 + mx1) // 2, 0]) - 90) < 5  # the camera, in the mirror
+    assert (out[y0 + 40, x0 + 40:x1 - 40] > 200).all()  # the slide's paper, where it should be
+    column = out[y0:my0, mx0:mx1]
+    assert ((column[..., 1] > 140) & (column[..., 0] < 60)).sum() > 1000  # the next slide, previewed in the column
+    assert column.max() > 230 and out[:y0, :x1].max() < 60  # the label in the column, none above the slide
+    assert abs(int(out[(my0 + my1) // 2, (mx0 + mx1) // 2, 0]) - 90) < 5  # the camera, in the face cam
+    assert out[(my0 + my1) // 2, mx0 + 6, 0] > 200  # its left edge too: everything shows
 
 
 def test_a_slide_plays_from_when_it_came_up_to_when_the_clicker_moved_on():

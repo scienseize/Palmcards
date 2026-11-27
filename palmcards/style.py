@@ -501,7 +501,13 @@ class Presenter:
     bottom: float = 0.05  # the margin under them, x the canvas height
     background: RGB = (14, 14, 16)  # behind them: Apple's dark-mode base, a step darker than the glass
     label_gap: int = 8  # px (at 1x) between the slide and its number
-    take_mirror: float = 0.18  # a take: the mirror's width, x the canvas width; the slide fills the rest
+    # A take: the slide as large as the room under the label allows, and the whole camera frame
+    # (nothing cropped) small at the bottom right beside it, as a face cam in a demo video (the
+    # user, 2026-11-27).
+    # The slide comes first: as tall as the room under the label allows, unless that leaves the
+    # camera less than `take_cam_min`; the camera takes the column left beside it, up to `take_cam`.
+    take_cam: float = 0.21  # the camera's widest, x the canvas width (its height follows the frame)
+    take_cam_min: float = 0.15  # ... and its narrowest
 
 
 @dataclass(frozen=True)

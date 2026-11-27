@@ -2480,6 +2480,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             view.title, view.question = f"Question {takes.answer[0]} of {takes.answer[1]}", takes.answer[2]
         view.calibration = takes.vision.phase(start - t0) \
             if takes.vision is not None and modes.mode == "count_in" else None
+        if view.calibration == "notes" and takes.slide_full_take and (takes.slides_only or notch is None):
+            view.calibration = "slide"  # a take with slides reads the slide (no notes to read but the notch's)
         view.hold_progress = modes.back_progress if modes.mode == "review" else modes.done.progress
         view.retry_progress, view.undo_ready = modes.retry_progress, modes.mode == "prepare" and takes.can_undo()
         view.coach_ready = modes.mode == "review" and takes.coach_ready() and not takes.analysis.failed()
@@ -2489,6 +2491,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         view.drill = takes.drill if modes.mode in ("count_in", "rehearse") else None
         slide_i = takes.slide_shown if modes.mode in ("count_in", "rehearse") else None
         view.slide = takes.deck.page(slide_i) if slide_i is not None else None  # drawn when first shown (~6 ms)
+        view.next_slide = takes.deck.page(slide_i + 1) \
+            if slide_i is not None and slide_i + 1 < takes.deck.pages else None  # the column's preview
         view.slide_label = f"{slide_i + 1} / {takes.deck.pages}" if slide_i is not None else ""
         if modes.mode in ("prepare", "review") and result is not None:
             sync_view(grammar, view, overlay)
@@ -2604,12 +2608,12 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
             # open palm stops it; the mirror and the notes come back after.
             frame = replay
             takes.draw_replay(frame, view.play_progress or 0.0)
-        elif view.slide is not None and presenter is not None and view.calibration is None:
+        elif view.slide is not None and presenter is not None:  # the eye calibration too: no other layout between
             if view.slides:  # Prepare and Review: the hand browses, so the mirror shows it
                 if prefs.show_hand_box and p is not None:
                     draw_hand_area(frame, grammar.cursor, None)
                 draw_fingertips(frame, grammar.state)
-            frame = presenter.compose(frame, view)  # the eye calibration reads the notes: the mirror then
+            frame = presenter.compose(frame, view)
         else:
             view.teleprompter = prompting
             overlay.draw(frame, view)

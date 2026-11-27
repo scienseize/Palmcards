@@ -437,7 +437,7 @@ class ViewState:
     section: int = 0  # count_in, rehearse: the section on screen
     count_in: int = 0  # 3, 2, 1
     end_progress: float = 0.0  # rehearse: how far the quiet at the end has got to stopping the take (AutoStop)
-    calibration: str | None = None  # count_in: the calibration step, "camera" (look into the lens) or "notes"
+    calibration: str | None = None  # count_in: the calibration step, "camera" (look into the lens), "notes" or "slide"
     spoken: tuple[int, int] | None = None  # confirmed (sentence, word) for the teleprompter
     rec_s: float = 0.0  # length of the take so far
     target_s: float | None = None  # rehearse: the talk's target length (the REC clock counts toward it)
@@ -497,6 +497,7 @@ class ViewState:
     home_picked: int = 0
     # A full take with slides (palmcards.slides): the slide shown (BGR, drawn at its size) and "3 / 12".
     slide: np.ndarray | None = None
+    next_slide: np.ndarray | None = None  # a take with slides: the one after it, previewed in the column
     slide_label: str = ""
     # A take with written notes read from the teleprompter at the notch (render.Teleprompter): the
     # left column's notes are not drawn.
@@ -797,6 +798,8 @@ class TextOverlay:
                 second = "Look into the camera lens"
             elif state.calibration == "notes":
                 second = f"Read the orange sentence{NBSP}·{NBSP}{state.count_in}"  # the digit never alone on a row
+            elif state.calibration == "slide":  # a take with slides: the slide is what is read
+                second = f"Read the slide{NBSP}·{NBSP}{state.count_in}"
             elif state.app == "count_in":
                 second = f"Starting in {state.count_in}"
             else:
@@ -1990,8 +1993,8 @@ class TextOverlay:
         cv2.circle(frame, (x, ky), GAUGE.knob_r, bgr(C.knob_outline),
                    GAUGE.closing_knob_outline if closing else GAUGE.knob_outline, cv2.LINE_AA)
 
-    def _draw_rec(self, frame: np.ndarray, state: ViewState) -> None:
-        """Rehearse: the recording clock and the microphone level, top right (REC)."""
+    def _draw_rec(self, frame: np.ndarray, state: ViewState, cx: float | None = None, top: float | None = None) -> None:
+        """Rehearse: the recording clock and the microphone level, top right (REC); `cx`, `top`: elsewhere."""
         m, sec = divmod(int(state.rec_s), 60)
         target = ""
         if state.target_s:
@@ -2000,8 +2003,9 @@ class TextOverlay:
         rec = f"REC {m}:{sec:02d}{target}" + (" · Video" if state.recording_video else "")
         over = bool(state.target_s) and state.rec_s > state.target_s  # past the target: the clock turns orange
         chip = self._chip(rec, self._face(TYPE.operation), C.orange if over else C.node_text, C.dark_fill)
-        top = REC.top * self.line_h
-        bx0, by0, _, by1 = self._blend_centered(frame, chip, REC.x * self.frame_w, top + chip[0].shape[0] / 2)
+        top = REC.top * self.line_h if top is None else top
+        cx = REC.x * self.frame_w if cx is None else cx
+        bx0, by0, _, by1 = self._blend_centered(frame, chip, cx, top + chip[0].shape[0] / 2)
         # The dot swells with the microphone level: a flat dot means no sound is arriving.
         r0, grow = REC.mic_r
         cv2.circle(frame, (bx0 - REC.mic_dx, (by0 + by1) // 2), r0 + round(grow * state.mic), bgr(C.rec), -1,
@@ -2037,7 +2041,8 @@ class TextOverlay:
     def _draw_glass(self, frame: np.ndarray, box: tuple[float, float, float, float]) -> None:
         draw_glass(frame, box, round(GLASS.radius * self.line_h), self._scrim_alpha or GLASS.alpha_min)
 
-    def _draw_count_in(self, frame: np.ndarray, state: ViewState, cx: float | None = None) -> None:
+    def _draw_count_in(self, frame: np.ndarray, state: ViewState, cx: float | None = None,
+                       cy: float | None = None) -> None:
         """The count-in's digit, in the hand zone below the recording clock (the hand
         is down during the count-in), a bar under it emptying over each second. `cx`:
         its centre elsewhere (the presenter layout's mirror)."""
@@ -2047,7 +2052,7 @@ class TextOverlay:
             f = self._face(TYPE.display)
             ink = self._ink(str(state.count_in), f, C.label_state)
             cx = sum(LAYOUT.hand) / 2 * self.frame_w if cx is None else cx
-            box = self._blend_centered(frame, ink, cx, self.frame_h * COUNT_IN.y)
+            box = self._blend_centered(frame, ink, cx, self.frame_h * COUNT_IN.y if cy is None else cy)
             half = f.advance * COUNT_IN.bar_em / 2
             self._draw_bar(frame, cx - half, cx + half, box[3] + BAR.count_em * self.ui_size,
                            1.0 - (state.now - self._count[1]))
@@ -3064,14 +3069,10 @@ class Presenter:
         self.slide_x = (sx0, mx0 - round(W * PRESENTER.gap))  # its height follows the page
         self.slide_top, self.bottom = top, bottom
         self.radius = round(GLASS.radius * o.line_h)
-        # A take: the slide as large as the room under the label allows, from the left margin;
-        # you in a narrower tall mirror right of it.
-        tx1 = mx1 - round(W * PRESENTER.take_mirror)
-        self.take_slide_x = (sx0, tx1 - round(W * PRESENTER.gap))
-        self.take_mirror = (tx1, top, mx1, bottom)
-        # The camera's crop for it: the mirror's aspect, the frame's full height, centred on the face zone.
-        tcw = min(fw, round(fh * (mx1 - tx1) / (bottom - top)))
-        self.take_crop = (min(max(round(sum(LAYOUT.face) / 2 * fw - tcw / 2), 0), fw - tcw), tcw)
+        self._frame_aspect = fw / fh
+        self.take_top = round(H * PRESENTER.bottom)  # a take: the label is in the right column, not above
+        self._columns: dict[tuple[int, int, int], "_Column"] = {}  # the take's right column, per its place
+        self.take_slide_x, self.take_slide_y, self.take_mirror = self._take_layout(16 / 9)  # again per page
         self._canvas = np.empty((H, W, 3), np.uint8)
         self._base: np.ndarray | None = None  # the background with the slide on it, per slide and layout
         self._page: np.ndarray | None = None  # the page it was made for
@@ -3082,6 +3083,40 @@ class Presenter:
         """The width to draw a deck's pages at (palmcards.slides.Deck): the larger layout's
         (a take's); Prepare and Review draw it smaller from it."""
         return max(x1 - x0 for x0, x1 in (self.slide_x, self.take_slide_x))
+
+    def _take_layout(self, aspect: float) -> tuple[tuple[int, int], int, tuple[int, int, int, int]]:
+        """A take's slide (x from, to; its top) and face cam (x0, y0, x1, y1) for a page of `aspect`
+        (w / h). The slide as large as the screen's height allows, from the left margin, centred
+        top to bottom, unless that leaves the right column narrower than PRESENTER.take_cam_min.
+        The column holds the label and the recording clock at the top and the whole camera frame
+        at the bottom (at most PRESENTER.take_cam wide), level with the slide's foot: nothing
+        overlaps and the column is not left empty (the user, 2026-11-27)."""
+        W = self.size[0]
+        sx0, mx1, gap = self.slide_x[0], self.mirror[2], round(W * PRESENTER.gap)
+        room = self.bottom - self.take_top
+        w = min(round(room * aspect), mx1 - sx0 - gap - round(W * PRESENTER.take_cam_min))
+        h = round(w / aspect)
+        y = self.take_top + (room - h) // 2
+        cw = min(round(W * PRESENTER.take_cam), mx1 - (sx0 + w) - gap)
+        ch = round(cw / self._frame_aspect)
+        return (sx0, sx0 + w), y, (mx1 - cw, y + h - ch, mx1, y + h)
+
+    def _column(self) -> "_Column":
+        """The take's right column (beside the slide), as a text column: the label is drawn in it,
+        level with the slide's top."""
+        W = self.size[0]
+        key = (self.take_slide_x[1] + round(W * PRESENTER.gap), self.mirror[2], self.take_slide_y)
+        if key not in self._columns:
+            self._columns[key] = _Column(self.size, (key[0] / W, key[1] / W), key[2])
+        return self._columns[key]
+
+    def _column_rows(self, col: "_Column") -> tuple[int, int, int]:
+        """Where the column's parts start, top down, the same in every frame: the recording clock,
+        the next slide's caption (its picture under it), under the label's room."""
+        rec = col.label_top + col.label_h + 2 * col.pad
+        rec_h = col._chip("REC 0:00", col._face(TYPE.operation), C.node_text, C.dark_fill)[0].shape[0]
+        caption = rec + rec_h + 2 * col.pad
+        return rec, caption, caption + col._face(TYPE.small).line_h + col.pad // 2
 
     def _round(self, roi: np.ndarray, img: np.ndarray) -> None:
         """`img` into `roi` with rounded corners and the hairline edge."""
@@ -3099,18 +3134,35 @@ class Presenter:
         if scale < 1.0:
             page = cv2.resize(page, (round(page.shape[1] * scale), round(page.shape[0] * scale)),
                               interpolation=cv2.INTER_AREA)
-        return x0 + (x1 - x0 - page.shape[1]) // 2, self.slide_top, page
+        return x0 + (x1 - x0 - page.shape[1]) // 2, self.take_slide_y if take else self.slide_top, page
 
     def compose(self, frame: np.ndarray, state: ViewState) -> np.ndarray:
         """The canvas for this frame: `frame` is the camera's (the room darkened; in Prepare and
-        Review with the fingertips on it), `state.slide` the page. A take shows a tall crop round
-        your face; Prepare and Review the whole frame, where your hand browses, and Review its
-        coach card under it."""
+        Review with the fingertips on it), `state.slide` the page. A take shows the whole frame
+        as a face cam bottom right; Prepare and Review show it top right, where your hand browses,
+        and Review its coach card under it."""
         whole = state.app in ("prepare", "review")
         if self._base is None or self._page is not state.slide or self._take is whole:  # a new slide: made once
             base = np.full_like(self._canvas, bgr(PRESENTER.background))
+            if not whole:  # the slide and the face cam share the width as this page's shape allows
+                self.take_slide_x, self.take_slide_y, self.take_mirror = self._take_layout(
+                    state.slide.shape[1] / state.slide.shape[0])
             x, y, page = self._slide_box(state.slide, not whole)
             self._round(base[y:y + page.shape[0], x:x + page.shape[1]], page)
+            if not whole:  # the column: what comes next (Keynote's presenter view shows it too)
+                col = self._column()
+                _, caption, top = self._column_rows(col)
+                cx0, cx1 = col.col_x0 + col.pad // 2, self.mirror[2]
+                f = col._face(TYPE.small)
+                text = "Next" if state.next_slide is not None else "Last slide"
+                col._blend_ink(base, col._ink(text, f, C.label_hint), cx0, caption)
+                if state.next_slide is not None:
+                    nxt = state.next_slide
+                    w = cx1 - cx0
+                    h = min(round(w * nxt.shape[0] / nxt.shape[1]), self.take_mirror[1] - top - col.pad)
+                    w = round(h * nxt.shape[1] / nxt.shape[0])
+                    small = cv2.resize(nxt, (w, h), interpolation=cv2.INTER_AREA)
+                    self._round(base[top:top + h, cx0:cx0 + w], small)
             self._base, self._page, self._take = base, state.slide, not whole
             self._slide_at = (x, y, page.shape[1], page.shape[0])
         canvas = self._canvas
@@ -3118,17 +3170,23 @@ class Presenter:
         mx0, my0, mx1, my1 = self.mirror if whole else self.take_mirror
         if whole:  # the whole frame, the hand box included
             my1 = my0 + round((mx1 - mx0) * frame.shape[0] / frame.shape[1])
-            mirror = cv2.resize(frame, (mx1 - mx0, my1 - my0), interpolation=cv2.INTER_AREA)
-        else:
-            cx, cw = self.take_crop
-            mirror = cv2.resize(frame[:, cx:cx + cw], (mx1 - mx0, my1 - my0), interpolation=cv2.INTER_LINEAR)
+        mirror = cv2.resize(frame, (mx1 - mx0, my1 - my0), interpolation=cv2.INTER_AREA)  # the whole frame
         self._round(canvas[my0:my1, mx0:mx1], mirror)
         o = self.overlay
         o._glass_level(canvas)
-        o._draw_label(canvas, state, o.label_top)
-        if state.app == "rehearse":
-            o._draw_rec(canvas, state)
-        o._draw_count_in(canvas, state, (mx0 + mx1) / 2)
+        if whole:
+            o._draw_label(canvas, state, o.label_top)
+        else:  # a take: the label and the clock at the top of the right column
+            col = self._column()
+            col._glass_level(canvas)
+            col._draw_label(canvas, state, col.label_top)
+            if state.app == "rehearse":
+                col._draw_rec(canvas, state, cx=(mx0 + mx1) / 2, top=self._column_rows(col)[0])
+        if whole:
+            o._draw_count_in(canvas, state, (mx0 + mx1) / 2)
+        else:  # a take's 3-2-1 over the slide's middle, as a screen recorder counts in
+            sx, sy, sw, sh = self._slide_at
+            o._draw_count_in(canvas, state, sx + sw / 2, sy + sh / 2)
         x, y, w, h = self._slide_at
         if state.slide_label:
             chip = o._chip(state.slide_label, o._face(TYPE.small, SMALL_ON_FILL), C.dim, C.label_fill)
@@ -3141,6 +3199,19 @@ class Presenter:
         if whole:
             o._draw_pills(canvas, state)
         return canvas
+
+
+class _Column(TextOverlay):
+    """A take's right column in the presenter layout (Presenter._column): an empty text column
+    whose label starts at `top`, level with the slide, not at LABEL.top."""
+
+    def __init__(self, size: tuple[int, int], column: tuple[float, float], top: int):
+        self._top = top
+        super().__init__([], size, column=column)
+
+    @property
+    def label_top(self) -> int:
+        return self._top
 
 
 def draw_glass(frame: np.ndarray, box: tuple[float, float, float, float], radius: int, tint: float) -> None:

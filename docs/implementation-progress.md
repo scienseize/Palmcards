@@ -2673,3 +2673,30 @@ Changes: Esc no longer quits anywhere. In Prepare and Review a focus backs out a
   take, its count-in, the launch card and the error cards it does nothing. q quits.
 Tests: test_esc_goes_back_a_step_and_never_quits, test_esc_backs_out_of_a_focus_at_once; pytest (full).
 ```
+
+```text
+Date: 2026-11-27
+Phase / issue IDs: a slides take with a face cam; no outline between Prepare and the take (the user: "the
+  camera should be bottom right instead but shows everything. Like how demo videos are recorded with face
+  cams"; "when transitioning from prepare to record, there is a pop out of the text with headers")
+Status: implemented; automated checks passed; the user's check pending
+Changes: render.Presenter: in a take the whole camera frame (16:9, nothing cropped) at the bottom right,
+  PRESENTER.take_cam 21% of the width (was a tall crop round the face, 18%); the slide from the left margin
+  to beside it. The frame loop drew the presenter layout only outside the eye calibration, so the session's
+  first count-in showed the outline (titles under section headers) for its 5 s; it now keeps the layout, and
+  the calibration's reading step says "Read the slide" (calibration "slide") when the slide is what is read.
+Tests: test_slides (the face cam's aspect and the frame's edge shown); pytest (full).
+```
+
+```text
+Follow-up the same day (the user: "The slides can be bigger there is still a lot of space"): the take's layout
+  is sized per page (Presenter._take_layout): the slide as tall as the room allows unless the face cam would be
+  under 15% of the width (take_cam_min), the cam in the rest up to 21%. A 16:9 slide went from 1702 x 957 to
+  1856 x 1044 px on the canvas; a 4:3 slide takes the full height.
+Second follow-up (the user: "there's still this huge unused blank space on the right side"; chose "fill the
+  column instead" over a full-screen slide with overlays): with the face cam beside a 16:9 slide on a 16:9
+  screen, the column above it is empty by geometry. The take is now a presenter view: the label moves from
+  above the slide into that column (render._Column, level with the slide's top), then the recording clock, the
+  next slide's preview (ViewState.next_slide), and the face cam, its foot level with the slide's; the slide is
+  centred top to bottom. The count-in's digit is over the slide's middle. ~6.5 ms a frame (was ~3).
+```
