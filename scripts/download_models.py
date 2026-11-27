@@ -39,9 +39,6 @@ MODELS = {
                              "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff", True),
     "pose_landmarker_lite.task": (f"{BASE}/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
                                   "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a", True),
-    # The room behind the speaker, darkened (palmcards.vision.Backdrop); 249,537 bytes.
-    "selfie_segmenter.tflite": (f"{BASE}/image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite",
-                                "191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b", True),
 }
 WHISPER = {SPEECH.model: SPEECH.model_revision, SPEECH.live_model: SPEECH.live_model_revision}
 

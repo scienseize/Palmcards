@@ -148,7 +148,7 @@ To start a take, raise a closed fist and hold it for one second. A 3-2-1 count-i
 - **Target length.** With a target, the clock shows `REC 1:12 / 3:00` and turns orange when you go over. The label shows the time left for the current section. Press `]` or `[` to make the target 15 seconds longer or shorter.
 - **Fading cards** (key `w`, off by default). Words you said correctly in the last takes dim, then blank out, so you learn to speak from memory. If you pause, the next words come back.
 - **Q&A round** (key `y`, off by default). After a full take, three practice questions follow. Each one shows in large type, and you answer it aloud as a take of its own. The questions come from your notes, or from the language model if your notes have none.
-- **Slides.** With slides, a full take switches to a presenter layout: the current slide large and sharp, centred under the camera, you in a smaller mirror on the right. A presentation clicker moves the slide, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the outline's orange row moves with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
+- **Slides.** With slides, a full take switches to a presenter layout: the current slide as large as the screen allows, you in a narrow mirror on the right. A presentation clicker moves the slide, or the arrow and Page Up/Page Down keys. Every take starts at slide 1, and PalmCards records when each slide changed. With slides only, the outline's orange row moves with the slides instead of following your voice, and the take stops by itself after a short silence on the last slide.
 - **Video** (on by default). PalmCards records video of each take beside its audio, so you can watch the take in Review. To turn it off: `python -m palmcards.prefs set video false`.
 
 ## Review
@@ -210,10 +210,10 @@ PalmCards keeps preferences in `prefs.json` in its data folder. Some change with
 
 ```sh
 .venv/bin/python -m palmcards.prefs                      # show them
-.venv/bin/python -m palmcards.prefs set room_dim 0       # don't darken the room behind you
+.venv/bin/python -m palmcards.prefs set sounds true      # soft sounds for gestures
 ```
 
-Useful ones: `reach` (the size of the hand box, 0.6 to 1.4), `room_dim` (how dark the room behind you is drawn, 0 to 1, default 0.6), `video`, `fade`, `qa`, `sounds` (soft sounds for gestures, off by default), `reduced_motion` (`auto` follows macOS), `count_in_again_s`, and the hold times `start_hold_s` and `done_hold_s`.
+Useful ones: `reach` (the size of the hand box, 0.6 to 1.4), `video`, `fade`, `qa`, `sounds` (soft sounds for gestures, off by default), `reduced_motion` (`auto` follows macOS), `count_in_again_s`, and the hold times `start_hold_s` and `done_hold_s`.
 
 ## The optional language model
 

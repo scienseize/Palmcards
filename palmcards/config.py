@@ -19,20 +19,6 @@ class Tracking:
 
 
 @dataclass(frozen=True)
-class Backdrop:
-    """The room behind the speaker, darkened (palmcards.vision.Backdrop): MediaPipe's
-    selfie segmenter marks the person on every frame it isn't busy with, at
-    most `max_side` px; its mask eases toward each new one (`ease` of the way)
-    and is feathered (`feather` x the frame height), so edges don't shimmer.
-    Outside the person the picture is darkened by the preference `room_dim`
-    (0 off, 1 black); this is its default."""
-    strength: float = 0.6
-    max_side: int = 256  # the model's input is 256 x 256
-    ease: float = 0.5
-    feather: float = 0.01
-
-
-@dataclass(frozen=True)
 class Body:
     # Face and pose landmarkers (palmcards.vision), only during calibration and
     # takes. Each runs on every Nth camera frame, offset so face, pose and the
@@ -576,7 +562,6 @@ class Llm:
 
 TRACKING = Tracking()
 BODY = Body()
-BACKDROP = Backdrop()
 POSE = Pose()
 TIMING = Timing()
 CURSOR = Cursor()

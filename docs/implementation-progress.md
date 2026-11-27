@@ -2590,3 +2590,17 @@ Changes: palmcards/notch.py NotchPanel: a native AppKit panel (pyobjc, no new de
 Not checked: on the screen (window level over OpenCV's full screen, the panel against the notch's edges).
 ```
 
+```text
+Date: 2026-11-27
+Phase / issue IDs: no room darkening; the hands in use lit, and a take's slide as large as the room allows (the
+  user: "remove the darken filter for the video that isolates the person, instead do something for highlighting
+  the hands in use"; "make the slides bigger, nevermind the centering it close to the notch")
+Status: implemented; automated checks passed; the user's check on the camera pending
+Changes: vision.Backdrop, config.BACKDROP, the room_dim preference (an old prefs.json holding it still loads)
+  and the selfie segmenter's download are gone. render.draw_hand_light (HANDS.light_*): in Prepare and Review
+  (and the home card) each tracked hand's shape, its bones 0.24 palms thick and the palm filled, lifted 12% to
+  white, with a rim just outside its edge in its dots' colour (55%, fading over ~0.2 palms); drawn with the palm
+  48 px long and enlarged, 0.9-1.7 ms on frames from the film's recordings. A take with slides: the slide from
+  the left margin, the mirror 18% of the width (PRESENTER.take_mirror, was a 46% slide centred under the camera).
+Tests: pytest (full); the hand lit and the room not; the take's slide larger than Prepare's.
+```

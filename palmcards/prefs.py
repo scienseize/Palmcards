@@ -21,7 +21,6 @@ sessions (which are evidence and never change with your settings).
   replay_mirrored  Review replays a take's video mirrored, as in the app (key m); by default
                  flipped back, as others see you
   fullscreen     the window fills the screen (key f in the app); on by default
-  room_dim       how dark the room behind you is drawn: 0 as the camera sees it, 1 black (default 0.6)
   fade           fading cards: in a take, words said take after take dim, then blank
                  (key w in the app; main.py --fade for one run)
   qa             the Q&A round: practice questions after each full take (key y)
@@ -36,7 +35,7 @@ import sys
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
-from palmcards.config import BACKDROP, CURSOR, REHEARSE
+from palmcards.config import CURSOR, REHEARSE
 from palmcards.paths import data_dir, write_atomic
 
 
@@ -52,7 +51,6 @@ class Prefs:
     fullscreen: bool = True  # the window fills the screen (key f): the teleprompter sits under the notch
     fade: bool = False  # fading cards (palmcards.fade; key w); main.py --fade for one run
     qa: bool = False  # the Q&A round after each full take (key y)
-    room_dim: float = BACKDROP.strength  # the room behind you darkened by this (palmcards.vision.Backdrop)
     reach: float = 1.0
     start_hold_s: float = REHEARSE.start_hold_s
     done_hold_s: float = REHEARSE.done_hold_s
@@ -62,7 +60,6 @@ class Prefs:
     def checked(self) -> "Prefs":
         """Values clamped to what the app can use."""
         return replace(self, reach=min(max(float(self.reach), 0.6), 1.4),
-                       room_dim=min(max(float(self.room_dim), 0.0), 1.0),
                        start_hold_s=min(max(float(self.start_hold_s), 0.3), 3.0),
                        done_hold_s=min(max(float(self.done_hold_s), 0.5), 4.0),
                        count_in_again_s=min(max(float(self.count_in_again_s), 0.0), 3.0))

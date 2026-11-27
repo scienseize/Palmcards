@@ -490,7 +490,7 @@ class Presenter:
     bottom: float = 0.05  # the margin under them, x the canvas height
     background: RGB = (14, 14, 16)  # behind them: Apple's dark-mode base, a step darker than the glass
     label_gap: int = 8  # px (at 1x) between the slide and its number
-    take_slide: float = 0.46  # a take: the slide centred under the camera (below the label's height), x the width
+    take_mirror: float = 0.18  # a take: the mirror's width, x the canvas width; the slide fills the rest
 
 
 @dataclass(frozen=True)
@@ -522,6 +522,15 @@ class Hands:
     area_min_arm: int = 8  # px
     area_stroke: int = 1
     area_alpha: float = 0.3
+    # The hands in use, lit (render.draw_hand_light). The hand's shape: its bones `light_width`
+    # palms thick (palm: wrist to middle knuckle), the palm filled. Inside it the image is lifted
+    # `light_lift` of the way to white; a rim glows just outside its edge in the hand's dot colour,
+    # `light_rim` at the edge, fading over about 2 x `light_feather` palms.
+    light_width: float = 0.24
+    light_feather: float = 0.1
+    light_lift: float = 0.12
+    light_rim: float = 0.55
+    light_px: int = 48  # the shape is drawn and blurred with the palm this many px long, then enlarged
     # Debug.
     landmark_stroke: int = 2
     landmark_r: int = 3

@@ -2625,6 +2625,47 @@ def draw_fingertips(frame: np.ndarray, state: GestureState) -> None:
                            cv2.LINE_AA)
 
 
+PALM_OUTLINE = (0, 1, 5, 9, 13, 17)  # wrist, thumb base, the four knuckles
+
+
+def draw_hand_light(frame: np.ndarray, state: GestureState) -> None:
+    """The hands the gestures read, lit in place on the camera image: the hand's shape (its
+    bones thickened, the palm filled) a little brighter, and a soft rim glowing just outside
+    its edge in the colour of its fingertip dots (yellow, cyan for a second hand). The shape
+    is drawn small (HANDS.light_px) and enlarged, and only the box round each hand is touched,
+    so a hand close to the camera costs no more than one far away."""
+    fh, fw = frame.shape[:2]
+    for track, color in ((state.secondary, C.cyan), (state.primary, C.yellow)):
+        if track is None or track.hand is None:
+            continue
+        pts = np.asarray(track.hand.points, np.float32)
+        palm = float(np.hypot(*(pts[9] - pts[0])))
+        if palm < 4:
+            continue
+        pad = palm * (HANDS.light_width + 4 * HANDS.light_feather)
+        x0, y0 = (max(0, int(v - pad)) for v in pts.min(axis=0))
+        x1, y1 = int(min(fw, pts[:, 0].max() + pad + 1)), int(min(fh, pts[:, 1].max() + pad + 1))
+        if x1 - x0 < 2 or y1 - y0 < 2:
+            continue
+        q = min(1.0, HANDS.light_px / palm)  # the small drawing's scale
+        sw, sh = max(2, round((x1 - x0) * q)), max(2, round((y1 - y0) * q))
+        local = np.round((pts - (x0, y0)) * q * 8).astype(np.int32)  # 3 fractional bits
+        shape = np.zeros((sh, sw), np.uint8)
+        cv2.fillPoly(shape, [local[list(PALM_OUTLINE)]], 255, cv2.LINE_AA, shift=3)
+        width = max(1, round(HANDS.light_width * palm * q))
+        for a, b in HAND_CONNECTIONS:
+            cv2.line(shape, tuple(local[a]), tuple(local[b]), 255, width, cv2.LINE_AA, shift=3)
+        inside = shape.astype(np.float32) / 255
+        glow = cv2.GaussianBlur(inside, (0, 0), max(0.6, HANDS.light_feather * palm * q))
+        rim = np.clip((glow - inside) * 2, 0, 1)  # outside the edge: 1 at it, fading out
+        size = (x1 - x0, y1 - y0)
+        inside = cv2.resize(inside * HANDS.light_lift, size, interpolation=cv2.INTER_LINEAR)
+        rim = cv2.resize(rim * HANDS.light_rim, size, interpolation=cv2.INTER_LINEAR)
+        roi = frame[y0:y1, x0:x1]
+        roi[:] = cv2.blendLinear(np.full_like(roi, 255), roi, inside, 1 - inside)
+        roi[:] = cv2.blendLinear(np.full_like(roi, bgr(color)), roi, rim, 1 - rim)
+
+
 def draw_landmarks(frame: np.ndarray, hand: Hand) -> None:
     """Debug: the hand's skeleton."""
     pts = hand.points.astype(int)
@@ -2956,11 +2997,10 @@ class Presenter:
         self.slide_x = (sx0, mx0 - round(W * PRESENTER.gap))  # its height follows the page
         self.slide_top, self.bottom = top, bottom
         self.radius = round(GLASS.radius * o.line_h)
-        # A take: the slide centred under the camera (reading it looks like eye contact), from the
-        # label's height down; you in a tall mirror right of it.
-        tw = round(W * PRESENTER.take_slide)
-        self.take_slide_x = ((W - tw) // 2, (W + tw) // 2)
-        tx1 = self.take_slide_x[1] + round(W * PRESENTER.gap)
+        # A take: the slide as large as the room under the label allows, from the left margin;
+        # you in a narrower tall mirror right of it.
+        tx1 = mx1 - round(W * PRESENTER.take_mirror)
+        self.take_slide_x = (sx0, tx1 - round(W * PRESENTER.gap))
         self.take_mirror = (tx1, top, mx1, bottom)
         # The camera's crop for it: the mirror's aspect, the frame's full height, centred on the face zone.
         tcw = min(fw, round(fh * (mx1 - tx1) / (bottom - top)))
@@ -2973,8 +3013,8 @@ class Presenter:
     @property
     def slide_width(self) -> int:
         """The width to draw a deck's pages at (palmcards.slides.Deck): the larger layout's
-        (Prepare and Review); a take's is drawn smaller from it."""
-        return self.slide_x[1] - self.slide_x[0]
+        (a take's); Prepare and Review draw it smaller from it."""
+        return max(x1 - x0 for x0, x1 in (self.slide_x, self.take_slide_x))
 
     def _round(self, roi: np.ndarray, img: np.ndarray) -> None:
         """`img` into `roi` with rounded corners and the hairline edge."""

@@ -130,7 +130,7 @@ from palmcards.llm import PROVIDERS, Assistant, LLMUnavailable, alternatives_req
     questions_request, rewrite_request
 from palmcards.render import (
     DROP_HINT, HINT_SEP, REVIEW_SEP, UNDO_HINT, FocusMotion, Presenter, Teleprompter, Hit, OpsView, PanelMotion, TextOverlay, ViewState,
-    draw_fingertips, draw_hand_area, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_replay_hint,
+    draw_fingertips, draw_hand_area, draw_hand_light, draw_hand_box, draw_landmarks, draw_replay_bar, draw_replay_caption, draw_replay_hint,
     draw_stats,
 )
 from palmcards.motion import Spring
@@ -154,7 +154,7 @@ from palmcards.notch import NotchPanel
 from palmcards.asr import get_recognizer
 from palmcards.follow import AutoStop, LiveFollow
 from palmcards.speech import make_job
-from palmcards.vision import Backdrop, Watcher
+from palmcards.vision import Watcher
 
 SAMPLE = Path(__file__).parent / "samples" / "sample_notes.md"
 SCREENS_DIR = SESSIONS_DIR / "screens"
@@ -388,7 +388,6 @@ class Takes:
         self.slide_width = 0
         self.follow: LiveFollow | None = None  # the voice follow, made at the first count-in
         self.player = None  # clip playback (Review), made at the first play
-        self.backdrop = None  # the room behind you darkened (frame_loop opens it)
         self.playback = Playback()  # what plays now (a take's clip), for which target
         self._play_error = ""
         self.notes_version = 0  # bumped when an edit or undo changes the notes
@@ -1777,9 +1776,6 @@ class Takes:
             self.follow.close()
         if self.player is not None:
             self.player.stop()
-        if self.backdrop is not None:
-            self.backdrop.close()
-            self.backdrop = None
         left = self.analysis.close(timeout=1.0)
         self.poll_analysis()
         if left or self.deferred:
@@ -1837,7 +1833,6 @@ class Devices:
     video_reader: Callable = VideoReader  # (path, t_first, frame size): Review's replay of a take's video
     llm: Callable = get_provider  # None: the optional LLM is off
     vision: Callable = Watcher.open  # face and pose; None or an error: off (they are optional)
-    backdrop: Callable = Backdrop  # (strength) the room behind you darkened; None or an error: off
     live: Callable = lambda language, clock, hints: get_recognizer().live(language, clock, SPEECH.live_where, hints)
     named_window: Callable = open_mirror_window
     show: Callable = cv2.imshow
@@ -2181,12 +2176,6 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
     takes.video_on = takes.video_on or prefs.video
     takes.fade_on = takes.fade_on or prefs.fade
     takes.qa_on = prefs.qa
-    backdrop = None  # the room behind you darkened (preference room_dim; 0: off); closed with the takes
-    if prefs.room_dim > 0:
-        try:
-            backdrop = takes.backdrop = devices.backdrop(prefs.room_dim)
-        except Exception as exc:  # the model missing or failing to load: the room as the camera sees it
-            print(f"room darkening off: {exc}", file=sys.stderr)
     if takes.video_on:
         if devices.video is VideoWriter and (why := video_unavailable()):
             takes.video_off = why
@@ -2305,9 +2294,6 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
         takes.push_video(frame, (getattr(camera, "last_t", 0.0) or start) - t0)  # the clean frame, as captured
         if takes.vision is not None:  # before anything is drawn on the frame; idle outside calibration and takes
             takes.vision.frame(frame, start - t0, frame_index, late=(start - prev_start) * 1000 > BODY.late_ms)
-        if backdrop is not None:  # after the hands, the face and the video have their clean frame
-            backdrop.submit(frame, start - t0)
-            backdrop.apply(frame)
         captured = time.perf_counter()  # stage times, for a frame too slow ("slow_frame")
         frame_index += 1
         # Hand results arrive asynchronously, usually one frame behind.
@@ -2492,6 +2478,8 @@ def frame_loop(camera, tracker, log: GestureLog, trace, takes: "Takes", sentence
                 notch.show(prompt, snap=snap_panel)
         elif notch is not None:
             notch.hide()
+        if view.app in ("prepare", "review"):  # where the hands drive the app: the hands in use, lit
+            draw_hand_light(frame, (home.grammar if home is not None else grammar).state)
         if (replay := takes.replay_frame()) is not None:
             # A take's video while its clip plays, as others see you: nothing on
             # it but how far it has got. Hands are still tracked live, so a fresh

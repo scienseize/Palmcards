@@ -607,7 +607,7 @@ class Run:
         devices = main.Devices(
             camera=lambda: camera, tracker=lambda: TraceHands(src.frames, src.start, self.clock),
             log=lambda: GestureLog(work / "gesture.jsonl"), recorder=make_mic, player=SilentPlayer,
-            live=make_live, llm=llm, vision=watcher, backdrop=lambda strength: None,  # a still wall: no one to cut out
+            live=make_live, llm=llm, vision=watcher,
             named_window=lambda *a: None, show=self.show, wait_key=self.wait_key,
             window_open=lambda n: True, destroy_windows=lambda: None, pump=lambda: None,
             fullscreen=lambda name, on: None,  # no window here (full screen is on by default)

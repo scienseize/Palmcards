@@ -203,7 +203,7 @@ class Rig:
         self.devices = main.Devices(
             camera=lambda: self.camera, tracker=tracker_factory or (lambda: self.tracker), recorder=recorder,
             log=lambda: GestureLog(tmp_path / "log.jsonl"), named_window=lambda *a: None, show=lambda *a: None,
-            live=live or (lambda language, clock, hints: FakeLive()), vision=vision or (lambda: None), backdrop=lambda strength: None,
+            live=live or (lambda language, clock, hints: FakeLive()), vision=vision or (lambda: None),
             wait_key=wait_key, window_open=lambda name: True, destroy_windows=destroy, pump=lambda: None,
             pick=lambda: None, fullscreen=lambda name, on: None, notch=lambda sentences: None)
         if video_writer is not None:

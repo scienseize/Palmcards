@@ -43,10 +43,11 @@ def test_the_presenter_layout_puts_the_slide_left_and_the_mirror_right_sharp():
     notes = notes_from_bytes(make_pdf(DECK), "deck.pdf")
     p = Presenter(notes.sentences, (1280, 720))
     assert p.size == (2560, 1440)  # twice the camera's frame: a Retina screen shows it at its own pixels
-    x0, x1 = p.take_slide_x  # a take: the slide centred under the camera, the mirror right of it
+    x0, x1 = p.take_slide_x  # a take: the slide large from the left margin, the mirror right of it
     mx0, my0, mx1, my1 = p.take_mirror
     assert x0 < x1 < mx0 < mx1 <= 2560 and p.slide_top == my0 and my1 <= 1440
-    assert abs((x0 + x1) / 2 - 1280) <= 1
+    assert x0 == p.slide_x[0] and x1 - x0 > p.slide_x[1] - p.slide_x[0]  # larger than Prepare's
+    assert p.slide_width == x1 - x0  # pages are drawn at the take's width, never scaled up
     crop_x, crop_w = p.take_crop  # the mirror shows the face zone, not the room
     assert crop_x <= LAYOUT.face[0] * 1280 and crop_x + crop_w >= LAYOUT.face[1] * 1280
     page = Deck(make_pdf(DECK), p.slide_width).page(0)

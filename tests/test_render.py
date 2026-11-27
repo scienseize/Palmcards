@@ -1062,3 +1062,21 @@ def test_last_home_choice_and_its_detail_fit_above_keyboard_help(frame_size, mon
     assert ov.y <= top < bottom <= low
     assert (left, right) == (ov.notes_glass()[0], ov.notes_glass()[2])
     assert entries[-1][0] in drawn and entries[-1][1] in drawn
+
+
+def test_the_hand_in_use_is_lit_and_the_room_is_not():
+    from types import SimpleNamespace as NS
+
+    # A flat hand, fingers up: the wrist at (640, 600), the knuckles at y 500, a palm 100 px long.
+    pts = [(640, 600)] + [(610 - 15 * k, 580 - 20 * k) for k in range(4)]  # wrist, thumb
+    for x in (600, 630, 660, 690):  # index .. pinky: knuckle, then three joints up
+        pts += [(x, 500 - 30 * k) for k in range(4)]
+    hand = NS(points=np.array(pts, np.float32))
+    frame = np.full((720, 1280, 3), 100, np.uint8)
+    render.draw_hand_light(frame, NS(primary=None, secondary=None))
+    assert (frame == 100).all()  # no hand: nothing drawn
+    render.draw_hand_light(frame, NS(primary=NS(hand=hand), secondary=None))
+    assert frame[550, 645].min() > 100  # the palm, brighter
+    b, g, r = frame[330:620, 540:760].reshape(-1, 3).astype(int).T
+    assert (r - b).max() > 40  # a yellow rim round it (BGR: red high, blue low)
+    assert (frame[100, 100] == 100).all() and (frame[550, 900] == 100).all()  # the room, as the camera sees it
